@@ -1,8 +1,9 @@
 # MakerFoundry: the plan
 
 **Status:** 2026-10-19. MF-0 done: live at https://makerfoundry-production.up.railway.app.
-MF-1 built (accounts through StitchFoundry's account service, which gained the account id,
-CLOUD-06, and password reset by email, CLOUD-07); live once its Postgres is added on Railway. Owner: Bruce Wattendorf (SiteSentrix).
+MF-1 done and live (accounts through StitchFoundry's account service, which gained the account
+id, CLOUD-06, and password reset by email, CLOUD-07). Reset emails go out once the account service
+has its Resend key. Next: MF-2. Owner: Bruce Wattendorf (SiteSentrix).
 
 ## What it is
 A place, like Thingiverse for 3D prints, where makers find, share and sell files for their
@@ -100,7 +101,7 @@ Nobody may resell or share the files themselves.
 | Id | What | Done when |
 |---|---|---|
 | MF-0 | Workspace: Cargo workspace, CI (fmt, clippy -D warnings, tests), `/health`, a hello page deployed to Railway | the page answers on a Railway address. **Done 2026-10-19**: https://makerfoundry-production.up.railway.app |
-| MF-1 | Accounts: sign up, sign in, sessions, password reset by email | a person can make an account. **Built 2026-10-19** (`/signup`, `/signin`, `/forgot`, `/account`); tested against Postgres and a stand-in account service |
+| MF-1 | Accounts: sign up, sign in, sessions, password reset by email | a person can make an account. **Done 2026-10-19**, live (`/signup`, `/signin`, `/forgot`, `/account`) with its Postgres on Railway; reset emails wait on the account service's `RESEND_API_KEY` |
 | MF-2 | Upload and preview: embroidery and laser files read, checked and drawn; photos; R2 storage | an uploaded PES shows its stitches |
 | MF-3 | Listings: design pages, browse, search, tags, seller pages; free downloads | a free design can be found and downloaded |
 | MF-4 | Selling: Stripe Connect onboarding, checkout with the platform fee, library, sales page, refunds | a test-mode sale pays the seller less the fee |

@@ -9,6 +9,11 @@ Railway **Variables**.
 - Railway project **MakerFoundry**, environment `production`, service `makerfoundry`, deploying
   `main` of `SiteSentrix/makerfoundry`.
 - Address: <https://makerfoundry-production.up.railway.app> (first deployed 2026-10-19).
+- Service `Postgres` (image `postgres:16`, a volume at `/var/lib/postgresql/data`, made
+  2026-10-19 for MF-1); the site reads it through `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
+  over Railway's private network. Its password is a Railway variable of that service, generated
+  when it was made and never written anywhere else. **Backups:** turn them on in the Postgres
+  service's settings (Railway › Postgres › Backups).
 - Claude sessions reach this one project through a Railway **project token** in the cloud
   environment's `RAILWAY_TOKEN` variable (Railway's GraphQL API, header `Project-Access-Token`).
   The token can't see the owner's other projects. To revoke it: the project's **Settings → Tokens**.
