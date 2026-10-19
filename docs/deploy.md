@@ -50,8 +50,10 @@ Then send the `*.up.railway.app` address back in the chat: MF-0 is done when tha
 - **Roll back**: the **Deployments** tab → an earlier deploy → **⋮** → **Redeploy**.
 
 ## Coming in later tasks
-- **MF-1**: a Postgres database in the same project (**Create** → **Database** → **PostgreSQL**),
-  linked to the service with a `DATABASE_URL` variable; Resend's API key for emails.
+- **MF-1** (accounts): a Postgres database in the same project (**Create** → **Database** →
+  **PostgreSQL**), and on the `makerfoundry` service the variable
+  `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`. Accounts and their emails (password resets) are
+  StitchFoundry's account service's, so MakerFoundry needs no email key of its own.
 - **MF-2**: Cloudflare R2 keys for file storage.
 - **MF-6**: the `makerfoundry.app` domain (the owner buys it) pointed at the service through
   Cloudflare.
@@ -60,6 +62,8 @@ Then send the `*.up.railway.app` address back in the chat: MF-0 is done when tha
 | Variable | Needed | What |
 |---|---|---|
 | `PORT` | no (default `8080`) | the port to listen on; Railway sets it |
+| `DATABASE_URL` | for accounts | MakerFoundry's Postgres, `${{Postgres.DATABASE_URL}}` on Railway; tables are made when the service starts. Without it the site runs but nobody can sign in |
+| `STITCHFOUNDRY_CLOUD_URL` | no (default `https://cloud.stitchfoundry.app`) | StitchFoundry's account service, which MakerFoundry's accounts are |
 
 ## Building the image yourself
 From the repository root: `docker build -t makerfoundry .` then

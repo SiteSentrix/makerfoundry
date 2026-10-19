@@ -18,7 +18,15 @@ workspace = true
 axum = { workspace = true }
 tokio = { workspace = true }
 tower-http = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
 
 [dev-dependencies]
+# The tests' stand-in for StitchFoundry's account service answers JSON.
+axum = { workspace = true, features = ["json"] }
 tower = { workspace = true }
 http-body-util = { workspace = true }

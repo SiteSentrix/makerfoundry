@@ -1,17 +1,27 @@
 //! MakerFoundry's web service: server-rendered pages for the marketplace.
 //!
-//! MF-0 holds the skeleton: a home page, `/health` for the host's health check, a stylesheet and
-//! a 404 page, all behind the security headers every later page gets too.
+//! MF-0: a home page, `/health` for the host's health check, a stylesheet and a 404 page, all
+//! behind the security headers every page gets. MF-1: accounts, which are StitchFoundry accounts
+//! (`cloud`), with MakerFoundry's own sessions in Postgres (`db`) and the pages in `accounts`.
+
+pub mod accounts;
+pub mod cloud;
+pub mod db;
+pub mod pages;
 
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{HeaderName, HeaderValue, StatusCode, header};
+use axum::extract::State;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
+use sqlx::PgPool;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
+
+use crate::pages::{MARK_SVG, page};
 
 /// The version shown on `/health`, from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,14 +39,28 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; style-src 'self'; img
 
 const STYLESHEET: &str = include_str!("../static/site.css");
 
+/// What every request may use: the account service, and the database when there is one (without
+/// `DATABASE_URL` the site runs, but nobody can sign in).
+#[derive(Clone)]
+pub struct AppState {
+    pub cloud: cloud::Cloud,
+    pub db: Option<PgPool>,
+}
+
 /// The whole site: every route, with the security headers and limits applied to all of them.
-pub fn app() -> Router {
+pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(home))
         .route("/health", get(health))
         .route("/static/site.css", get(stylesheet))
         .route("/favicon.svg", get(favicon))
+        .route("/signin", get(accounts::signin_page).post(accounts::signin))
+        .route("/signup", get(accounts::signup_page).post(accounts::signup))
+        .route("/signout", post(accounts::signout))
+        .route("/forgot", get(accounts::forgot_page).post(accounts::forgot))
+        .route("/account", get(accounts::account_page))
         .fallback(not_found)
+        .with_state(state)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -91,7 +115,8 @@ async fn favicon() -> Response {
         .into_response()
 }
 
-async fn home() -> Html<String> {
+async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String> {
+    let signed_in = accounts::current_user(&state, &headers).await.is_some();
     Html(page(
         "MakerFoundry",
         r#"<section class="hero">
@@ -116,6 +141,7 @@ async fn home() -> Html<String> {
     <p>Share a design for free, or sell it and get paid for each sale.</p>
   </article>
 </section>"#,
+        signed_in,
     ))
 }
 
@@ -128,41 +154,7 @@ async fn not_found() -> (StatusCode, Html<String>) {
   <h1>Page not found</h1>
   <p class="lead">There's nothing at this address. <a href="/">Go to the home page</a>.</p>
 </section>"#,
+            false,
         )),
-    )
-}
-
-/// The site's mark, drawn in code: an embroidery hoop crossed by a run of stitches. Also served as
-/// `/favicon.svg`.
-const MARK_SVG: &str = r#"<svg class="mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true">
-<circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="3"/>
-<circle cx="16" cy="16" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-<path d="M6 22 L26 10" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2.5" stroke-linecap="round"/>
-</svg>"#;
-
-/// Wraps a page's body in the shared layout. `title` and `body` are our own text, never a user's:
-/// pages that show user input escape it before it gets here.
-fn page(title: &str, body: &str) -> String {
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<meta name="description" content="Machine-embroidery designs and laser-cut files, shared and sold by makers.">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/site.css">
-</head>
-<body>
-<header class="top"><a class="brand" href="/">{MARK_SVG}<span>MakerFoundry</span></a></header>
-<main>
-{body}
-</main>
-<footer class="bottom"><p>MakerFoundry is made by <a href="https://sitesentrix.com">SiteSentrix</a>,
-the makers of <a href="https://stitchfoundry.app">StitchFoundry</a>.</p></footer>
-</body>
-</html>
-"#
     )
 }

@@ -1,5 +1,7 @@
 //! Runs MakerFoundry's web service. Settings come from the environment (docs/deploy.md):
-//! `PORT` (default 8080), which Railway sets.
+//! `PORT` (default 8080), which Railway sets; `DATABASE_URL`, MakerFoundry's Postgres (without it
+//! nobody can sign in); `STITCHFOUNDRY_CLOUD_URL`, the account service (default
+//! `https://cloud.stitchfoundry.app`).
 
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::process::ExitCode;
@@ -32,8 +34,34 @@ async fn main() -> ExitCode {
             }
         },
     };
-    eprintln!("makerfoundry {} listening on {addr}", makerfoundry::VERSION);
-    match axum::serve(listener, makerfoundry::app())
+    let cloud_url =
+        std::env::var("STITCHFOUNDRY_CLOUD_URL").unwrap_or_else(|_| makerfoundry::cloud::DEFAULT_URL.to_string());
+    let cloud = match makerfoundry::cloud::Cloud::new(&cloud_url) {
+        Ok(cloud) => cloud,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let db = match std::env::var("DATABASE_URL").ok().filter(|u| !u.trim().is_empty()) {
+        Some(url) => match makerfoundry::db::connect(&url).await {
+            Ok(pool) => Some(pool),
+            Err(err) => {
+                eprintln!("{err}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => {
+            eprintln!("no DATABASE_URL: the site runs, but nobody can sign in");
+            None
+        }
+    };
+    eprintln!(
+        "makerfoundry {} listening on {addr}; accounts at {cloud_url}",
+        makerfoundry::VERSION
+    );
+    let state = makerfoundry::AppState { cloud, db };
+    match axum::serve(listener, makerfoundry::app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
     {

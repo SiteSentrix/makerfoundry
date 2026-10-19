@@ -26,6 +26,18 @@ jobs:
     name: cargo xtask ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # A Postgres for the database tests (MF_TEST_DATABASE_URL); each test makes its own schema.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MF_TEST_DATABASE_URL: postgres://postgres:ci@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
       # The toolchain in rust-toolchain.toml; bump both together.

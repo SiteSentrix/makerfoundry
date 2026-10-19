@@ -6,6 +6,7 @@
   --accent: #b4462a;
   --card: #ffffff;
   --line: #e4e0d8;
+  --on-accent: #ffffff;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -16,6 +17,7 @@
     --accent: #f08a6c;
     --card: #1f2228;
     --line: #33373e;
+    --on-accent: #16181c;
   }
 }
 * { box-sizing: border-box; }
@@ -32,7 +34,12 @@ body {
 a { color: var(--accent); }
 main, .top, .bottom { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 1rem; }
 main { flex: 1; }
-.top { padding-top: 1rem; padding-bottom: 1rem; }
+.top {
+  padding-top: 1rem; padding-bottom: 1rem;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+}
+.top nav a { color: var(--fg); font-weight: 600; text-decoration: none; }
+.top nav a:hover { color: var(--accent); }
 .brand {
   display: inline-flex; align-items: center; gap: .5rem;
   color: var(--fg); text-decoration: none; font-weight: 700; font-size: 1.25rem;
@@ -55,3 +62,25 @@ main { flex: 1; }
 .kinds h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
 .kinds p { margin: 0; color: var(--muted); }
 .bottom { border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+
+/* Forms: sign in, sign up, forgot password, account */
+.form { max-width: 26rem; padding: 2rem 0 3rem; }
+.form h1 { font-size: clamp(1.6rem, 5vw, 2.2rem); line-height: 1.15; margin: 0 0 .75rem; }
+.form .lead { font-size: 1.05rem; }
+.form form { display: grid; gap: 1rem; margin: 1.25rem 0; }
+.form label { display: grid; gap: .35rem; font-weight: 600; }
+.form label small { font-weight: 400; color: var(--muted); }
+.form input {
+  font: inherit; font-weight: 400; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: .5rem; padding: .65rem .75rem; width: 100%;
+}
+.form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+button {
+  font: inherit; font-weight: 600; cursor: pointer; justify-self: start;
+  background: var(--accent); color: var(--on-accent); border: 0; border-radius: .5rem; padding: .7rem 1.2rem;
+}
+button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.problem {
+  border: 1px solid var(--accent); border-radius: .5rem; padding: .6rem .8rem;
+  color: var(--fg); background: var(--card);
+}

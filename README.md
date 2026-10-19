@@ -7,11 +7,17 @@ files**: free designs shared openly, paid designs sold through MakerFoundry. By
 ## Status
 October 2026: **MF-0** (workspace) done: a Rust web service with a home page and `/health`, CI,
 and a Dockerfile, live on Railway at <https://makerfoundry-production.up.railway.app>
-([`docs/deploy.md`](docs/deploy.md)). Next: **MF-1** (accounts, shared with StitchFoundry). See [`docs/plan.md`](docs/plan.md).
+([`docs/deploy.md`](docs/deploy.md)). **MF-1** (accounts) built: sign up, in and out with a StitchFoundry account, and a forgotten
+password; live once its database is added on Railway. Next: **MF-2** (upload and preview). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.
 - `cargo xtask ci`: the checks every commit must pass (fmt, clippy `-D warnings`, tests, assets).
+- The database tests need a Postgres they may make schemas in:
+  `MF_TEST_DATABASE_URL=postgres://user:password@localhost/db cargo xtask ci` (CI has one; without
+  it those tests are skipped).
+- Signing in locally needs `DATABASE_URL` and, for a test account service,
+  `STITCHFOUNDRY_CLOUD_URL` (see `docs/deploy.md`).
 
 ## For contributors and agents
 Start with [`CLAUDE.md`](CLAUDE.md) and [`docs/start-here.md`](docs/start-here.md).

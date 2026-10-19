@@ -9,9 +9,15 @@ use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+/// The site without a database or a reachable account service: the pages that need neither.
+fn app() -> axum::Router {
+    let cloud = makerfoundry::cloud::Cloud::new("http://127.0.0.1:9").unwrap();
+    makerfoundry::app(makerfoundry::AppState { cloud, db: None })
+}
+
 async fn get(path: &str) -> (StatusCode, axum::http::HeaderMap, String) {
     let request = Request::builder().uri(path).body(Body::empty()).unwrap();
-    let response = makerfoundry::app().oneshot(request).await.unwrap();
+    let response = app().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -33,7 +39,7 @@ async fn health_answers_head() {
         .uri("/health")
         .body(Body::empty())
         .unwrap();
-    let response = makerfoundry::app().oneshot(request).await.unwrap();
+    let response = app().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -93,6 +99,6 @@ async fn oversized_bodies_are_refused() {
         .header(header::CONTENT_LENGTH, big.len())
         .body(Body::from(big))
         .unwrap();
-    let response = makerfoundry::app().oneshot(request).await.unwrap();
+    let response = app().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
