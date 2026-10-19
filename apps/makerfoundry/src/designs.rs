@@ -269,21 +269,30 @@ async fn keep(
 
 // ---------------------------------------------------------------- reading them back
 
-struct DesignRow {
-    account_id: i64,
-    kind: String,
-    file_name: String,
-    file_key: String,
-    facts: serde_json::Value,
-    preview_svg: String,
+/// A design as kept.
+pub struct DesignRow {
+    pub account_id: i64,
+    pub kind: String,
+    pub file_name: String,
+    pub file_key: String,
+    pub facts: serde_json::Value,
+    pub preview_svg: String,
+    pub status: String,
+    pub title: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub licence: Option<String>,
+    pub downloads: i64,
 }
 
-async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
-    let row =
-        sqlx::query("SELECT account_id, kind, file_name, file_key, facts, preview_svg FROM mf_designs WHERE id = $1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads
+         FROM mf_designs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
     row.map(|r| {
         Ok(DesignRow {
             account_id: r.try_get("account_id")?,
@@ -292,12 +301,18 @@ async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error
             file_key: r.try_get("file_key")?,
             facts: r.try_get("facts")?,
             preview_svg: r.try_get("preview_svg")?,
+            status: r.try_get("status")?,
+            title: r.try_get("title")?,
+            description: r.try_get("description")?,
+            tags: r.try_get("tags")?,
+            licence: r.try_get("licence")?,
+            downloads: r.try_get("downloads")?,
         })
     })
     .transpose()
 }
 
-/// The design `id` if `user` made it (someone else's draft is "not found", not "forbidden").
+/// The design `id` if `user` made it (someone else's design is "not found", not "forbidden").
 async fn own_design(pool: &PgPool, user: &User, id: i64) -> Result<DesignRow, Response> {
     match design(pool, id).await {
         Ok(Some(d)) if d.account_id == user.account_id => Ok(d),
@@ -309,22 +324,59 @@ async fn own_design(pool: &PgPool, user: &User, id: i64) -> Result<DesignRow, Re
     }
 }
 
-/// (id, width, height) of a design's photos, in order.
-async fn photo_list(pool: &PgPool, design_id: i64) -> Vec<(i64, i32, i32)> {
-    sqlx::query_as("SELECT id, width, height FROM mf_design_photos WHERE design_id = $1 ORDER BY position")
-        .bind(design_id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default()
+/// A design's photos as a titled grid of thumbnails, each opening the large one (empty without
+/// photos).
+pub async fn photos_html(pool: &PgPool, id: i64) -> String {
+    let list: Vec<(i64, i32, i32)> =
+        sqlx::query_as("SELECT id, width, height FROM mf_design_photos WHERE design_id = $1 ORDER BY position")
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    let html: String = list
+        .iter()
+        .enumerate()
+        .map(|(n, (pid, w, h))| {
+            let tw = photos::THUMB_SIDE.min(u32::try_from(*w).unwrap_or(1)).max(1);
+            let th = (f64::from(*h) * f64::from(tw) / f64::from((*w).max(1))).round();
+            format!(
+                r#"<a href="/designs/{id}/photos/{pid}/large"><img src="/designs/{id}/photos/{pid}/thumb" alt="Photo {n}" width="{tw}" height="{th}" loading="lazy"></a>"#,
+                n = n + 1,
+            )
+        })
+        .collect();
+    if html.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<h2>Photos</h2><div class="photos">{html}</div>"#)
+    }
 }
+
+/// A design's drawing, facts and colours under `title`, with `intro` and `footer` (HTML).
+pub fn facts_section(d: &DesignRow, title: &str, intro: &str, footer: &str) -> Option<String> {
+    let section = match d.kind.as_str() {
+        "laser" => serde_json::from_value::<Laser>(d.facts.clone()).map(|mut l| {
+            l.svg = d.preview_svg.clone();
+            laser_result(title, &l, intro, footer)
+        }),
+        _ => serde_json::from_value::<Embroidery>(d.facts.clone()).map(|mut e| {
+            e.svg = d.preview_svg.clone();
+            result(title, &e, intro, footer)
+        }),
+    };
+    section.map_err(|e| eprintln!("designs: facts: {e}")).ok()
+}
+
+/// A maker's own design in their list: id, file name, title, kind, format, status, first photo.
+type OwnRow = (i64, String, String, String, String, String, Option<i64>);
 
 pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let (user, pool) = match maker(&state, &headers).await {
         Ok(m) => m,
         Err(r) => return r,
     };
-    let rows: Vec<(i64, String, String, String, Option<i64>)> = sqlx::query_as(
-        "SELECT d.id, d.file_name, d.kind, d.format,
+    let rows: Vec<OwnRow> = sqlx::query_as(
+        "SELECT d.id, d.file_name, d.title, d.kind, d.format, d.status,
                 (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1)
          FROM mf_designs d WHERE d.account_id = $1 ORDER BY d.created_at DESC LIMIT 200",
     )
@@ -334,16 +386,17 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
     .unwrap_or_default();
     let cards: String = rows
         .iter()
-        .map(|(id, name, kind, format, photo)| {
+        .map(|(id, file_name, title, kind, format, status, photo)| {
             let picture = match photo {
                 Some(p) => format!(r#"<img src="/designs/{id}/photos/{p}/thumb" alt="" loading="lazy">"#),
                 None => r#"<span class="muted">No photo yet</span>"#.to_string(),
             };
             format!(
-                r#"<li><a href="/designs/{id}"><span class="thumb">{picture}</span><strong>{name}</strong><span class="muted">{kind}, {format} · draft</span></a></li>"#,
-                name = escape(name),
+                r#"<li><a href="/designs/{id}"><span class="thumb">{picture}</span><strong>{name}</strong><span class="muted">{kind}, {format} · {status}</span></a></li>"#,
+                name = escape(if title.is_empty() { file_name } else { title }),
                 kind = if kind == "laser" { "Laser" } else { "Embroidery" },
                 format = escape(format),
+                status = if status == "published" { "published" } else { "draft" },
             )
         })
         .collect();
@@ -361,58 +414,54 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
     )
 }
 
+/// A maker's own page for a design: the drawing and facts, its listing and publishing, its
+/// photos, download and delete; `problem` above it all if there is one.
+pub async fn manage_page(_state: &AppState, pool: &PgPool, user: &User, id: i64, problem: &str) -> Response {
+    let d = match own_design(pool, user, id).await {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+    let has_profile = crate::makers::profile(pool, user.account_id).await.is_some();
+    let problem = if problem.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<p class="problem" role="alert">{}</p>"#, escape(problem))
+    };
+    let listing = crate::listings::manage_html(&d, id, has_profile);
+    let photos = photos_html(pool, id).await;
+    let delete = if d.status == "published" {
+        String::new()
+    } else {
+        format!(
+            r#"<form method="post" action="/designs/{id}/delete"><button type="submit" class="secondary">Delete this draft</button></form>"#
+        )
+    };
+    let footer = format!(
+        r#"{listing}{photos}
+<p class="actions"><a class="button" href="/designs/{id}/download">Download the file</a></p>
+{delete}
+<p><a href="/designs">Your designs</a></p>"#
+    );
+    let title = if d.title.is_empty() {
+        d.file_name.clone()
+    } else {
+        d.title.clone()
+    };
+    match facts_section(&d, &title, &problem, &footer) {
+        Some(html) => private(&format!("{} · MakerFoundry", escape(&title)), &html, true),
+        None => not_found(),
+    }
+}
+
 pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
     let (user, pool) = match maker(&state, &headers).await {
         Ok(m) => m,
         Err(r) => return r,
     };
-    let d = match own_design(&pool, &user, id).await {
-        Ok(d) => d,
-        Err(r) => return r,
-    };
-    let photo_html: String = photo_list(&pool, id)
-        .await
-        .iter()
-        .enumerate()
-        .map(|(n, (pid, w, h))| {
-            format!(
-                r#"<a href="/designs/{id}/photos/{pid}/large"><img src="/designs/{id}/photos/{pid}/thumb" alt="Photo {n}" width="{tw}" height="{th}" loading="lazy"></a>"#,
-                n = n + 1,
-                tw = photos::THUMB_SIDE.min(u32::try_from(*w).unwrap_or(0)),
-                th = (f64::from(*h) * f64::from(photos::THUMB_SIDE.min(u32::try_from(*w).unwrap_or(1))) / f64::from((*w).max(1))).round(),
-            )
-        })
-        .collect();
-    let photos_section = if photo_html.is_empty() {
-        String::new()
-    } else {
-        format!(r#"<h2>Photos</h2><div class="photos">{photo_html}</div>"#)
-    };
-    let footer = format!(
-        r#"{photos_section}
-<p class="actions"><a class="button" href="/designs/{id}/download">Download the file</a></p>
-<form method="post" action="/designs/{id}/delete"><button type="submit" class="secondary">Delete this draft</button></form>
-<p><a href="/designs">Your designs</a></p>"#
-    );
-    let section = match d.kind.as_str() {
-        "laser" => serde_json::from_value::<Laser>(d.facts).map(|mut l| {
-            l.svg = d.preview_svg;
-            laser_result(&d.file_name, &l, &footer)
-        }),
-        _ => serde_json::from_value::<Embroidery>(d.facts).map(|mut e| {
-            e.svg = d.preview_svg;
-            result(&d.file_name, &e, &footer)
-        }),
-    };
-    match section {
-        Ok(html) => private(&format!("{} · MakerFoundry", escape(&d.file_name)), &html, true),
-        Err(e) => {
-            eprintln!("designs: facts of {id}: {e}");
-            not_found()
-        }
-    }
+    manage_page(&state, &pool, &user, id, "").await
 }
 
+/// A maker's own download of their file (published or not; not counted).
 pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
     let (user, pool) = match maker(&state, &headers).await {
         Ok(m) => m,
@@ -430,18 +479,20 @@ pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id
     Redirect::to(storage.download_url(&d.file_key, &d.file_name).as_str()).into_response()
 }
 
+/// A design's photo or thumbnail: anyone's once the design is published, only its maker's before.
 pub async fn photo(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((id, photo_id, size)): Path<(i64, i64, String)>,
 ) -> Response {
-    let (user, pool) = match maker(&state, &headers).await {
-        Ok(m) => m,
-        Err(r) => return r,
+    let viewer = current_user(&state, &headers).await;
+    let Some(pool) = state.db.as_ref() else {
+        return not_found();
     };
-    if let Err(r) = own_design(&pool, &user, id).await {
-        return r;
-    }
+    let d = match design(pool, id).await {
+        Ok(Some(d)) if crate::listings::visible(&d, viewer.as_ref()) => d,
+        _ => return not_found(),
+    };
     let column = match size.as_str() {
         "thumb" => "thumb_key",
         "large" => "photo_key",
@@ -452,19 +503,22 @@ pub async fn photo(
     ))
     .bind(photo_id)
     .bind(id)
-    .fetch_optional(&pool)
+    .fetch_optional(pool)
     .await
     .ok()
     .flatten();
     let (Some(key), Some(storage)) = (key, state.storage.as_ref()) else {
         return not_found();
     };
+    // a published design's photos may be kept by browsers and caches; a draft's only privately
+    let cache = if d.status == "published" {
+        "public, max-age=3600"
+    } else {
+        "private, max-age=3600"
+    };
     match storage.get(&key).await {
         Ok(Some(bytes)) => (
-            [
-                (header::CONTENT_TYPE, "image/jpeg"),
-                (header::CACHE_CONTROL, "private, max-age=3600"),
-            ],
+            [(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, cache)],
             bytes,
         )
             .into_response(),
@@ -488,6 +542,9 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
         Ok(d) => d,
         Err(r) => return r,
     };
+    if d.status == "published" {
+        return manage_page(&state, &pool, &user, id, "Unpublish the design before deleting it.").await;
+    }
     let keys: Vec<(String, String)> =
         sqlx::query_as("SELECT photo_key, thumb_key FROM mf_design_photos WHERE design_id = $1")
             .bind(id)

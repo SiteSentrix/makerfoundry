@@ -70,7 +70,13 @@ async fn main() -> ExitCode {
     if storage.is_none() {
         eprintln!("no R2 settings: designs can be previewed but not kept");
     }
-    let state = makerfoundry::AppState { cloud, db, storage };
+    let publishers = makerfoundry::listings::Publishers::from_setting(std::env::var("MF_PUBLISHERS").ok().as_deref());
+    let state = makerfoundry::AppState {
+        cloud,
+        db,
+        storage,
+        publishers,
+    };
     match axum::serve(listener, makerfoundry::app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await

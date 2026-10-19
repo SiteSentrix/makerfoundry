@@ -232,6 +232,7 @@ async fn site() -> Option<Site> {
         cloud: Cloud::new(&url).unwrap(),
         db: Some(pool.clone()),
         storage: Some(storage),
+        publishers: makerfoundry::listings::Publishers::Everyone,
     });
     Some(Site {
         app,
@@ -336,7 +337,12 @@ async fn a_person_makes_an_account_signs_out_and_back_in() {
         page.body
     );
     assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
-    assert!(s.get("/", Some(&cookie)).await.body.contains("Your account"));
+    assert!(
+        s.get("/", Some(&cookie))
+            .await
+            .body
+            .contains(r#"href="/account">Account</a>"#)
+    );
     // the account is kept under the service's id; the cookie's id is kept only as its hash
     let (id, email): (i64, String) = sqlx::query_as("SELECT account_id, email FROM mf_accounts")
         .fetch_one(&s.pool)
@@ -513,6 +519,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         cloud: Cloud::new("http://127.0.0.1:9").unwrap(),
         db: Some(pool),
         storage: None,
+        publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
     });
     let s = Site {
         stored: Arc::default(),
@@ -530,6 +537,7 @@ async fn without_a_database_nobody_can_sign_in() {
         cloud: Cloud::new("http://127.0.0.1:9").unwrap(),
         db: None,
         storage: None,
+        publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -922,6 +930,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         cloud: Cloud::new(&url).unwrap(),
         db: Some(pool.clone()),
         storage: None,
+        publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
     });
     let s = Site {
         app,
@@ -943,4 +952,233 @@ async fn without_storage_designs_can_only_be_previewed() {
         "{}",
         r.body
     );
+}
+
+/// The id in a `/designs/<id>` address.
+fn design_id(path: &str) -> i64 {
+    path.trim_start_matches("/designs/").parse().unwrap()
+}
+
+/// Adds a design as the maker signed in with `cookie` → its id.
+async fn add_design(s: &Site, cookie: &str, format: sf_formats::Format, name: &str) -> i64 {
+    let parts = [
+        ("file", name, sample(format)),
+        ("photos", "sewn.jpg", photo_with_location()),
+    ];
+    let r = s.send(multipart("/designs/new", &parts, cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    design_id(r.location())
+}
+
+#[tokio::test]
+async fn a_free_design_is_published_found_and_downloaded() {
+    let Some(s) = site().await else { return };
+    let cookie = s
+        .post(
+            "/signup",
+            "email=ann%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let id = add_design(&s, &cookie, sf_formats::Format::Pes, "rose.pes").await;
+    let manage = format!("/designs/{id}");
+    // publishing needs a profile, details, and the maker's word that it's theirs to share
+    let r = s.post(&format!("{manage}/publish"), "confirm=yes", Some(&cookie)).await;
+    assert!(r.body.contains("maker profile first"), "{}", r.body);
+    let r = s
+        .post(
+            "/account/maker",
+            "name=Ann%27s+Stitches&handle=Ann+S&bio=",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("lower-case"), "{}", r.body);
+    let r = s
+        .post(
+            "/account/maker",
+            "name=Ann%27s+Stitches&handle=ann-s&bio=Hoops+%26+more",
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.location(), "/account");
+    let r = s.post(&format!("{manage}/publish"), "confirm=yes", Some(&cookie)).await;
+    assert!(r.body.contains("title and a licence first"), "{}", r.body);
+    let r = s.post(&format!("{manage}/edit"), "title=Rose+Bouquet&description=Roses+for+a+4x4+hoop.%0A%0AStitch+on+cotton.&tags=Flowers%2C+Roses%2C+flowers&licence=nope", Some(&cookie)).await;
+    assert!(r.body.contains("Choose a licence."), "{}", r.body);
+    let r = s.post(&format!("{manage}/edit"), "title=Rose+Bouquet&description=Roses+for+a+4x4+hoop.%0A%0AStitch+on+cotton.&tags=Flowers%2C+Roses%2C+flowers&licence=personal", Some(&cookie)).await;
+    assert_eq!(r.location(), manage);
+    // before publishing, nobody else can see it
+    assert_eq!(s.get(&format!("/d/{id}"), None).await.status, StatusCode::NOT_FOUND);
+    let r = s.post(&format!("{manage}/publish"), "", Some(&cookie)).await;
+    assert!(r.body.contains("yours to share"), "{}", r.body);
+    let r = s.post(&format!("{manage}/publish"), "confirm=yes", Some(&cookie)).await;
+    assert_eq!(r.location(), format!("/d/{id}/rose-bouquet"));
+    // its public page, for anyone: title, maker, description, tags, licence, photo; never an email
+    let page = s.get(&format!("/d/{id}/rose-bouquet"), None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    for want in [
+        "<h1>Rose Bouquet</h1>",
+        r#"href="/makers/ann-s">Ann&#39;s Stitches</a>"#,
+        "<p>Roses for a 4x4 hoop.</p>",
+        "/browse?tag=flowers",
+        "Personal use",
+        "Don&#39;t share",
+        "/thumb\"",
+        "Download free",
+    ] {
+        assert!(page.body.contains(want), "{want}: {}", page.body);
+    }
+    assert!(!page.body.contains("ann@example.com"));
+    // found by words (stemmed: "rose" finds "Roses"), by tag, by kind; not by the wrong kind
+    for query in [
+        "/browse",
+        "/browse?q=rose",
+        "/browse?q=bouquet+cotton",
+        "/browse?tag=roses",
+        "/browse?kind=embroidery",
+        "/browse?sort=popular",
+    ] {
+        assert!(s.get(query, None).await.body.contains("Rose Bouquet"), "{query}");
+    }
+    for query in ["/browse?q=tulip", "/browse?kind=laser", "/browse?tag=tulips"] {
+        assert!(!s.get(query, None).await.body.contains("Rose Bouquet"), "{query}");
+    }
+    // on its maker's page and the home page
+    let maker = s.get("/makers/ann-s", None).await;
+    assert!(
+        maker.body.contains("Ann&#39;s Stitches")
+            && maker.body.contains("Hoops &amp; more")
+            && maker.body.contains("Rose Bouquet")
+    );
+    assert!(s.get("/", None).await.body.contains("Newest designs"));
+    // downloaded by anyone, counted, saved under its title
+    let dl = s.get(&format!("/d/{id}/download"), None).await;
+    assert_eq!(dl.status, StatusCode::SEE_OTHER);
+    assert!(
+        dl.location().contains("rose-bouquet.pes") && dl.location().contains("X-Amz-Signature="),
+        "{}",
+        dl.location()
+    );
+    assert!(s.get(&format!("/d/{id}"), None).await.body.contains("1 download"));
+    // a published design's photos are public; the maker's own download isn't counted
+    let thumb = page
+        .body
+        .split("src=\"")
+        .find(|p| p.starts_with("/designs/"))
+        .and_then(|p| p.split('"').next())
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        s.get(&thumb, None).await.headers[header::CACHE_CONTROL],
+        "public, max-age=3600"
+    );
+    s.get(&format!("{manage}/download"), Some(&cookie)).await;
+    let n: i64 = sqlx::query_scalar("SELECT downloads FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    // a published design isn't deleted by mistake; unpublished, it's hidden again
+    assert!(
+        s.post(&format!("{manage}/delete"), "", Some(&cookie))
+            .await
+            .body
+            .contains("Unpublish the design before deleting it.")
+    );
+    s.post(&format!("{manage}/unpublish"), "", Some(&cookie)).await;
+    assert_eq!(s.get(&format!("/d/{id}"), None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get(&thumb, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.get(&format!("/d/{id}/download"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!s.get("/browse", None).await.body.contains("Rose Bouquet"));
+    // the maker still sees it, marked a draft
+    assert!(
+        s.get(&format!("/d/{id}"), Some(&cookie))
+            .await
+            .body
+            .contains("only you can see this page")
+    );
+}
+
+#[tokio::test]
+async fn others_cant_change_a_design_or_take_a_maker_address() {
+    let Some(s) = site().await else { return };
+    let ann = s
+        .post(
+            "/signup",
+            "email=ann%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let bob = s
+        .post(
+            "/signup",
+            "email=bob%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let id = add_design(&s, &ann, sf_formats::Format::Dst, "star.dst").await;
+    s.post("/account/maker", "name=Ann&handle=ann-s", Some(&ann)).await;
+    let r = s.post("/account/maker", "name=Bob&handle=ann-s", Some(&bob)).await;
+    assert!(r.body.contains("That address is taken"), "{}", r.body);
+    for (path, form) in [
+        ("edit", "title=Mine&licence=cc0"),
+        ("publish", "confirm=yes"),
+        ("unpublish", ""),
+    ] {
+        let r = s.post(&format!("/designs/{id}/{path}"), form, Some(&bob)).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{path}");
+    }
+    let title: String = sqlx::query_scalar("SELECT title FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(title, "");
+}
+
+#[tokio::test]
+async fn publishing_waits_for_the_launch_unless_allowed() {
+    let Some(pool) = test_db().await else { return };
+    let (url, fake) = fake_cloud().await;
+    let (storage, stored) = fake_storage().await;
+    let app = makerfoundry::app(AppState {
+        cloud: Cloud::new(&url).unwrap(),
+        db: Some(pool.clone()),
+        storage: Some(storage),
+        publishers: makerfoundry::listings::Publishers::Only(vec![]),
+    });
+    let s = Site {
+        app,
+        pool,
+        fake,
+        stored,
+    };
+    let cookie = s
+        .post(
+            "/signup",
+            "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let id = add_design(&s, &cookie, sf_formats::Format::Pes, "rose.pes").await;
+    s.post("/account/maker", "name=Ann&handle=ann-s", Some(&cookie)).await;
+    s.post(&format!("/designs/{id}/edit"), "title=Rose&licence=cc0", Some(&cookie))
+        .await;
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert!(
+        r.body.contains("Publishing opens when MakerFoundry launches"),
+        "{}",
+        r.body
+    );
+    assert_eq!(s.get(&format!("/d/{id}"), None).await.status, StatusCode::NOT_FOUND);
 }

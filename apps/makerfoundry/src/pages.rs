@@ -29,9 +29,9 @@ pub fn escape(text: &str) -> String {
 /// account or a way to sign in.
 pub fn page(title: &str, body: &str, signed_in: bool) -> String {
     let nav = if signed_in {
-        r#"<a href="/account">Your account</a>"#
+        r#"<a href="/browse">Browse</a><a href="/account">Account</a>"#
     } else {
-        r#"<a href="/signin">Sign in</a>"#
+        r#"<a href="/browse">Browse</a><a href="/signin">Sign in</a>"#
     };
     format!(
         r#"<!doctype html>

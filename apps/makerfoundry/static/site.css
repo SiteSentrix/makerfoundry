@@ -126,3 +126,33 @@ a.button {
   background: var(--accent); color: var(--on-accent); border-radius: .5rem; padding: .7rem 1.2rem;
 }
 .actions { margin: 0 0 1rem; }
+
+/* Listings: the header's links, a design's byline and tags, browsing, the details form */
+.top nav { display: flex; gap: 1.1rem; }
+.byline { color: var(--muted); margin: -.5rem 0 1rem; }
+.tags { list-style: none; padding: 0; margin: 0 0 1.5rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+.tags a {
+  display: inline-block; padding: .2rem .65rem; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card); color: var(--fg); text-decoration: none; font-size: .9rem;
+}
+.search { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+.search input[type=search] { flex: 1 1 14rem; }
+.search input, .search select {
+  font: inherit; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: .5rem; padding: .55rem .7rem;
+}
+.form textarea {
+  font: inherit; color: var(--fg); background: var(--card); width: 100%;
+  border: 1px solid var(--line); border-radius: .5rem; padding: .65rem .75rem; resize: vertical;
+}
+.form fieldset { border: 1px solid var(--line); border-radius: .75rem; padding: .75rem 1rem 1rem; margin: 0; display: grid; gap: .75rem; }
+.form legend { font-weight: 600; padding: 0 .3rem; }
+label.choice { display: flex; gap: .6rem; align-items: flex-start; font-weight: 400; }
+label.choice input { margin-top: .3rem; width: auto; }
+.publish { display: grid; gap: .75rem; margin: 0 0 1.5rem; max-width: 40rem; }
+.design > p, .design > h2 { max-width: 40rem; }
+.top nav a { white-space: nowrap; }
+@media (max-width: 26rem) {
+  .brand span { font-size: 1.1rem; }
+  .top nav { gap: .8rem; font-size: .95rem; }
+}

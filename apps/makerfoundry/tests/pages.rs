@@ -16,6 +16,7 @@ fn app() -> axum::Router {
         cloud,
         db: None,
         storage: None,
+        publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
     })
 }
 

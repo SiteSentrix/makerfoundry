@@ -10,8 +10,10 @@ and a Dockerfile, live on Railway at <https://makerfoundry-production.up.railway
 ([`docs/deploy.md`](docs/deploy.md)). **MF-1** (accounts) done and live: sign up, in and out with a Foundry Account, and a
 forgotten password. **MF-2** (upload and preview) under way: an
 uploaded embroidery file is drawn stitch by stitch, and an SVG, DXF or PDF laser file line by line
-(`/preview`, signed in); a maker keeps designs with photos as drafts (`/designs`) once
-file storage (Cloudflare R2) is set up. See [`docs/plan.md`](docs/plan.md).
+(`/preview`, signed in); a maker keeps designs with photos as drafts (`/designs`) 
+in Cloudflare R2. **MF-3** (listings) built: maker pages, design details and licences,
+publishing, public design pages with free downloads, browse and search; publishing opens at the
+launch. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

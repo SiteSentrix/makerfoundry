@@ -84,7 +84,8 @@ How it works, given what that service has today (`apps/stitchfoundry-cloud`, `do
   sites never see passwords.
 
 ## Licences a listing can carry
-Plain-language choices (final wording is the owner's):
+Plain-language choices (final wording is the owner's; the draft wording is in
+`apps/makerfoundry/src/licences.rs`, with "small business" at 200 items until the owner says):
 - **Personal use**: make it for yourself and gifts.
 - **Small business**: sell what you make with it (stitched or cut items), up to a number of items.
 - **Commercial**: no limit on items made.
@@ -106,7 +107,7 @@ Nobody may resell or share the files themselves.
 | MF-0 | Workspace: Cargo workspace, CI (fmt, clippy -D warnings, tests), `/health`, a hello page deployed to Railway | the page answers on a Railway address. **Done 2026-10-19**: https://makerfoundry-production.up.railway.app |
 | MF-1 | Accounts: sign up, sign in, sessions, password reset by email | a person can make an account. **Done 2026-10-19**, live (`/signup`, `/signin`, `/forgot`, `/account`) with its Postgres on Railway; reset emails wait on the account service's `RESEND_API_KEY` |
 | MF-2 | Upload and preview: embroidery and laser files read, checked and drawn; photos; R2 storage | an uploaded PES shows its stitches. **Embroidery done 2026-10-19**: `/preview` reads every StitchFoundry format (`sf-formats`, pinned by commit) and draws the stitches with size, stitch count and colours. **SVG, DXF and PDF done 2026-10-19**: drawn from their shapes in mm, with size, shapes, line length and colours (layers). **Photos and keeping files built 2026-10-19**: `/designs/new` keeps a design file and up to 6 photos (decoded and saved again as JPEG, metadata dropped) in R2, as a draft only its maker sees (`/designs`); live once R2's settings are in Railway (`docs/deploy.md`) |
-| MF-3 | Listings: design pages, browse, search, tags, seller pages; free downloads | a free design can be found and downloaded |
+| MF-3 | Listings: design pages, browse, search, tags, seller pages; free downloads | a free design can be found and downloaded. **Done 2026-10-19**: maker profiles (`/account/maker`, `/makers/<handle>`), design details and licence (`/designs/<id>/edit`), publish with the maker's word it's theirs to share, public pages (`/d/<id>`) with free counted downloads, browse and search (`/browse`: words, tag, kind, newest or most downloaded), newest on the home page. Publishing is open only to `MF_PUBLISHERS` until the launch (MF-5's takedown process first) |
 | MF-4 | Selling: Stripe Connect onboarding, checkout with the platform fee, library, sales page, refunds | a test-mode sale pays the seller less the fee |
 | MF-5 | Safety: report a listing, DMCA page and process, admin queue, upload limits, rate limits | a takedown can be done in minutes |
 | MF-6 | Launch: Terms, Privacy, Seller Terms, a landing page, makerfoundry.app live | public launch |

@@ -68,8 +68,9 @@ pub(crate) fn thousands(n: usize) -> String {
     out
 }
 
-/// An embroidery design's section: name, stitches drawn, facts, colours, then `footer` (HTML).
-pub(crate) fn result(name: &str, e: &Embroidery, footer: &str) -> String {
+/// An embroidery design's section: name, `intro` (HTML), stitches drawn, facts, colours, then
+/// `footer` (HTML).
+pub(crate) fn result(name: &str, e: &Embroidery, intro: &str, footer: &str) -> String {
     let colours: String = e
         .colours
         .iter()
@@ -86,6 +87,7 @@ pub(crate) fn result(name: &str, e: &Embroidery, footer: &str) -> String {
     format!(
         r#"<section class="design">
 <h1>{name}</h1>
+{intro}
 <figure class="preview">{svg}</figure>
 <dl class="facts">
 <div><dt>Format</dt><dd>{format}</dd></div>
@@ -113,7 +115,7 @@ pub(crate) fn result(name: &str, e: &Embroidery, footer: &str) -> String {
 
 /// A laser design's section: its lines drawn, its size, shapes and line length, its colours, then
 /// `footer` (HTML).
-pub(crate) fn laser_result(name: &str, l: &Laser, footer: &str) -> String {
+pub(crate) fn laser_result(name: &str, l: &Laser, intro: &str, footer: &str) -> String {
     let colours: String = l
         .colours
         .iter()
@@ -138,6 +140,7 @@ pub(crate) fn laser_result(name: &str, l: &Laser, footer: &str) -> String {
     format!(
         r#"<section class="design">
 <h1>{name}</h1>
+{intro}
 <figure class="preview">{svg}</figure>
 {not_drawn}
 <dl class="facts">
@@ -210,8 +213,8 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
         return problem("Choose a file to upload.");
     };
     let read = match laser::kind(&bytes, &name) {
-        Some(kind) => laser::read(&bytes, kind).map(|l| laser_result(&name, &l, ANOTHER)),
-        None => embroidery::read(&bytes, &name).map(|e| result(&name, &e, ANOTHER)),
+        Some(kind) => laser::read(&bytes, kind).map(|l| laser_result(&name, &l, "", ANOTHER)),
+        None => embroidery::read(&bytes, &name).map(|e| result(&name, &e, "", ANOTHER)),
     };
     match read {
         Ok(page) => private(TITLE, &page, true),

@@ -10,6 +10,9 @@ pub mod db;
 pub mod designs;
 pub mod embroidery;
 pub mod laser;
+pub mod licences;
+pub mod listings;
+pub mod makers;
 pub mod pages;
 pub mod photos;
 pub mod preview;
@@ -56,6 +59,8 @@ pub struct AppState {
     pub db: Option<PgPool>,
     /// Where files are kept (R2); without it designs can be previewed but not kept.
     pub storage: Option<storage::Storage>,
+    /// Who may publish designs (`MF_PUBLISHERS`; nobody until the launch).
+    pub publishers: listings::Publishers,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -75,6 +80,15 @@ pub fn app(state: AppState) -> Router {
         .route("/designs/{id}/download", get(designs::download))
         .route("/designs/{id}/photos/{photo}/{size}", get(designs::photo))
         .route("/designs/{id}/delete", post(designs::delete))
+        .route("/designs/{id}/edit", get(listings::edit_page).post(listings::save))
+        .route("/designs/{id}/publish", post(listings::publish))
+        .route("/designs/{id}/unpublish", post(listings::unpublish))
+        .route("/d/{id}", get(listings::public_page))
+        .route("/d/{id}/download", get(listings::download))
+        .route("/d/{id}/{slug}", get(listings::public_page_slug))
+        .route("/browse", get(listings::browse))
+        .route("/makers/{handle}", get(makers::show))
+        .route("/account/maker", get(makers::edit_page).post(makers::save))
         .fallback(not_found)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
     let uploads = Router::new()
@@ -144,9 +158,11 @@ async fn favicon() -> Response {
 
 async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String> {
     let signed_in = accounts::current_user(&state, &headers).await.is_some();
+    let newest = listings::newest(&state).await;
     Html(page(
         "MakerFoundry",
-        r#"<section class="hero">
+        &format!(
+            r#"<section class="hero">
   <h1>Designs for your machines</h1>
   <p class="lead">Machine-embroidery designs and laser-cut files, shared free or sold by the
   makers who made them.</p>
@@ -167,7 +183,9 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
     <h2>For makers</h2>
     <p>Share a design for free, or sell it and get paid for each sale.</p>
   </article>
-</section>"#,
+</section>
+{newest}"#
+        ),
         signed_in,
     ))
 }
