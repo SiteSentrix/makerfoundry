@@ -1435,3 +1435,26 @@ async fn the_copyright_page_says_how_to_send_a_notice() {
         "linked from every page"
     );
 }
+
+#[tokio::test]
+async fn sessions_past_their_days_are_forgotten() {
+    let Some(s) = site().await else { return };
+    s.post(
+        "/signup",
+        "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+        None,
+    )
+    .await;
+    s.post(
+        "/signup",
+        "email=d%40e.f&password=fire+truck+1&again=fire+truck+1",
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE mf_sessions SET last_seen_at = now() - interval '31 days' WHERE account_id = 1000")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(makerfoundry::db::forget_old_sessions(&s.pool).await.unwrap(), 1);
+    assert_eq!(s.sessions().await, 1, "the recent one stays");
+}

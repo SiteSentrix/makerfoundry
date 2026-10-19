@@ -11,7 +11,7 @@ repository = "https://github.com/sitesentrix/makerfoundry"
 
 [workspace.dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "form", "multipart"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tower-http = { version = "0.6", default-features = false, features = ["set-header", "timeout", "limit"] }
 http-body-util = "0.1"

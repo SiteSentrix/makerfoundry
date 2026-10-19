@@ -101,6 +101,15 @@ pub async fn checked(pool: &PgPool, id_hash: &str, account: &Account) -> Result<
     remember_account(pool, account).await
 }
 
+/// Deletes sessions unused for `SESSION_DAYS` (they no longer work; this forgets them too).
+pub async fn forget_old_sessions(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    sqlx::query("DELETE FROM mf_sessions WHERE last_seen_at < now() - make_interval(days => $1)")
+        .bind(SESSION_DAYS)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+}
+
 /// Ends a session → the account service's token it held, to end that one too.
 pub async fn end_session(pool: &PgPool, id_hash: &str) -> Result<Option<String>, sqlx::Error> {
     let row = sqlx::query("DELETE FROM mf_sessions WHERE id_hash = $1 RETURNING cloud_token")

@@ -57,6 +57,17 @@ impl Limits {
         self.allow_at(rule, key, Instant::now())
     }
 
+    /// Forgets every key not used within the longest window (a day): what the privacy policy
+    /// promises about network addresses. Run every few minutes.
+    pub fn sweep(&self) {
+        self.sweep_at(Instant::now());
+    }
+
+    fn sweep_at(&self, now: Instant) {
+        let mut hits = self.hits.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        hits.retain(|_, times| times.back().is_some_and(|t| now.duration_since(*t) < UPLOAD.per));
+    }
+
     fn allow_at(&self, rule: Rule, key: &str, now: Instant) -> bool {
         // (a panic elsewhere while holding the lock leaves only counts behind: carry on)
         let mut hits = self.hits.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -126,6 +137,9 @@ mod tests {
             limits.allow_at(r, "a", t0 + Duration::from_secs(61)),
             "the first has left the window"
         );
+        // a day later, nothing of either address is kept
+        limits.sweep_at(t0 + Duration::from_secs(61) + UPLOAD.per);
+        assert!(limits.hits.lock().unwrap().is_empty());
     }
 
     #[test]

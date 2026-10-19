@@ -85,6 +85,21 @@ async fn main() -> ExitCode {
         admins,
         limits,
     };
+    // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
+    // (what the privacy policy says is kept, and for how long)
+    let (sweep_limits, sweep_db) = (state.limits.clone(), state.db.clone());
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(std::time::Duration::from_secs(600));
+        loop {
+            every.tick().await;
+            sweep_limits.sweep();
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::db::forget_old_sessions(pool).await
+            {
+                eprintln!("sessions: {e}");
+            }
+        }
+    });
     match axum::serve(listener, makerfoundry::app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
