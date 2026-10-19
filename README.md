@@ -5,9 +5,9 @@ files**: free designs shared openly, paid designs sold through MakerFoundry. By
 [SiteSentrix](https://sitesentrix.com), the makers of [StitchFoundry](https://stitchfoundry.app).
 
 ## Status
-October 2026: **MF-0** (workspace) built: a Rust web service with a home page and `/health`, CI,
-and a Dockerfile for Railway. Waiting on the first Railway deploy ([`docs/deploy.md`](docs/deploy.md)).
-Next: **MF-1** (accounts). See [`docs/plan.md`](docs/plan.md).
+October 2026: **MF-0** (workspace) done: a Rust web service with a home page and `/health`, CI,
+and a Dockerfile, live on Railway at <https://makerfoundry-production.up.railway.app>
+([`docs/deploy.md`](docs/deploy.md)). Next: **MF-1** (accounts, shared with StitchFoundry). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

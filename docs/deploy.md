@@ -5,7 +5,18 @@ MakerFoundry runs on Railway (the owner's Pro plan) as one service built from th
 before switching traffic to a new deploy. Nothing secret is in the repository: settings are
 Railway **Variables**.
 
+## Where it runs
+- Railway project **MakerFoundry**, environment `production`, service `makerfoundry`, deploying
+  `main` of `SiteSentrix/makerfoundry`.
+- Address: <https://makerfoundry-production.up.railway.app> (first deployed 2026-10-19).
+- Claude sessions reach this one project through a Railway **project token** in the cloud
+  environment's `RAILWAY_TOKEN` variable (Railway's GraphQL API, header `Project-Access-Token`).
+  The token can't see the owner's other projects. To revoke it: the project's **Settings → Tokens**.
+
 ## First deploy (MF-0)
+
+Done on 2026-10-19 through the API with the project token (the service, `PORT`, the domain). The
+steps below are the same thing by hand, for a new project or if it ever needs redoing.
 
 Do these once, in a web browser (the phone works too, but a PC is easier).
 
