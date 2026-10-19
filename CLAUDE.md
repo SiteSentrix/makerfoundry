@@ -58,6 +58,20 @@ These rules come from the VectorCraft/StitchFoundry `CLAUDE.md` (kept for refere
 - **Look at what you build.** For page work, render the page (Playwright/Chromium is installed in
   cloud sessions) and look at it at phone and desktop widths before calling it done.
 
+## Debugging
+When something fails and the cause isn't obvious, follow the `/debug` skill
+(`.claude/skills/debug/SKILL.md`, based on Kuhlmann, *The Book of Debugging*). What matters most:
+- **Reproduce first, and make the loop fast**: one named input and one command; never the full CI
+  as the loop. Run the one failing test, or the server locally with `curl` and a Playwright screenshot.
+- **Look at what the program actually did** before theorising, and build a flag or command when you
+  keep wanting to see something.
+- **One hypothesis per experiment**, written down with what either result will teach; cap guessing
+  at about an hour, then switch strategy (bisect, instrument, follow the data).
+- **Verify the fix** by undoing it (the bug returns) and redoing it (it goes); keep the repro as a
+  regression test; look for the same mistake elsewhere.
+- Keep a debugging log in `docs/debug-logs/YYYY-MM-DD-<topic>.md` for anything that takes more
+  than one sitting, and reference it from the commit.
+
 ## Commit authorship
 Commits are authored by **Bruce Wattendorf**, so the work shows on his GitHub profile. AI
 assistance is credited with a trailer, not as the author.
