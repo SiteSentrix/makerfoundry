@@ -225,6 +225,11 @@ struct Site {
 }
 
 async fn site() -> Option<Site> {
+    site_with(Vec::new()).await
+}
+
+/// The test site, with `admins` (account ids: the stand-in service numbers accounts from 1000).
+async fn site_with(admins: Vec<i64>) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
     let (url, fake) = fake_cloud().await;
@@ -233,6 +238,8 @@ async fn site() -> Option<Site> {
         db: Some(pool.clone()),
         storage: Some(storage),
         publishers: makerfoundry::listings::Publishers::Everyone,
+        admins,
+        limits: std::sync::Arc::default(),
     });
     Some(Site {
         app,
@@ -520,6 +527,8 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         db: Some(pool),
         storage: None,
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
+        admins: Vec::new(),
+        limits: std::sync::Arc::default(),
     });
     let s = Site {
         stored: Arc::default(),
@@ -538,6 +547,8 @@ async fn without_a_database_nobody_can_sign_in() {
         db: None,
         storage: None,
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
+        admins: Vec::new(),
+        limits: std::sync::Arc::default(),
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -931,6 +942,8 @@ async fn without_storage_designs_can_only_be_previewed() {
         db: Some(pool.clone()),
         storage: None,
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
+        admins: Vec::new(),
+        limits: std::sync::Arc::default(),
     });
     let s = Site {
         app,
@@ -1153,6 +1166,8 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         db: Some(pool.clone()),
         storage: Some(storage),
         publishers: makerfoundry::listings::Publishers::Only(vec![]),
+        admins: Vec::new(),
+        limits: std::sync::Arc::default(),
     });
     let s = Site {
         app,
@@ -1181,4 +1196,242 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         r.body
     );
     assert_eq!(s.get(&format!("/d/{id}"), None).await.status, StatusCode::NOT_FOUND);
+}
+
+/// A published design by a maker signed in with `cookie` → its id.
+async fn published(s: &Site, cookie: &str, handle: &str, title: &str) -> i64 {
+    let id = add_design(s, cookie, sf_formats::Format::Pes, "logo.pes").await;
+    s.post("/account/maker", &format!("name=Maker&handle={handle}"), Some(cookie))
+        .await;
+    s.post(
+        &format!("/designs/{id}/edit"),
+        &format!("title={title}&licence=commercial"),
+        Some(cookie),
+    )
+    .await;
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    id
+}
+
+#[tokio::test]
+async fn a_takedown_is_done_in_minutes() {
+    // the first account made is the admin
+    let Some(s) = site_with(vec![1000]).await else { return };
+    let admin = s
+        .post(
+            "/signup",
+            "email=admin%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let maker = s
+        .post(
+            "/signup",
+            "email=maker%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let id = published(&s, &maker, "copycat", "Famous+Mouse").await;
+    // anyone can report it, from its page
+    let page = s.get(&format!("/d/{id}"), None).await;
+    assert!(page.body.contains(&format!("/d/{id}/report")), "{}", page.body);
+    let r = s
+        .post(
+            &format!("/d/{id}/report"),
+            "reason=trademark&details=That+is+a+famous+cartoon+mouse.",
+            None,
+        )
+        .await;
+    assert!(r.body.contains("Your report is in"), "{}", r.body);
+    assert!(
+        s.post(&format!("/d/{id}/report"), "reason=nope", None)
+            .await
+            .body
+            .contains("Choose what the problem is")
+    );
+    // and its copyright owner sends a notice, every element the law asks for
+    let notice = format!(
+        "name=Rights+Holder&email=legal%40example.com&address=1+Main+St%0ASpringfield&phone=555-0100&original=Our+mouse+character&designs=https%3A%2F%2Fmakerfoundry.app%2Fd%2F{id}%2Ffamous-mouse&good_faith=yes&accurate=yes&signature=Rights+Holder"
+    );
+    assert!(
+        s.post("/dmca/notice", &notice.replace("&accurate=yes", ""), None)
+            .await
+            .body
+            .contains("Both statements are needed")
+    );
+    assert!(
+        s.post("/dmca/notice", &notice.replace(&format!("%2Fd%2F{id}"), "%2Fx"), None)
+            .await
+            .body
+            .contains("at least one design")
+    );
+    assert!(
+        s.post("/dmca/notice", &notice, None)
+            .await
+            .body
+            .contains("Notice received")
+    );
+    // the queue is the admins' alone
+    assert_eq!(s.get("/admin", Some(&maker)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get("/admin", None).await.status, StatusCode::NOT_FOUND);
+    let queue = s.get("/admin", Some(&admin)).await;
+    assert!(
+        queue.body.contains("A copyright notice (DMCA)")
+            && queue.body.contains("Rights Holder")
+            && queue.body.contains("famous cartoon mouse"),
+        "{}",
+        queue.body
+    );
+    // one click: down
+    let rid = queue
+        .body
+        .split("/admin/reports/")
+        .nth(1)
+        .and_then(|r| r.split('/').next())
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        s.post(&format!("/admin/reports/{rid}/takedown"), "", Some(&maker))
+            .await
+            .status,
+        StatusCode::NOT_FOUND,
+        "not by the maker"
+    );
+    let r = s
+        .post(&format!("/admin/reports/{rid}/takedown"), "", Some(&admin))
+        .await;
+    assert_eq!(r.location(), "/admin");
+    // gone from every public place, both reports answered, the action logged
+    assert_eq!(s.get(&format!("/d/{id}"), None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.get(&format!("/d/{id}/download"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!s.get("/browse", None).await.body.contains("Famous Mouse"));
+    assert!(!s.get("/makers/copycat", None).await.body.contains("Famous Mouse"));
+    assert!(s.get("/admin", Some(&admin)).await.body.contains("Nothing waiting"));
+    let logged: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mf_moderation_log WHERE action = 'takedown' AND design_id = $1")
+            .bind(id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(logged, 1);
+    // the maker sees why, can't publish it again, and may send a counter-notice
+    let manage = s.get(&format!("/designs/{id}"), Some(&maker)).await;
+    assert!(
+        manage.body.contains("Taken down after a report") && manage.body.contains("counter-notice"),
+        "{}",
+        manage.body
+    );
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&maker))
+        .await;
+    assert!(
+        r.body.contains("can&#39;t be published again") || r.body.contains("can't be published again"),
+        "{}",
+        r.body
+    );
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&maker)).await;
+    let status: String = sqlx::query_scalar("SELECT status FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "removed", "unpublishing doesn't undo a takedown");
+    let counter = "name=Maker+Person&address=2+Elm+St&phone=555-0101&email=maker%40example.com&mistake=yes&consent=yes&signature=Maker+Person";
+    assert!(
+        s.post(
+            &format!("/designs/{id}/counter"),
+            &counter.replace("&consent=yes", ""),
+            Some(&maker)
+        )
+        .await
+        .body
+        .contains("Both statements")
+    );
+    assert!(
+        s.post(&format!("/designs/{id}/counter"), counter, Some(&maker))
+            .await
+            .body
+            .contains("Counter-notice received")
+    );
+    // after the waiting time, the admin restores it
+    let queue = s.get("/admin", Some(&admin)).await;
+    assert!(
+        queue.body.contains("A counter-notice from the maker") && queue.body.contains("Restore the design"),
+        "{}",
+        queue.body
+    );
+    let rid = queue
+        .body
+        .split("/admin/reports/")
+        .nth(1)
+        .and_then(|r| r.split('/').next())
+        .unwrap()
+        .to_string();
+    s.post(&format!("/admin/reports/{rid}/restore"), "", Some(&admin)).await;
+    assert_eq!(s.get(&format!("/d/{id}"), None).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn reports_and_sign_ups_are_rate_limited() {
+    let Some(s) = site().await else { return };
+    let maker = s
+        .post(
+            "/signup",
+            "email=maker%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let id = published(&s, &maker, "maker-one", "Rose").await;
+    for _ in 0..makerfoundry::limits::REPORT.max {
+        assert!(
+            s.post(&format!("/d/{id}/report"), "reason=spam", None)
+                .await
+                .body
+                .contains("Your report is in")
+        );
+    }
+    let r = s.post(&format!("/d/{id}/report"), "reason=spam", None).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    // one sign-up made above; the rest of the hour's allowance, then no more
+    for i in 1..makerfoundry::limits::SIGNUP.max {
+        s.post(
+            "/signup",
+            &format!("email=p{i}%40example.com&password=fire+truck+1&again=fire+truck+1"),
+            None,
+        )
+        .await;
+    }
+    let r = s
+        .post(
+            "/signup",
+            "email=late%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await;
+    assert!(r.body.contains("Too many tries"), "{}", r.body);
+    assert!(!s.fake.lock().unwrap().accounts.contains_key("late@example.com"));
+}
+
+#[tokio::test]
+async fn the_copyright_page_says_how_to_send_a_notice() {
+    let Some(s) = site().await else { return };
+    let page = s.get("/dmca", None).await;
+    assert!(
+        page.body.contains("512(c)(3)")
+            && page.body.contains("/dmca/notice")
+            && page.body.contains("repeatedly infringe")
+    );
+    assert!(
+        s.get("/", None).await.body.contains(r#"href="/dmca""#),
+        "linked from every page"
+    );
 }

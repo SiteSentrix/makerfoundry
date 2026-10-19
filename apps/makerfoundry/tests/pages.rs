@@ -17,6 +17,8 @@ fn app() -> axum::Router {
         db: None,
         storage: None,
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
+        admins: Vec::new(),
+        limits: std::sync::Arc::default(),
     })
 }
 

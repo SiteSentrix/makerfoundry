@@ -11,8 +11,10 @@ pub mod designs;
 pub mod embroidery;
 pub mod laser;
 pub mod licences;
+pub mod limits;
 pub mod listings;
 pub mod makers;
+pub mod moderation;
 pub mod pages;
 pub mod photos;
 pub mod preview;
@@ -61,6 +63,10 @@ pub struct AppState {
     pub storage: Option<storage::Storage>,
     /// Who may publish designs (`MF_PUBLISHERS`; nobody until the launch).
     pub publishers: listings::Publishers,
+    /// The accounts that see reports and take designs down (`MF_ADMINS`).
+    pub admins: Vec<i64>,
+    /// How often an address or an account may do things.
+    pub limits: std::sync::Arc<limits::Limits>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -89,6 +95,17 @@ pub fn app(state: AppState) -> Router {
         .route("/browse", get(listings::browse))
         .route("/makers/{handle}", get(makers::show))
         .route("/account/maker", get(makers::edit_page).post(makers::save))
+        .route("/d/{id}/report", get(moderation::report_page).post(moderation::report))
+        .route(
+            "/designs/{id}/counter",
+            get(moderation::counter_page).post(moderation::counter),
+        )
+        .route("/dmca", get(moderation::policy))
+        .route("/dmca/notice", get(moderation::notice_page).post(moderation::notice))
+        .route("/admin", get(moderation::queue))
+        .route("/admin/reports/{rid}/takedown", post(moderation::takedown))
+        .route("/admin/reports/{rid}/dismiss", post(moderation::dismiss))
+        .route("/admin/reports/{rid}/restore", post(moderation::restore))
         .fallback(not_found)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
     let uploads = Router::new()

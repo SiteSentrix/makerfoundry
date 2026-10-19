@@ -71,11 +71,19 @@ async fn main() -> ExitCode {
         eprintln!("no R2 settings: designs can be previewed but not kept");
     }
     let publishers = makerfoundry::listings::Publishers::from_setting(std::env::var("MF_PUBLISHERS").ok().as_deref());
+    let admins: Vec<i64> = std::env::var("MF_ADMINS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let limits = std::sync::Arc::new(makerfoundry::limits::Limits::default());
     let state = makerfoundry::AppState {
         cloud,
         db,
         storage,
         publishers,
+        admins,
+        limits,
     };
     match axum::serve(listener, makerfoundry::app(state))
         .with_graceful_shutdown(shutdown_signal())

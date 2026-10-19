@@ -179,10 +179,13 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
     if !same_origin(&headers) {
         return forbidden();
     }
-    if current_user(&state, &headers).await.is_none() {
+    let Some(user) = current_user(&state, &headers).await else {
         return signed_out();
-    }
+    };
     let problem = |why: &str| private(TITLE, &form(why), true);
+    if !state.limits.allow(crate::limits::PREVIEW, &user.account_id.to_string()) {
+        return problem("You've previewed a lot of files in the last hour. Please try again later.");
+    }
     let mut file: Option<(String, Vec<u8>)> = None;
     loop {
         match multipart.next_field().await {

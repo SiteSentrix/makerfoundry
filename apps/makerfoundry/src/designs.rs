@@ -128,6 +128,20 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
         return Redirect::to("/designs/new").into_response();
     };
     let again = |why: &str| private("Add a design · MakerFoundry", &upload_form(why), true);
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM mf_designs WHERE account_id = $1")
+        .bind(user.account_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    if kept >= crate::limits::MAX_DESIGNS {
+        return again(&format!(
+            "An account can keep up to {} designs. Delete some drafts to add more.",
+            crate::limits::MAX_DESIGNS
+        ));
+    }
+    if !state.limits.allow(crate::limits::UPLOAD, &user.account_id.to_string()) {
+        return again("You've added a lot of designs today. Please try again tomorrow.");
+    }
     // the form's parts: one design file, some photos
     let mut file: Option<(String, Vec<u8>)> = None;
     let mut uploaded_photos: Vec<Vec<u8>> = Vec::new();
@@ -283,11 +297,13 @@ pub struct DesignRow {
     pub tags: Vec<String>,
     pub licence: Option<String>,
     pub downloads: i64,
+    pub removed_reason: Option<String>,
 }
 
 pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads
+        "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads,
+                removed_reason
          FROM mf_designs WHERE id = $1",
     )
     .bind(id)
@@ -307,6 +323,7 @@ pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::E
             tags: r.try_get("tags")?,
             licence: r.try_get("licence")?,
             downloads: r.try_get("downloads")?,
+            removed_reason: r.try_get("removed_reason")?,
         })
     })
     .transpose()
@@ -490,7 +507,7 @@ pub async fn photo(
         return not_found();
     };
     let d = match design(pool, id).await {
-        Ok(Some(d)) if crate::listings::visible(&d, viewer.as_ref()) => d,
+        Ok(Some(d)) if crate::listings::visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return not_found(),
     };
     let column = match size.as_str() {

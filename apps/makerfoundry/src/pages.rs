@@ -50,7 +50,7 @@ pub fn page(title: &str, body: &str, signed_in: bool) -> String {
 {body}
 </main>
 <footer class="bottom"><p>MakerFoundry is made by <a href="https://sitesentrix.com">SiteSentrix</a>,
-the makers of <a href="https://stitchfoundry.app">StitchFoundry</a>.</p></footer>
+the makers of <a href="https://stitchfoundry.app">StitchFoundry</a>. <a href="/dmca">Copyright</a></p></footer>
 </body>
 </html>
 "#

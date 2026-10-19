@@ -336,9 +336,10 @@ fn not_found(signed_in: bool) -> Response {
     (StatusCode::NOT_FOUND, Html(page("Not found · MakerFoundry", r#"<section class="hero"><h1>Design not found</h1><p class="lead"><a href="/browse">Browse designs</a></p></section>"#, signed_in))).into_response()
 }
 
-/// Whether `viewer` may see design `d`: anyone once it's published, only its maker before.
-pub fn visible(d: &DesignRow, viewer: Option<&User>) -> bool {
-    d.status == "published" || viewer.is_some_and(|u| u.account_id == d.account_id)
+/// Whether `viewer` may see design `d`: anyone once it's published; otherwise (a draft, or taken
+/// down) only its maker and the admins.
+pub fn visible(d: &DesignRow, viewer: Option<&User>, admins: &[i64]) -> bool {
+    d.status == "published" || viewer.is_some_and(|u| u.account_id == d.account_id || admins.contains(&u.account_id))
 }
 
 pub async fn public_page(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
@@ -360,17 +361,20 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         return not_found(signed_in);
     };
     let d = match designs::design(pool, id).await {
-        Ok(Some(d)) if visible(&d, viewer.as_ref()) => d,
+        Ok(Some(d)) if visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return not_found(signed_in),
     };
     let maker = makers::profile(pool, d.account_id).await;
     let mine = viewer.as_ref().is_some_and(|u| u.account_id == d.account_id);
-    let draft_note = if d.status == "published" {
-        String::new()
-    } else {
-        format!(
+    let draft_note = match d.status.as_str() {
+        "published" => String::new(),
+        "removed" => format!(
+            r#"<p class="problem">Taken down: only its maker and the admins can see this page. {}</p>"#,
+            escape(d.removed_reason.as_deref().unwrap_or(""))
+        ),
+        _ => format!(
             r#"<p class="problem">A draft: only you can see this page. <a href="/designs/{id}">Back to the draft</a></p>"#
-        )
+        ),
     };
     let byline = match &maker {
         Some(m) => format!(
@@ -422,6 +426,8 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     let photos = designs::photos_html(pool, id).await;
     let edit = if mine {
         format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
+    } else if d.status == "published" {
+        format!(r#"<p class="muted"><a href="/d/{id}/report">Report this design</a></p>"#)
     } else {
         String::new()
     };
@@ -447,7 +453,7 @@ pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id
         return not_found(viewer.is_some());
     };
     let d = match designs::design(pool, id).await {
-        Ok(Some(d)) if visible(&d, viewer.as_ref()) => d,
+        Ok(Some(d)) if visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return not_found(viewer.is_some()),
     };
     if d.status == "published" {
@@ -626,7 +632,11 @@ pub async fn publish(
         Ok(o) => o,
         Err(r) => return r,
     };
-    let problem = if !state.publishers.allows(user.account_id) {
+    let problem = if d.status == "removed" {
+        Some(
+            "This design was taken down after a report, so it can't be published again. If you believe that was a mistake, send a counter-notice.",
+        )
+    } else if !state.publishers.allows(user.account_id) {
         Some("Publishing opens when MakerFoundry launches. Your design stays saved as a draft.")
     } else if makers::profile(&pool, user.account_id).await.is_none() {
         Some("Set up your maker profile first: it's the name people see on your designs.")
@@ -640,7 +650,7 @@ pub async fn publish(
     if let Some(p) = problem {
         return designs::manage_page(&state, &pool, &user, id, p).await;
     }
-    let done = sqlx::query("UPDATE mf_designs SET status = 'published', published_at = coalesce(published_at, now()) WHERE id = $1 AND account_id = $2")
+    let done = sqlx::query("UPDATE mf_designs SET status = 'published', published_at = coalesce(published_at, now()) WHERE id = $1 AND account_id = $2 AND status = 'draft'")
         .bind(id)
         .bind(user.account_id)
         .execute(&pool)
@@ -669,11 +679,12 @@ pub async fn unpublish(State(state): State<AppState>, headers: HeaderMap, Path(i
         Ok(o) => o,
         Err(r) => return r,
     };
-    if let Err(e) = sqlx::query("UPDATE mf_designs SET status = 'draft' WHERE id = $1 AND account_id = $2")
-        .bind(id)
-        .bind(user.account_id)
-        .execute(&pool)
-        .await
+    if let Err(e) =
+        sqlx::query("UPDATE mf_designs SET status = 'draft' WHERE id = $1 AND account_id = $2 AND status = 'published'")
+            .bind(id)
+            .bind(user.account_id)
+            .execute(&pool)
+            .await
     {
         eprintln!("listings: unpublish {id}: {e}");
     }
@@ -706,7 +717,12 @@ pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool) -> String {
     } else {
         r#"<p>Before publishing, <a href="/account/maker">set up your maker profile</a>.</p>"#.to_string()
     };
-    let publishing = if d.status == "published" {
+    let publishing = if d.status == "removed" {
+        format!(
+            r#"<p class="problem">{why} Only you and the admins can see it. If you believe it was taken down by mistake, <a href="/designs/{id}/counter">send a counter-notice</a>.</p>"#,
+            why = escape(d.removed_reason.as_deref().unwrap_or("Taken down after a report."))
+        )
+    } else if d.status == "published" {
         format!(
             r#"<p class="byline">Published: <a href="/d/{id}/{slug}">see its public page</a>.</p><form method="post" action="/designs/{id}/unpublish"><button type="submit" class="secondary">Unpublish (back to a draft)</button></form>"#,
             slug = slug(&d.title)

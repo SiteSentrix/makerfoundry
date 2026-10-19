@@ -80,6 +80,8 @@ Then send the `*.up.railway.app` address back in the chat: MF-0 is done when tha
 | `PORT` | no (default `8080`) | the port to listen on; Railway sets it |
 | `DATABASE_URL` | for accounts | MakerFoundry's Postgres, `${{Postgres.DATABASE_URL}}` on Railway; tables are made when the service starts. Without it the site runs but nobody can sign in |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | to keep designs | Cloudflare R2: the account's id, an API token's keys (Object Read & Write on the bucket only), and the bucket (`makerfoundry-files`). Without them designs can be previewed but not kept |
+| `MF_ADMINS` | for the report queue | account ids apart by commas: who sees `/admin` and can take designs down |
+| `MF_DMCA_AGENT` | before launch | the designated agent registered with the US Copyright Office, as shown on `/dmca`: lines apart by `|` (name, address, email, phone) |
 | `MF_PUBLISHERS` | no (nobody) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |
 | `STITCHFOUNDRY_CLOUD_URL` | no (default `https://cloud.stitchfoundry.app`) | StitchFoundry's account service, which MakerFoundry's accounts are |

@@ -115,6 +115,8 @@ pub(crate) fn private(title: &str, body: &str, signed_in: bool) -> Response {
         .into_response()
 }
 
+const TOO_MANY: &str = "Too many tries from here lately. Please wait a while and try again.";
+
 const UNAVAILABLE: &str = "Signing in isn't available yet. Please try again later.";
 
 /// What to tell someone when the account service said no, or couldn't be reached.
@@ -239,6 +241,12 @@ pub async fn signin(State(state): State<AppState>, headers: HeaderMap, Form(form
     if state.db.is_none() {
         return private("Sign in · MakerFoundry", &signin_form(&form.email, UNAVAILABLE), false);
     }
+    if !state
+        .limits
+        .allow(crate::limits::SIGNIN, &crate::limits::client(&headers))
+    {
+        return private("Sign in · MakerFoundry", &signin_form(&form.email, TOO_MANY), false);
+    }
     let result = match state.cloud.signin(form.email.trim(), &form.password).await {
         Ok((token, account)) => start_session(&state, &token, &account).await,
         Err(e) => Err(cloud_problem(&e)),
@@ -270,6 +278,12 @@ pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form
     }
     if form.password != form.again {
         return again("The two passwords aren't the same.");
+    }
+    if !state
+        .limits
+        .allow(crate::limits::SIGNUP, &crate::limits::client(&headers))
+    {
+        return again(TOO_MANY);
     }
     let result = match state.cloud.signup(form.email.trim(), &form.password).await {
         Ok((token, account)) => start_session(&state, &token, &account).await,
@@ -331,6 +345,16 @@ pub async fn forgot_page() -> Response {
 pub async fn forgot(State(state): State<AppState>, headers: HeaderMap, Form(form): Form<Forgot>) -> Response {
     if !same_origin(&headers) {
         return forbidden();
+    }
+    if !state
+        .limits
+        .allow(crate::limits::FORGOT, &crate::limits::client(&headers))
+    {
+        return private(
+            "Forgot your password · MakerFoundry",
+            &forgot_form(&form.email, TOO_MANY),
+            false,
+        );
     }
     match state.cloud.forgot(form.email.trim()).await {
         Ok(message) => private(
