@@ -1,0 +1,89 @@
+# MakerFoundry: the plan
+
+**Status:** 2026-10-19. Idea and plan only; no code yet. Owner: Bruce Wattendorf (SiteSentrix).
+
+## What it is
+A place, like Thingiverse for 3D prints, where makers find, share and sell files for their
+machines:
+
+- **Machine embroidery designs**: DST, PES, PEC, JEF, EXP, VP3, XXX, HUS, U01 and more.
+- **Laser-cut and engrave files**: SVG, DXF, PDF, and LightBurn-friendly exports.
+- **Free designs** shared openly, and **paid designs** sold through MakerFoundry, which takes a
+  small fee on each sale (the owner's income from the marketplace).
+
+Who it is for: home embroiderers and small embroidery shops (StitchFoundry's users), laser hobby
+users and small laser businesses (LightFoundry's), and the designers who sell to both.
+
+## How a sale works (first version)
+1. A seller connects a **Stripe Connect** account (Express): Stripe checks who they are and pays
+   them out; MakerFoundry never holds their bank details.
+2. A buyer pays on Stripe Checkout. MakerFoundry keeps its **platform fee** (an application fee
+   on the payment); the rest goes to the seller. Stripe's own card fee comes out too.
+3. Once Stripe confirms the payment (signed webhook), the buyer's library gets the files:
+   download links that last, re-downloadable any time.
+4. Refunds and disputes follow a written policy (digital goods: refund when a file is broken or
+   isn't what the listing said).
+
+## The first version (MVP)
+- Accounts (email + password, as StitchFoundry's cloud service does; Argon2id, session tokens).
+- **Upload a design**: one or more files plus photos of the stitched or cut result, a title,
+  description, tags, machine/hoop size or material and size, and a licence.
+- **Previews made by the site**: embroidery files drawn as stitches (from StitchFoundry's own
+  open-source file readers, used as a Rust dependency), with stitch count, size, colours and
+  colour changes; laser files drawn from their paths, with their size. Uploaded files are checked
+  as they're read: a file that doesn't read is refused.
+- **Browse and search**: by kind (embroidery / laser), tags, hoop size, newest, popular, free/paid.
+- **A design page**: previews, photos, details, the licence in plain words, download or buy.
+- **Seller pages**: a maker's designs; followers later.
+- **Paid designs** with Stripe Connect; a buyer's library; a seller's sales and payouts page.
+- **Report a listing** and a DMCA takedown page; an admin queue to act on them.
+- Terms of Service, Privacy Policy and Seller Terms pages (drafted like StitchFoundry's).
+
+## Later
+- "Open in StitchFoundry" on embroidery designs and "Publish to MakerFoundry" from the app;
+  the same for LightFoundry.
+- One SiteSentrix account across StitchFoundry, MakerFoundry and LightFoundry.
+- Collections, likes, comments, makes (photos of others' sew-outs and cuts), seller follows.
+- Bundles, discount codes, "pay what you want".
+- Format conversion on download (buy a PES, also get a DST), using StitchFoundry's writers.
+- PatternFoundry (sewing patterns) may share the marketplace engine.
+
+## Licences a listing can carry
+Plain-language choices (final wording is the owner's):
+- **Personal use**: make it for yourself and gifts.
+- **Small business**: sell what you make with it (stitched or cut items), up to a number of items.
+- **Commercial**: no limit on items made.
+- Free designs may also be **CC BY**, **CC BY-NC** or **CC0**.
+Nobody may resell or share the files themselves.
+
+## Tech
+- **Rust** web service (axum or similar), server-rendered HTML, Postgres.
+- **Files** in object storage (Cloudflare R2: no download-bandwidth charges), served through
+  signed, expiring links.
+- **Hosting**: Railway (the owner's Pro plan), Cloudflare in front (DNS, TLS, caching).
+- **Payments**: Stripe Connect. **Email**: Resend.
+- Reuse StitchFoundry's crates for reading and drawing embroidery files (`sf-formats`,
+  `sf-core`), as a git dependency pinned by commit.
+
+## Milestones and task ids
+| Id | What | Done when |
+|---|---|---|
+| MF-0 | Workspace: Cargo workspace, CI (fmt, clippy -D warnings, tests), `/health`, a hello page deployed to Railway | the page answers on a Railway address |
+| MF-1 | Accounts: sign up, sign in, sessions, password reset by email | a person can make an account |
+| MF-2 | Upload and preview: embroidery and laser files read, checked and drawn; photos; R2 storage | an uploaded PES shows its stitches |
+| MF-3 | Listings: design pages, browse, search, tags, seller pages; free downloads | a free design can be found and downloaded |
+| MF-4 | Selling: Stripe Connect onboarding, checkout with the platform fee, library, sales page, refunds | a test-mode sale pays the seller less the fee |
+| MF-5 | Safety: report a listing, DMCA page and process, admin queue, upload limits, rate limits | a takedown can be done in minutes |
+| MF-6 | Launch: Terms, Privacy, Seller Terms, a landing page, makerfoundry.app live | public launch |
+| MF-7 | StitchFoundry and LightFoundry integration | publish from the app |
+
+## Open decisions (the owner's)
+- **The platform fee**: a percentage of each sale (for example 10%), a minimum, or both.
+- **Who may sell**: anyone, or approved sellers first.
+- **Sales tax on digital goods**: some US states tax them and treat marketplaces as the seller
+  ("marketplace facilitator" laws). Likely answer: Stripe Tax on checkout. Needs the owner's
+  decision (and ideally an accountant's word) before paid sales go live.
+- **DMCA designated agent**: register SiteSentrix with the US Copyright Office (a small online
+  fee) before the public launch, for safe-harbour protection.
+- **Accounts**: separate MakerFoundry accounts at first, or the StitchFoundry cloud accounts.
+- **Domain**: makerfoundry.app (and patternfoundry.app held for the sewing-pattern app).
