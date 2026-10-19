@@ -139,6 +139,11 @@ async fn main() -> ExitCode {
             {
                 eprintln!("sessions: {e}");
             }
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::selling::expire_orders(pool).await
+            {
+                eprintln!("orders: {e}");
+            }
         }
     });
     match axum::serve(listener, makerfoundry::app(state))

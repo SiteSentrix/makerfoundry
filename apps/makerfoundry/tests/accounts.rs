@@ -2190,3 +2190,68 @@ async fn the_web_apps_may_call_the_api_from_their_own_sites_only() {
     let about = s.api("GET", "/api/v1", None, None, &json!({})).await;
     assert!(about.body.contains(r#""designs":"/api/v1/designs""#), "{}", about.body);
 }
+
+// ---------------------------------------------------------------- MF-8: finishing the first version
+
+#[tokio::test]
+async fn browsing_finds_free_or_paid_designs_and_unpaid_checkouts_expire() {
+    let Some((s, st, seller, paid)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let free = published(&s, &seller, "sams-shop", "Owl+Patch").await;
+    let free_list = s.get("/browse?price=free", None).await.body;
+    assert!(free_list.contains(&format!("/d/{free}/")) && !free_list.contains(&format!("/d/{paid}/")));
+    let paid_list = s.get("/browse?price=paid", None).await.body;
+    assert!(paid_list.contains(&format!("/d/{paid}/")) && !paid_list.contains(&format!("/d/{free}/")));
+    assert!(paid_list.contains(r#"<option value="paid" selected>"#), "{paid_list}");
+    let both = s.get("/browse", None).await.body;
+    assert!(both.contains(&format!("/d/{free}/")) && both.contains(&format!("/d/{paid}/")));
+    // two purchases started and never paid for: Stripe's page lasts 2 hours
+    let buyer = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{paid}/buy"), "", Some(&buyer)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    let expires: i64 = form["expires_at"].parse().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!((expires - now - 7200).abs() < 60, "{expires}");
+    s.post(&format!("/d/{paid}/buy"), "", Some(&buyer)).await;
+    // Stripe says the first page expired
+    let r = s
+        .stripe_event(
+            WEBHOOK_SECRET,
+            "evt_x",
+            "checkout.session.expired",
+            json!({"id": "cs_test_1", "object": "checkout.session"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'expired'")
+            .await,
+        1
+    );
+    // the second, a day on, expires anyway
+    assert_eq!(makerfoundry::selling::expire_orders(&s.pool).await.unwrap(), 0);
+    sqlx::query("UPDATE mf_orders SET created_at = now() - interval '25 hours' WHERE status = 'pending'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(makerfoundry::selling::expire_orders(&s.pool).await.unwrap(), 1);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'pending'")
+            .await,
+        0
+    );
+    // neither counts as a sale, and the design can still be deleted once unpublished
+    assert!(
+        s.get("/account/sales", Some(&seller))
+            .await
+            .body
+            .contains("No sales yet")
+    );
+    s.post(&format!("/designs/{paid}/unpublish"), "", Some(&seller)).await;
+    let r = s.post(&format!("/designs/{paid}/delete"), "", Some(&seller)).await;
+    assert_eq!(r.location(), "/designs", "{}", r.body);
+}

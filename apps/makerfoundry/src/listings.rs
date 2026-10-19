@@ -112,6 +112,8 @@ pub struct Filter {
     pub tag: Option<String>,
     pub words: Option<String>,
     pub account: Option<i64>,
+    /// `Some(true)`: free designs only; `Some(false)`: paid only.
+    pub free: Option<bool>,
     pub popular: bool,
     pub page: i64,
 }
@@ -138,6 +140,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
            AND ($2::text IS NULL OR $2 = ANY (d.tags))
            AND ($3::text IS NULL OR d.search @@ websearch_to_tsquery('english', $3))
            AND ($4::bigint IS NULL OR d.account_id = $4)
+           AND ($8::bool IS NULL OR (d.price_cents = 0) = $8)
          ORDER BY CASE WHEN $5 THEN d.downloads END DESC NULLS LAST,
                   CASE WHEN $3::text IS NOT NULL AND NOT $5 THEN ts_rank(d.search, websearch_to_tsquery('english', $3)) END DESC NULLS LAST,
                   d.published_at DESC
@@ -150,6 +153,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     .bind(f.popular)
     .bind(limit)
     .bind(f.page.max(0).saturating_mul(limit))
+    .bind(f.free)
     .fetch_all(pool)
     .await;
     match rows {
@@ -247,6 +251,7 @@ pub struct BrowseQuery {
     kind: String,
     tag: String,
     sort: String,
+    price: String,
     page: i64,
 }
 
@@ -257,11 +262,22 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
     let tag = tidy_tags(&q.tag).into_iter().next();
     let popular = q.sort == "popular";
     let page_no = q.page.clamp(0, 1000);
+    let free = match q.price.as_str() {
+        "free" => Some(true),
+        "paid" => Some(false),
+        _ => None,
+    };
+    let price = match free {
+        Some(true) => "free",
+        Some(false) => "paid",
+        None => "",
+    };
     let filter = Filter {
         kind: kind.clone(),
         tag: tag.clone(),
         words: (!words.is_empty()).then(|| words.clone()),
         account: None,
+        free,
         popular,
         page: page_no,
     };
@@ -272,7 +288,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
     let selected = |on: bool| if on { " selected" } else { "" };
     let tag_note = match &tag {
         Some(t) => format!(
-            r#"<p>Tagged <strong>{t}</strong> · <a href="/browse?q={q}&amp;kind={k}&amp;sort={s}">show all tags</a></p>"#,
+            r#"<p>Tagged <strong>{t}</strong> · <a href="/browse?q={q}&amp;kind={k}&amp;price={price}&amp;sort={s}">show all tags</a></p>"#,
             t = escape(t),
             q = escape(&url_word(&words)),
             k = escape(kind.as_deref().unwrap_or("")),
@@ -287,7 +303,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
     };
     let more = if found.len() as i64 == PAGE_SIZE {
         format!(
-            r#"<p><a href="/browse?q={q}&amp;kind={k}&amp;tag={t}&amp;sort={s}&amp;page={n}">More designs</a></p>"#,
+            r#"<p><a href="/browse?q={q}&amp;kind={k}&amp;price={price}&amp;tag={t}&amp;sort={s}&amp;page={n}">More designs</a></p>"#,
             q = escape(&url_word(&words)),
             k = escape(kind.as_deref().unwrap_or("")),
             t = escape(&url_word(tag.as_deref().unwrap_or(""))),
@@ -305,6 +321,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
 <form class="search" method="get" action="/browse">
 <input type="search" name="q" value="{words}" placeholder="Search designs" aria-label="Search designs" maxlength="200">
 <select name="kind" aria-label="Kind"><option value="">Embroidery and laser</option><option value="embroidery"{e}>Embroidery</option><option value="laser"{l}>Laser</option></select>
+<select name="price" aria-label="Price"><option value="">Free and paid</option><option value="free"{fr}>Free</option><option value="paid"{pd}>Paid</option></select>
 <select name="sort" aria-label="Order"><option value="newest">Newest</option><option value="popular"{p}>Most downloaded</option></select>
 <input type="hidden" name="tag" value="{tag}">
 <button type="submit">Search</button>
@@ -315,6 +332,8 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
             e = selected(kind.as_deref() == Some("embroidery")),
             l = selected(kind.as_deref() == Some("laser")),
             p = selected(popular),
+            fr = selected(free == Some(true)),
+            pd = selected(free == Some(false)),
             tag = escape(tag.as_deref().unwrap_or("")),
         ),
         signed_in,

@@ -76,11 +76,27 @@ pub async fn bought(pool: &PgPool, buyer: i64, design: i64) -> bool {
 /// Whether design `id` has ever been paid for (a design people bought isn't deleted, so they keep
 /// their download).
 pub async fn has_sales(pool: &PgPool, id: i64) -> bool {
-    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM mf_orders WHERE design_id = $1 AND status <> 'pending'")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .map_or(true, |n| n > 0)
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM mf_orders WHERE design_id = $1 AND status IN ('paid', 'refunded')",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_or(true, |n| n > 0)
+}
+
+/// How long a Stripe checkout page lasts.
+const CHECKOUT_SECS: i64 = 2 * 3600;
+
+/// Orders never paid for, a day on (long after their checkout page has gone), expire. Run every
+/// few minutes; → how many.
+pub async fn expire_orders(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE mf_orders SET status = 'expired' WHERE status = 'pending' AND created_at < now() - interval '1 day'",
+    )
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected())
 }
 
 fn now_secs() -> i64 {
@@ -414,6 +430,8 @@ pub async fn buy(State(state): State<AppState>, headers: HeaderMap, Path(id): Pa
             "/v1/checkout/sessions",
             &[
                 ("mode", "payment".into()),
+                // the page lasts 2 hours; the order expires a day later (`expire_orders`)
+                ("expires_at", (now_secs() + CHECKOUT_SECS).to_string()),
                 ("client_reference_id", order.to_string()),
                 ("success_url", format!("{}/library?order={order}", stripe.public_url)),
                 ("cancel_url", format!("{}/d/{id}/{}", stripe.public_url, slug(&d.title))),
@@ -628,6 +646,12 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
             }
         }
         "account.updated" => save_status(&mut tx, object).await?,
+        "checkout.session.expired" => {
+            sqlx::query("UPDATE mf_orders SET status = 'expired' WHERE stripe_session = $1 AND status = 'pending'")
+                .bind(object.get("id").and_then(Value::as_str).unwrap_or(""))
+                .execute(&mut *tx)
+                .await?;
+        }
         _ => {}
     }
     tx.commit().await
@@ -675,7 +699,7 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
     }
     let rows = sqlx::query(
         "SELECT o.id, o.design_id, o.title, o.price_cents, o.status, to_char(o.created_at, 'YYYY-MM-DD') AS at
-         FROM mf_orders o WHERE o.buyer_account = $1 AND (o.status <> 'pending' OR o.id = $2)
+         FROM mf_orders o WHERE o.buyer_account = $1 AND (o.status IN ('paid', 'refunded') OR o.id = $2)
          ORDER BY o.created_at DESC LIMIT 500",
     )
     .bind(user.account_id)
@@ -699,6 +723,7 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
                 ("paid", Some(d)) => format!(r#"<a class="button" href="/d/{d}/download">Download</a>"#),
                 ("paid", None) => r#"<span class="muted">The design has been deleted.</span>"#.into(),
                 ("refunded", _) => r#"<span class="muted">Refunded</span>"#.into(),
+                ("expired", _) => r#"<span class="muted">Not paid for: the purchase wasn't finished.</span>"#.into(),
                 _ => r#"<span class="muted">Waiting for the payment to be confirmed. This page shows the download once it is: reload it in a minute.</span>"#.into(),
             };
             format!(
@@ -731,7 +756,7 @@ pub async fn sales(State(state): State<AppState>, headers: HeaderMap) -> Respons
     let rows = sqlx::query(
         "SELECT o.title, o.design_id, o.price_cents, o.fee_cents, o.processing_cents, o.seller_cents, o.status,
                 to_char(o.paid_at, 'YYYY-MM-DD') AS at
-         FROM mf_orders o WHERE o.seller_account = $1 AND o.status <> 'pending'
+         FROM mf_orders o WHERE o.seller_account = $1 AND o.status IN ('paid', 'refunded')
          ORDER BY o.paid_at DESC LIMIT 500",
     )
     .bind(user.account_id)
@@ -795,7 +820,7 @@ pub async fn orders(State(state): State<AppState>, headers: HeaderMap) -> Respon
 async fn order_list(pool: &PgPool, note: &str) -> Response {
     let rows = sqlx::query(
         "SELECT id, title, price_cents, status, buyer_account, seller_account, to_char(created_at, 'YYYY-MM-DD HH24:MI') AS at
-         FROM mf_orders WHERE status <> 'pending' ORDER BY created_at DESC LIMIT 200",
+         FROM mf_orders WHERE status IN ('paid', 'refunded') ORDER BY created_at DESC LIMIT 200",
     )
     .fetch_all(pool)
     .await
