@@ -15,7 +15,8 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-axum = { workspace = true }
+# json: the apps' API (MF-7) answers JSON
+axum = { workspace = true, features = ["json"] }
 tokio = { workspace = true }
 tower-http = { workspace = true }
 sqlx = { workspace = true }

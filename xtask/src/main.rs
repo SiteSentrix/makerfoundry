@@ -11,7 +11,7 @@ fn main() -> ExitCode {
         Some("assets") => assets(),
         _ => {
             eprintln!(
-                "usage: cargo xtask <task>\n\ntasks:\n  ci      fmt, clippy -D warnings, tests, assets\n  assets  every asset file has a row in ASSETS.md"
+                "usage: cargo xtask <task>\n\ntasks:\n  ci      fmt, clippy -D warnings, tests, the service's own build, assets\n  assets  every asset file has a row in ASSETS.md"
             );
             return ExitCode::FAILURE;
         }
@@ -37,6 +37,9 @@ fn ci() -> Result<(), String> {
         "warnings",
     ])?;
     cargo(&["test", "--workspace", "--locked"])?;
+    // the service on its own, as the Docker image builds it: without the tests' dev-dependencies,
+    // whose features would otherwise hide a missing one (MF-7's axum `json`)
+    cargo(&["build", "-p", "makerfoundry", "--bins", "--locked"])?;
     assets()?;
     eprintln!("xtask: ci passed");
     Ok(())
