@@ -32,6 +32,7 @@ lopdf = { workspace = true }
 image = { workspace = true }
 rusty-s3 = { workspace = true }
 url = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 # The tests' stand-in for StitchFoundry's account service answers JSON.

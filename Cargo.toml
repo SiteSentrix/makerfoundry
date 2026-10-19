@@ -39,6 +39,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # sends them.
 rusty-s3 = "0.10"
 url = "2"
+# The apps' API (MF-7) takes design files as base64 in JSON. MIT OR Apache-2.0.
+base64 = "0.22"
 # StitchFoundry's embroidery file readers (DST, PES, JEF, EXP, VP3, XXX, U01 and more; fuzzed
 # there against untrusted bytes) and its stitch statistics. MIT OR Apache-2.0, by SiteSentrix.
 # Pinned by commit: bump on purpose.

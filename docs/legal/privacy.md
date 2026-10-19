@@ -80,6 +80,9 @@ advertising, no third-party scripts.
 - Everything travels over encrypted HTTPS.
 - The sign-in cookie can't be read by scripts and is kept by us only as a scrambled hash; the
   account service's sign-in for the same session never reaches your browser.
+- When you publish from StitchFoundry or another Foundry app, the app sends your Foundry Account
+  sign-in with the design; we check it with the account service for that one request and never
+  keep it.
 - Files and photos are stored privately under random names; downloads use links that work for a
   few minutes.
 - Uploaded files are checked before they're kept, and photos are rebuilt from scratch.

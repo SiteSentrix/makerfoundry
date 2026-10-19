@@ -5,7 +5,7 @@
 //! form post must come from MakerFoundry's own pages (its `Origin`, or else its `Referer`).
 
 use axum::Form;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
@@ -165,10 +165,27 @@ pub struct Credentials {
     password: String,
     again: String,
     agree: String,
+    /// Where to go once signed in (a page of this site).
+    next: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct Next {
+    next: String,
+}
+
+/// `next` if it's a page of this site (`/…`, not `//…`), else the account page.
+pub(crate) fn safe_next(next: &str) -> &str {
+    let ok = next.starts_with('/')
+        && !next.starts_with("//")
+        && next.len() <= 200
+        && next.bytes().all(|b| b.is_ascii_graphic() && b != b'\\');
+    if ok { next } else { "/account" }
 }
 
 /// Starts a session for an account the service just signed in: the cookie, then the account page.
-async fn start_session(state: &AppState, token: &str, account: &Account) -> Result<Response, String> {
+async fn start_session(state: &AppState, token: &str, account: &Account, next: &str) -> Result<Response, String> {
     let pool = state.db.as_ref().ok_or(UNAVAILABLE)?;
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| format!("no randomness: {e}"))?;
@@ -184,31 +201,33 @@ async fn start_session(state: &AppState, token: &str, account: &Account) -> Resu
         db::SESSION_DAYS * 24 * 3600
     );
     let cookie = HeaderValue::from_str(&cookie).map_err(|e| e.to_string())?;
-    let mut resp = Redirect::to("/account").into_response();
+    let mut resp = Redirect::to(safe_next(next)).into_response();
     resp.headers_mut().insert(header::SET_COOKIE, cookie);
     Ok(resp)
 }
 
-fn signin_form(email: &str, problem: &str) -> String {
+fn signin_form(email: &str, problem: &str, next: &str) -> String {
     format!(
         r#"<section class="form">
 <h1>Sign in</h1>
 <p class="lead">Sign in with your Foundry Account: the same email and password as in StitchFoundry and the other Foundry apps.</p>
 {problem}
 <form method="post" action="/signin">
+<input type="hidden" name="next" value="{next}">
 <label>Email<input type="email" name="email" value="{email}" autocomplete="email" required maxlength="254"></label>
 <label>Password<input type="password" name="password" autocomplete="current-password" required maxlength="200"></label>
 <button type="submit">Sign in</button>
 </form>
 <p><a href="/forgot">Forgot your password?</a></p>
-<p>No account yet? <a href="/signup">Make a Foundry Account</a>.</p>
+<p>No account yet? <a href="/signup?next={next}">Make a Foundry Account</a>.</p>
 </section>"#,
         email = escape(email),
         problem = problem_html(problem),
+        next = escape(safe_next(next)),
     )
 }
 
-fn signup_form(email: &str, problem: &str, launched: bool) -> String {
+fn signup_form(email: &str, problem: &str, launched: bool, next: &str) -> String {
     let agree = if launched {
         r#"<label class="choice"><input type="checkbox" name="agree" value="yes" required> <span>I'm 18 or older and agree to the <a href="/terms">Terms of Service</a> and the <a href="/privacy">Privacy Policy</a>.</span></label>"#
     } else {
@@ -220,25 +239,27 @@ fn signup_form(email: &str, problem: &str, launched: bool) -> String {
 <p class="lead">A Foundry Account is one email and password for MakerFoundry, StitchFoundry and the other Foundry apps.</p>
 {problem}
 <form method="post" action="/signup">
+<input type="hidden" name="next" value="{next}">
 <label>Email<input type="email" name="email" value="{email}" autocomplete="email" required maxlength="254"></label>
 <label>Password <small>(at least 8 characters)</small><input type="password" name="password" autocomplete="new-password" required minlength="8" maxlength="200"></label>
 <label>The same password again<input type="password" name="again" autocomplete="new-password" required minlength="8" maxlength="200"></label>
 {agree}
 <button type="submit">Make the account</button>
 </form>
-<p>Already have a Foundry Account, from StitchFoundry say? <a href="/signin">Sign in</a>.</p>
+<p>Already have a Foundry Account, from StitchFoundry say? <a href="/signin?next={next}">Sign in</a>.</p>
 </section>"#,
         email = escape(email),
         problem = problem_html(problem),
+        next = escape(safe_next(next)),
     )
 }
 
-pub async fn signin_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub async fn signin_page(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<Next>) -> Response {
     if current_user(&state, &headers).await.is_some() {
-        return Redirect::to("/account").into_response();
+        return Redirect::to(safe_next(&q.next)).into_response();
     }
     let problem = if state.db.is_none() { UNAVAILABLE } else { "" };
-    private("Sign in · MakerFoundry", &signin_form("", problem), false)
+    private("Sign in · MakerFoundry", &signin_form("", problem, &q.next), false)
 }
 
 pub async fn signin(State(state): State<AppState>, headers: HeaderMap, Form(form): Form<Credentials>) -> Response {
@@ -246,29 +267,43 @@ pub async fn signin(State(state): State<AppState>, headers: HeaderMap, Form(form
         return forbidden();
     }
     if state.db.is_none() {
-        return private("Sign in · MakerFoundry", &signin_form(&form.email, UNAVAILABLE), false);
+        return private(
+            "Sign in · MakerFoundry",
+            &signin_form(&form.email, UNAVAILABLE, &form.next),
+            false,
+        );
     }
     if !state
         .limits
         .allow(crate::limits::SIGNIN, &crate::limits::client(&headers))
     {
-        return private("Sign in · MakerFoundry", &signin_form(&form.email, TOO_MANY), false);
+        return private(
+            "Sign in · MakerFoundry",
+            &signin_form(&form.email, TOO_MANY, &form.next),
+            false,
+        );
     }
     let result = match state.cloud.signin(form.email.trim(), &form.password).await {
-        Ok((token, account)) => start_session(&state, &token, &account).await,
+        Ok((token, account)) => start_session(&state, &token, &account, &form.next).await,
         Err(e) => Err(cloud_problem(&e)),
     };
-    result.unwrap_or_else(|problem| private("Sign in · MakerFoundry", &signin_form(&form.email, &problem), false))
+    result.unwrap_or_else(|problem| {
+        private(
+            "Sign in · MakerFoundry",
+            &signin_form(&form.email, &problem, &form.next),
+            false,
+        )
+    })
 }
 
-pub async fn signup_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub async fn signup_page(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<Next>) -> Response {
     if current_user(&state, &headers).await.is_some() {
-        return Redirect::to("/account").into_response();
+        return Redirect::to(safe_next(&q.next)).into_response();
     }
     let problem = if state.db.is_none() { UNAVAILABLE } else { "" };
     private(
         "Make an account · MakerFoundry",
-        &signup_form("", problem, state.launched),
+        &signup_form("", problem, state.launched, &q.next),
         false,
     )
 }
@@ -280,7 +315,7 @@ pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form
     let again = |problem: &str| {
         private(
             "Make an account · MakerFoundry",
-            &signup_form(&form.email, problem, state.launched),
+            &signup_form(&form.email, problem, state.launched, &form.next),
             false,
         )
     };
@@ -301,7 +336,7 @@ pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form
     }
     let result = match state.cloud.signup(form.email.trim(), &form.password).await {
         Ok((token, account)) => {
-            let started = start_session(&state, &token, &account).await;
+            let started = start_session(&state, &token, &account, &form.next).await;
             if let (true, Ok(_), Some(pool)) = (state.launched, &started, state.db.as_ref()) {
                 crate::legal::agree(pool, account.id, &[&crate::legal::TERMS, &crate::legal::PRIVACY]).await;
             }

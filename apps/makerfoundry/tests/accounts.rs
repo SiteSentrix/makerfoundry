@@ -253,6 +253,7 @@ async fn site_opts(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe
         stripe,
         launched,
         public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
     });
     Some(Site {
         app,
@@ -545,6 +546,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         stripe: None,
         launched: false,
         public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
     });
     let s = Site {
         stored: Arc::default(),
@@ -568,6 +570,7 @@ async fn without_a_database_nobody_can_sign_in() {
         stripe: None,
         launched: false,
         public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -894,7 +897,10 @@ async fn a_maker_keeps_a_design_with_photos() {
         s.post(&format!("{page_path}/delete"), "", Some(&other)).await.status,
         StatusCode::NOT_FOUND
     );
-    assert_eq!(s.get(&page_path, None).await.location(), "/signin");
+    assert_eq!(
+        s.get(&page_path, None).await.location(),
+        format!("/signin?next={page_path}")
+    );
     // deleting it takes its files too
     let r = s.post(&format!("{page_path}/delete"), "", Some(&cookie)).await;
     assert_eq!(r.location(), "/designs");
@@ -966,6 +972,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         stripe: None,
         launched: false,
         public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
     });
     let s = Site {
         app,
@@ -1193,6 +1200,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         stripe: None,
         launched: false,
         public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
     });
     let s = Site {
         app,
@@ -2018,4 +2026,167 @@ async fn once_launched_people_agree_to_the_terms_and_the_site_is_found() {
         "{map}"
     );
     assert!(map.contains("<loc>https://makerfoundry.test/makers/anns</loc>"));
+}
+
+// ---------------------------------------------------------------- MF-7: publishing from the apps
+
+impl Site {
+    /// A request to the apps' API: `body` as JSON, with the app's Foundry Account `token`.
+    async fn api(&self, method: &str, path: &str, token: Option<&str>, origin: Option<&str>, body: &Value) -> Answer {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::HOST, HOST)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(t) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        if let Some(o) = origin {
+            req = req.header(header::ORIGIN, o);
+        }
+        self.send(req.body(Body::from(body.to_string())).unwrap()).await
+    }
+}
+
+#[tokio::test]
+async fn an_app_sends_a_design_which_opens_as_a_draft_to_finish_on_the_site() {
+    use base64::Engine;
+    let Some(s) = site().await else { return };
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let cookie = s.sign_up("ann%40example.com").await;
+    // the app's own sign-in to the same Foundry Account
+    s.fake.lock().unwrap().sessions.insert("sfs_app".into(), 1000);
+    let design = json!({
+        "file_name": "C:\\Users\\ann\\rose.pes",
+        "file": b64.encode(sample(sf_formats::Format::Pes)),
+        "photos": [b64.encode(photo_with_location())],
+        "app": "StitchFoundry 0.9.0",
+    });
+    // without a sign-in, or with one that has ended (or only the site's cookie): refused
+    for token in [None, Some("sfs_nope")] {
+        let r = s.api("POST", "/api/v1/designs", token, None, &design).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.body);
+        assert!(r.body.contains("Foundry Account"), "{}", r.body);
+    }
+    let mut req = Request::post("/api/v1/designs").header(header::HOST, HOST);
+    req = req.header(header::COOKIE, &cookie);
+    assert_eq!(
+        s.send(req.body(Body::from(design.to_string())).unwrap()).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    // a file that isn't a design, or isn't base64
+    let mut junk = design.clone();
+    junk["file"] = json!(b64.encode(b"not a design at all"));
+    let r = s.api("POST", "/api/v1/designs", Some("sfs_app"), None, &junk).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    junk["file"] = json!("%%%");
+    assert_eq!(
+        s.api("POST", "/api/v1/designs", Some("sfs_app"), None, &junk)
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 0);
+    // sent: a draft of Ann's, read, with its photo
+    let r = s.api("POST", "/api/v1/designs", Some("sfs_app"), None, &design).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    let id = v["id"].as_i64().unwrap();
+    assert_eq!(v["url"], format!("https://makerfoundry.test/designs/{id}"));
+    assert_eq!(
+        (v["kind"].as_str(), v["format"].as_str()),
+        (Some("embroidery"), Some("PES"))
+    );
+    let (owner, name, status): (i64, String, String) =
+        sqlx::query_as("SELECT account_id, file_name, status FROM mf_designs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!((owner, name.as_str(), status.as_str()), (1000, "rose.pes", "draft"));
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_photos").await, 1);
+    assert_eq!(s.stored.lock().unwrap().len(), 3);
+    // the app opens its page: signed in, the draft to finish; signed out, sign in and come back
+    let page = s.get(&format!("/designs/{id}"), Some(&cookie)).await;
+    assert!(page.body.contains("Edit details"), "{}", page.body);
+    let r = s.get(&format!("/designs/{id}"), None).await;
+    assert_eq!(r.location(), format!("/signin?next=/designs/{id}"));
+    let form = s.get(&format!("/signin?next=/designs/{id}"), None).await.body;
+    assert!(
+        form.contains(&format!(r#"name="next" value="/designs/{id}""#)),
+        "{form}"
+    );
+    let r = s
+        .post(
+            "/signin",
+            &format!("email=ann%40example.com&password=fire+truck+1&next=%2Fdesigns%2F{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(r.location(), format!("/designs/{id}"));
+    // only to pages of this site
+    for bad in ["%2F%2Fevil.example", "https%3A%2F%2Fevil.example", "%2F%5Cevil.example"] {
+        let r = s
+            .post(
+                "/signin",
+                &format!("email=ann%40example.com&password=fire+truck+1&next={bad}"),
+                None,
+            )
+            .await;
+        assert_eq!(r.location(), "/account", "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn the_web_apps_may_call_the_api_from_their_own_sites_only() {
+    let Some(s) = site().await else { return };
+    let ok = s
+        .api(
+            "OPTIONS",
+            "/api/v1/designs",
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(ok.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        ok.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "https://stitchfoundry.test"
+    );
+    assert!(
+        ok.headers[header::ACCESS_CONTROL_ALLOW_HEADERS]
+            .to_str()
+            .unwrap()
+            .contains("authorization")
+    );
+    assert!(ok.headers.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+    let evil = s
+        .api(
+            "OPTIONS",
+            "/api/v1/designs",
+            None,
+            Some("https://evil.example"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(evil.status, StatusCode::FORBIDDEN);
+    assert!(evil.headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    // answers carry it too, errors included, so the web app can show the message
+    let r = s
+        .api(
+            "POST",
+            "/api/v1/designs",
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        r.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "https://stitchfoundry.test"
+    );
+    let about = s.api("GET", "/api/v1", None, None, &json!({})).await;
+    assert!(about.body.contains(r#""designs":"/api/v1/designs""#), "{}", about.body);
 }

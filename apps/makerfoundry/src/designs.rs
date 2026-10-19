@@ -124,24 +124,10 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
         Ok(m) => m,
         Err(r) => return r,
     };
-    let Some(storage) = state.storage.clone() else {
+    if state.storage.is_none() {
         return Redirect::to("/designs/new").into_response();
-    };
+    }
     let again = |why: &str| private("Add a design · MakerFoundry", &upload_form(why), true);
-    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM mf_designs WHERE account_id = $1")
-        .bind(user.account_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(0);
-    if kept >= crate::limits::MAX_DESIGNS {
-        return again(&format!(
-            "An account can keep up to {} designs. Delete some drafts to add more.",
-            crate::limits::MAX_DESIGNS
-        ));
-    }
-    if !state.limits.allow(crate::limits::UPLOAD, &user.account_id.to_string()) {
-        return again("You've added a lot of designs today. Please try again tomorrow.");
-    }
     // the form's parts: one design file, some photos
     let mut file: Option<(String, Vec<u8>)> = None;
     let mut uploaded_photos: Vec<Vec<u8>> = Vec::new();
@@ -185,36 +171,103 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
     let Some((file_name, bytes)) = file else {
         return again("Choose a design file to upload.");
     };
+    match add(&state, &pool, user.account_id, &file_name, bytes, uploaded_photos).await {
+        Ok(id) => Redirect::to(&format!("/designs/{id}")).into_response(),
+        Err(Refused::Unavailable) => Redirect::to("/designs/new").into_response(),
+        Err(r) => again(&r.message()),
+    }
+}
+
+/// Why a design wasn't added.
+#[derive(Debug, PartialEq)]
+pub enum Refused {
+    /// Keeping designs isn't switched on.
+    Unavailable,
+    /// Over a limit: how many designs an account keeps, or adds a day.
+    TooMany(String),
+    /// The file or a photo couldn't be read, or isn't allowed: why, for the person.
+    Bad(String),
+    /// Storage or the database failed (logged).
+    Failed,
+}
+
+impl Refused {
+    pub fn message(&self) -> String {
+        match self {
+            Refused::Unavailable => "Keeping designs isn't switched on yet.".into(),
+            Refused::TooMany(m) | Refused::Bad(m) => m.clone(),
+            Refused::Failed => "The design couldn't be kept just now. Please try again in a few minutes.".into(),
+        }
+    }
+}
+
+/// A new draft for `account`: the limits checked, the file read and checked, the photos cleaned,
+/// all of it stored → the design's id. Both the upload form and the apps' API (`api`) add designs
+/// this way.
+pub async fn add(
+    state: &AppState,
+    pool: &PgPool,
+    account: i64,
+    file_name: &str,
+    bytes: Vec<u8>,
+    uploaded_photos: Vec<Vec<u8>>,
+) -> Result<i64, Refused> {
+    let Some(storage) = state.storage.as_ref() else {
+        return Err(Refused::Unavailable);
+    };
+    if uploaded_photos.len() > MAX_PHOTOS {
+        return Err(Refused::Bad(format!("A design can have up to {MAX_PHOTOS} photos.")));
+    }
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM mf_designs WHERE account_id = $1")
+        .bind(account)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    if kept >= crate::limits::MAX_DESIGNS {
+        return Err(Refused::TooMany(format!(
+            "An account can keep up to {} designs. Delete some drafts to add more.",
+            crate::limits::MAX_DESIGNS
+        )));
+    }
+    if !state.limits.allow(crate::limits::UPLOAD, &account.to_string()) {
+        return Err(Refused::TooMany(
+            "You've added a lot of designs today. Please try again tomorrow.".into(),
+        ));
+    }
     // reading and photo work is CPU-heavy: off the threads that answer requests
-    let read_name = file_name.clone();
+    let read_name = file_name.to_string();
     let read_bytes = bytes.clone();
     let read = match tokio::task::spawn_blocking(move || read_design(&read_bytes, &read_name)).await {
         Ok(Ok(r)) => r,
-        Ok(Err(why)) => return again(&format!("{}: {why}.", file_name.chars().take(80).collect::<String>())),
-        Err(_) => return again("The file couldn't be read. Please try again."),
+        Ok(Err(why)) => {
+            return Err(Refused::Bad(format!(
+                "{}: {why}.",
+                file_name.chars().take(80).collect::<String>()
+            )));
+        }
+        Err(_) => return Err(Refused::Bad("The file couldn't be read. Please try again.".into())),
     };
     let mut clean = Vec::new();
     for (i, photo) in uploaded_photos.into_iter().enumerate() {
         match tokio::task::spawn_blocking(move || photos::read(&photo)).await {
             Ok(Ok(p)) => clean.push(p),
-            Ok(Err(why)) => return again(&format!("Photo {}: {why}.", i + 1)),
-            Err(_) => return again(&format!("Photo {} couldn't be read.", i + 1)),
+            Ok(Err(why)) => return Err(Refused::Bad(format!("Photo {}: {why}.", i + 1))),
+            Err(_) => return Err(Refused::Bad(format!("Photo {} couldn't be read.", i + 1))),
         }
     }
-    match keep(&storage, &pool, &user, &file_name, bytes, &read, clean).await {
-        Ok(id) => Redirect::to(&format!("/designs/{id}")).into_response(),
-        Err(why) => {
+    keep(storage, pool, account, file_name, bytes, &read, clean)
+        .await
+        .map_err(|why| {
             eprintln!("designs: {why}");
-            again("The design couldn't be kept just now. Please try again in a few minutes.")
-        }
-    }
+            Refused::Failed
+        })
 }
 
 /// Stores the files, then notes the design; if noting fails, the stored files go again.
 async fn keep(
     storage: &Storage,
     pool: &PgPool,
-    user: &User,
+    account: i64,
     file_name: &str,
     bytes: Vec<u8>,
     read: &Read,
@@ -245,7 +298,7 @@ async fn keep(
             "INSERT INTO mf_designs (account_id, kind, file_name, file_key, file_bytes, format, facts, preview_svg)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
         )
-        .bind(user.account_id)
+        .bind(account)
         .bind(read.kind())
         .bind(file_name)
         .bind(&file_key)
@@ -474,9 +527,10 @@ pub async fn manage_page(state: &AppState, pool: &PgPool, user: &User, id: i64, 
 }
 
 pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+    // (the apps open this page for a design they've just sent: sign in, then back here)
     let (user, pool) = match maker(&state, &headers).await {
         Ok(m) => m,
-        Err(r) => return r,
+        Err(_) => return Redirect::to(&format!("/signin?next=/designs/{id}")).into_response(),
     };
     manage_page(&state, &pool, &user, id, "").await
 }

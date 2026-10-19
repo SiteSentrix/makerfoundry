@@ -5,6 +5,7 @@
 //! (`cloud`), with MakerFoundry's own sessions in Postgres (`db`) and the pages in `accounts`.
 
 pub mod accounts;
+pub mod api;
 pub mod cloud;
 pub mod db;
 pub mod designs;
@@ -83,8 +84,10 @@ pub struct AppState {
     /// approved): the legal pages are public, and signing up, publishing and selling ask people to
     /// agree to them.
     pub launched: bool,
-    /// The site's address (`MF_PUBLIC_URL`), for the sitemap.
+    /// The site's address (`MF_PUBLIC_URL`), for the sitemap and the links the API answers.
     pub public_url: String,
+    /// The web apps' sites that may call the API from a browser (`MF_API_ORIGINS`).
+    pub api_origins: Vec<String>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -152,8 +155,14 @@ pub fn app(state: AppState) -> Router {
         .route("/stripe/webhook", post(selling::webhook))
         .layer(DefaultBodyLimit::max(WEBHOOK_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(WEBHOOK_LIMIT_BYTES));
+    let api = Router::new()
+        .route("/api/v1", get(api::about))
+        .route("/api/v1/designs", post(api::new_design).options(api::preflight))
+        .layer(DefaultBodyLimit::max(api::API_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(api::API_LIMIT_BYTES));
     pages
         .merge(uploads)
+        .merge(api)
         .merge(new_designs)
         .merge(webhooks)
         .with_state(state)

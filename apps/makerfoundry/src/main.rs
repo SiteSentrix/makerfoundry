@@ -119,6 +119,12 @@ async fn main() -> ExitCode {
         stripe,
         launched,
         public_url,
+        api_origins: std::env::var("MF_API_ORIGINS")
+            .unwrap_or_else(|_| makerfoundry::api::DEFAULT_ORIGINS.to_string())
+            .split(',')
+            .map(|o| o.trim().trim_end_matches('/').to_string())
+            .filter(|o| !o.is_empty())
+            .collect(),
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)

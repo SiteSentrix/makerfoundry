@@ -18,7 +18,8 @@ buyers pay on Stripe Checkout and find their designs in a library; MakerFoundry 
 card fee, every sale and refund in a ledger; waiting for the Stripe test keys. **MF-5** (safety) built: reporting, the copyright (DMCA) process, an admin queue for
 takedowns, and rate limits. **MF-6** (launch) ready: the Terms, Privacy Policy and Seller Terms
 pages, agreement on sign-up, publishing and selling, a launch switch that waits for the owner's
-approval of the legal wording ([`docs/launch.md`](docs/launch.md)). See [`docs/plan.md`](docs/plan.md).
+approval of the legal wording ([`docs/launch.md`](docs/launch.md)). **MF-7** (apps) under way: the API the apps
+publish to ([`docs/api.md`](docs/api.md)); the apps' own command is next. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

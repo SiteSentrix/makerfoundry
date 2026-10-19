@@ -22,6 +22,7 @@ fn app() -> axum::Router {
         stripe: None,
         launched: false,
         public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
     })
 }
 
