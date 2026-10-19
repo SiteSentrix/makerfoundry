@@ -23,7 +23,10 @@ The copyright process matches the draft at `/dmca` (`src/moderation.rs`), and th
 drafts in `src/licences.rs`.
 
 ## The owner's decisions, marked [OWNER: …] in the drafts
-(Added since the first list: Seller Terms § 9, whether converting embroidery designs to other
+(Added since the first list: the Terms should say that makes (photos people post of what they
+made from a design, MF-11) are theirs, that they give MakerFoundry permission to show them, and
+that a design's maker may take a make of their design down [OWNER: wording, Terms § 4 or § 5];
+Seller Terms § 9, whether converting embroidery designs to other
 formats on download (MF-9) is on unless the maker turns it off, as built.)
 
 1. **Contact address.** The drafts use `support@makerfoundry.app`, which needs Cloudflare Email

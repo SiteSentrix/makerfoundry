@@ -19,6 +19,7 @@ pub mod licences;
 pub mod limits;
 pub mod listings;
 pub mod makers;
+pub mod makes;
 pub mod moderation;
 pub mod money;
 pub mod pages;
@@ -125,6 +126,8 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
+        .route("/makes/{mid}/delete", post(makes::delete))
+        .route("/makes/{mid}/{size}", get(makes::photo))
         .route("/collections", get(collections::list).post(collections::create))
         .route("/collections/{cid}", get(collections::show))
         .route("/collections/{cid}/edit", post(collections::edit))
@@ -161,6 +164,7 @@ pub fn app(state: AppState) -> Router {
     let new_designs = Router::new()
         .route("/designs/new", get(designs::new_page).post(designs::upload))
         .route("/designs/{id}/files", post(files::add))
+        .route("/d/{id}/makes", post(makes::post))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
     let webhooks = Router::new()

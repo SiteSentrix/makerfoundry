@@ -2766,3 +2766,120 @@ async fn people_save_designs_and_keep_collections_public_or_private() {
     let mine = s.get("/collections", Some(&bea)).await.body;
     assert!(mine.contains("Saved") && mine.contains("1 design"), "{mine}");
 }
+
+// ---------------------------------------------------------------- MF-11: makes
+
+#[tokio::test]
+async fn people_post_photos_of_what_they_made_and_can_take_them_down() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &ann, "anns", "Rose").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("Sign in to post your make")
+    );
+    let make = |cookie: &str, confirm: &str, photo: Vec<u8>| {
+        multipart(
+            &format!("/d/{rose}/makes"),
+            &[
+                ("photo", "sewn.jpg", photo),
+                ("note", "", "On linen, with <b>rayon</b> thread".as_bytes().to_vec()),
+                ("confirm", "", confirm.as_bytes().to_vec()),
+            ],
+            cookie,
+        )
+    };
+    // a maker profile first: it's the name shown
+    assert!(
+        s.send(make(&bea, "yes", photo_with_location()))
+            .await
+            .body
+            .contains("maker profile first")
+    );
+    s.post("/account/maker", "name=Bea+Bakes&handle=bea", Some(&bea)).await;
+    // her word that it's her own photo, and a real photo
+    assert!(
+        s.send(make(&bea, "", photo_with_location()))
+            .await
+            .body
+            .contains("Confirm")
+    );
+    assert!(
+        s.send(make(&bea, "yes", b"not a photo".to_vec()))
+            .await
+            .body
+            .contains("The photo:")
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_makes").await, 0);
+    let stored = s.stored.lock().unwrap().len();
+    let r = s.send(make(&bea, "yes", photo_with_location())).await;
+    assert_eq!(r.location(), format!("/d/{rose}/rose"), "{}", r.body);
+    assert_eq!(s.stored.lock().unwrap().len(), stored + 2);
+    let mid: i64 = sqlx::query_scalar("SELECT id FROM mf_makes")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    // on the design's page, for everyone, the note escaped
+    let page = s.get(&format!("/d/{rose}"), None).await.body;
+    assert!(
+        page.contains("1 make") && page.contains(&format!(r#"src="/makes/{mid}/thumb""#)),
+        "{page}"
+    );
+    assert!(
+        page.contains("On linen, with &lt;b&gt;rayon&lt;/b&gt; thread")
+            && page.contains(r#"<a href="/makers/bea">Bea Bakes</a>"#)
+    );
+    let photo = s.get(&format!("/makes/{mid}/large"), None).await;
+    assert_eq!(
+        (photo.status, photo.headers[header::CONTENT_TYPE].to_str().unwrap()),
+        (StatusCode::OK, "image/jpeg")
+    );
+    assert_eq!(
+        s.get(&format!("/makes/{mid}/huge"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // Cal can't take it down; Ann (the design's maker) can
+    s.post(&format!("/makes/{mid}/delete"), "", Some(&cal)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_makes").await, 1);
+    assert!(
+        !s.get(&format!("/d/{rose}"), Some(&cal))
+            .await
+            .body
+            .contains("/delete\"")
+    );
+    assert!(
+        s.get(&format!("/d/{rose}"), Some(&ann))
+            .await
+            .body
+            .contains(&format!("/makes/{mid}/delete"))
+    );
+    s.post(&format!("/makes/{mid}/delete"), "", Some(&ann)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_makes").await, 0);
+    assert_eq!(s.stored.lock().unwrap().len(), stored);
+    // Bea's own, taken down by her; an unpublished design's makes aren't shown
+    s.send(make(&bea, "yes", photo_with_location())).await;
+    let mid: i64 = sqlx::query_scalar("SELECT id FROM mf_makes")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/designs/{rose}/unpublish"), "", Some(&ann)).await;
+    assert_eq!(
+        s.get(&format!("/makes/{mid}/thumb"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    s.post(&format!("/designs/{rose}/publish"), "confirm=yes", Some(&ann))
+        .await;
+    s.post(&format!("/makes/{mid}/delete"), "", Some(&bea)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_makes").await, 0);
+    // a deleted design takes its makes' photos with it
+    s.send(make(&bea, "yes", photo_with_location())).await;
+    s.post(&format!("/designs/{rose}/unpublish"), "", Some(&ann)).await;
+    let before = s.stored.lock().unwrap().len();
+    s.post(&format!("/designs/{rose}/delete"), "", Some(&ann)).await;
+    // the file, its photo and thumbnail, and the make's photo and thumbnail
+    assert_eq!(s.stored.lock().unwrap().len(), before - 5);
+}

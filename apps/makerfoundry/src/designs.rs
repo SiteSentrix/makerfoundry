@@ -684,6 +684,7 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
             .await
             .unwrap_or_default();
     let other_files = crate::files::keys(&pool, id).await;
+    let make_photos = crate::makes::keys(&pool, id).await;
     if let Err(e) = sqlx::query("DELETE FROM mf_designs WHERE id = $1 AND account_id = $2")
         .bind(id)
         .bind(user.account_id)
@@ -699,6 +700,7 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
     if let Some(storage) = &state.storage {
         let all = std::iter::once(d.file_key)
             .chain(other_files)
+            .chain(make_photos)
             .chain(keys.into_iter().flat_map(|(a, b)| [a, b]));
         for key in all {
             // (the design is gone either way; a file left behind costs a little storage)
