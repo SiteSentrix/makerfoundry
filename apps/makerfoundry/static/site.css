@@ -186,3 +186,11 @@ address { font-style: normal; background: var(--card); border: 1px solid var(--l
 a.button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
 .hero .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .search select { flex: 1 1 9rem; min-width: 0; }
+
+/* A design's files */
+.files { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: .4rem; max-width: 40rem; }
+.files li { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .7rem; overflow-wrap: anywhere; }
+.files li a { font-weight: 600; }
+.files form button { padding: .3rem .7rem; font-size: .9rem; }
+.add-file { display: grid; gap: .5rem; margin: 0 0 1.5rem; max-width: 40rem; }
+.add-file input[type=file] { font: inherit; }

@@ -513,6 +513,16 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     .await;
     let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}</p>{buy}"#);
     let photos = designs::photos_html(pool, id).await;
+    let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
+    let formats = crate::files::public_html(
+        id,
+        d.facts
+            .get("format")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("File"),
+        &crate::files::others(pool, id).await,
+        may_download,
+    );
     let edit = if mine {
         format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
     } else if d.status == "published" {
@@ -521,7 +531,7 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         String::new()
     };
     let footer = format!(
-        r#"{desc}{photos}{tags}{licence_html}{edit}"#,
+        r#"{desc}{formats}{photos}{tags}{licence_html}{edit}"#,
         desc = paragraphs(&d.description)
     );
     let title = if d.title.is_empty() {
@@ -535,10 +545,37 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     }
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct DownloadQuery {
+    /// One of the design's other files (`files`); the first file without it.
+    file: Option<i64>,
+}
+
+/// Whether `viewer` may see design `d` (`id`) and whether they may download it: a free published
+/// design anyone; a paid one the people who bought it (even unpublished, unless it was taken
+/// down); any its maker and the admins.
+async fn access(state: &AppState, pool: &PgPool, viewer: Option<&User>, d: &DesignRow, id: i64) -> (bool, bool) {
+    let staff = viewer.is_some_and(|u| u.account_id == d.account_id || state.admins.contains(&u.account_id));
+    let buyer = match viewer {
+        Some(u) if d.status != "removed" && !staff && d.price_cents > 0 => {
+            selling::bought(pool, u.account_id, id).await
+        }
+        _ => false,
+    };
+    let seen = visible(d, viewer, &state.admins) || buyer;
+    (seen, seen && (d.price_cents == 0 || staff || buyer))
+}
+
 /// A design's file, by a short-lived link: a free published design's for anyone, a paid one's for
 /// the people who bought it (even once it's unpublished, unless it was taken down), and any for its
 /// maker and the admins. Downloads of published designs are counted.
-pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+pub async fn download(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<DownloadQuery>,
+) -> Response {
     let viewer = current_user(&state, &headers).await;
     let (Some(pool), Some(storage)) = (state.db.as_ref(), state.storage.as_ref()) else {
         return not_found(viewer.is_some());
@@ -546,21 +583,22 @@ pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id
     let Ok(Some(d)) = designs::design(pool, id).await else {
         return not_found(viewer.is_some());
     };
-    let staff = viewer
-        .as_ref()
-        .is_some_and(|u| u.account_id == d.account_id || state.admins.contains(&u.account_id));
-    let buyer = match &viewer {
-        Some(u) if d.status != "removed" && !staff => selling::bought(pool, u.account_id, id).await,
-        _ => false,
-    };
-    let seen = visible(&d, viewer.as_ref(), &state.admins) || buyer;
+    let (seen, may) = access(&state, pool, viewer.as_ref(), &d, id).await;
     if !seen {
         return not_found(viewer.is_some());
     }
-    if d.price_cents > 0 && !staff && !buyer {
+    if !may {
         // not bought: the page with the button to buy it
         return Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response();
     }
+    // which file: the first, or one of the others
+    let (file_key, file_name) = match q.file {
+        None => (d.file_key.clone(), d.file_name.clone()),
+        Some(fid) => match crate::files::others(pool, id).await.into_iter().find(|f| f.id == fid) {
+            Some(f) => (f.file_key, f.file_name),
+            None => return not_found(viewer.is_some()),
+        },
+    };
     if d.status == "published" {
         let _ = sqlx::query("UPDATE mf_designs SET downloads = downloads + 1 WHERE id = $1")
             .bind(id)
@@ -568,13 +606,13 @@ pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id
             .await;
     }
     let name = if d.title.is_empty() {
-        d.file_name.clone()
+        file_name
     } else {
         // the title, with the file's own extension
-        let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+        let ext = file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
         format!("{}.{ext}", slug(&d.title))
     };
-    Redirect::to(storage.download_url(&d.file_key, &name).as_str()).into_response()
+    Redirect::to(storage.download_url(&file_key, &name).as_str()).into_response()
 }
 
 // ---------------------------------------------------------------- details and publishing

@@ -95,13 +95,20 @@ pub async fn new_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
 }
 
 /// A design file, read: what kind it is and what was found.
-enum Read {
+pub(crate) enum Read {
     Embroidery(Embroidery),
     Laser(Laser),
 }
 
 impl Read {
-    fn kind(&self) -> &'static str {
+    pub(crate) fn format(&self) -> &str {
+        match self {
+            Read::Embroidery(e) => &e.format,
+            Read::Laser(l) => &l.format,
+        }
+    }
+
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Read::Embroidery(_) => "embroidery",
             Read::Laser(_) => "laser",
@@ -109,7 +116,7 @@ impl Read {
     }
 }
 
-fn read_design(bytes: &[u8], name: &str) -> Result<Read, String> {
+pub(crate) fn read_design(bytes: &[u8], name: &str) -> Result<Read, String> {
     match laser::kind(bytes, name) {
         Some(kind) => laser::read(bytes, kind).map(Read::Laser),
         None => embroidery::read(bytes, name).map(Read::Embroidery),
@@ -534,9 +541,22 @@ pub async fn manage_page(state: &AppState, pool: &PgPool, user: &User, id: i64, 
             r#"<form method="post" action="/designs/{id}/delete"><button type="submit" class="secondary">Delete this draft</button></form>"#
         )
     };
+    let first_format = d
+        .facts
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("File");
+    let sold = crate::selling::has_sales(pool, id).await;
+    let files = crate::files::manage_html(
+        id,
+        first_format,
+        &d.file_name,
+        &crate::files::others(pool, id).await,
+        sold,
+    );
     let footer = format!(
         r#"{listing}{photos}
-<p class="actions"><a class="button" href="/designs/{id}/download">Download the file</a></p>
+{files}
 {delete}
 <p><a href="/designs">Your designs</a></p>"#
     );
@@ -660,6 +680,7 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
             .fetch_all(&pool)
             .await
             .unwrap_or_default();
+    let other_files = crate::files::keys(&pool, id).await;
     if let Err(e) = sqlx::query("DELETE FROM mf_designs WHERE id = $1 AND account_id = $2")
         .bind(id)
         .bind(user.account_id)
@@ -673,7 +694,10 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
         );
     }
     if let Some(storage) = &state.storage {
-        for key in std::iter::once(d.file_key).chain(keys.into_iter().flat_map(|(a, b)| [a, b])) {
+        let all = std::iter::once(d.file_key)
+            .chain(other_files)
+            .chain(keys.into_iter().flat_map(|(a, b)| [a, b]));
+        for key in all {
             // (the design is gone either way; a file left behind costs a little storage)
             if let Err(e) = storage.delete(&key).await {
                 eprintln!("designs: delete {id}: {e}");

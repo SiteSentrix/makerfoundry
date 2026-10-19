@@ -2339,3 +2339,174 @@ async fn designs_are_found_by_the_hoop_they_fit_and_the_material_they_cut() {
     let all = s.get("/browse?hoop=99x99&material=gold", None).await.body;
     assert!(has(&all, boxed) && has(&all, rose));
 }
+
+#[tokio::test]
+async fn a_design_has_more_formats_each_checked_and_downloadable() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &cookie, "anns", "Rose").await;
+    let other = add_design(&s, &cookie, sf_formats::Format::Pes, "other.pes").await;
+    let add = |name: &'static str, bytes: Vec<u8>| {
+        multipart(&format!("/designs/{rose}/files"), &[("file", name, bytes)], &cookie)
+    };
+    // the same design as a DST: read, checked and kept
+    let r = s.send(add("rose.dst", sample(sf_formats::Format::Dst))).await;
+    assert_eq!(r.location(), format!("/designs/{rose}"), "{}", r.body);
+    // a laser file isn't another format of an embroidery design, and junk isn't a file at all
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"><rect width="5" height="5" stroke="red" fill="none"/></svg>"#;
+    assert!(
+        s.send(add("rose.svg", svg.to_vec()))
+            .await
+            .body
+            .contains("This is an embroidery design")
+    );
+    let junk = s.send(add("rose.jef", b"not a design at all".to_vec())).await;
+    assert!(
+        junk.body.contains("rose.jef"),
+        "{} {} {}",
+        junk.status,
+        junk.location(),
+        junk.body
+    );
+    // one file a format
+    assert!(
+        s.send(add("again.pes", sample(sf_formats::Format::Pes)))
+            .await
+            .body
+            .contains("already has a PES file")
+    );
+    assert!(
+        s.send(add("again.dst", sample(sf_formats::Format::Dst)))
+            .await
+            .body
+            .contains("already has a DST file")
+    );
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_design_files WHERE design_id = $1")
+        .bind(rose)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_files").await, 1);
+    let manage = s.get(&format!("/designs/{rose}"), Some(&cookie)).await.body;
+    assert!(
+        manage.contains(&format!(r#"href="/d/{rose}/download?file={fid}">DST</a>"#)),
+        "{manage}"
+    );
+    // on the public page, both formats, each downloadable
+    let page = s.get(&format!("/d/{rose}"), None).await.body;
+    assert!(
+        page.contains(&format!(r#"<a href="/d/{rose}/download">PES</a>"#)),
+        "{page}"
+    );
+    assert!(page.contains(&format!(r#"<a href="/d/{rose}/download?file={fid}">DST</a>"#)));
+    let r = s.get(&format!("/d/{rose}/download?file={fid}"), None).await;
+    assert!(
+        r.location().contains("/files/") && r.location().contains("rose.dst"),
+        "{}",
+        r.location()
+    );
+    // a file of another design is not this design's
+    assert_eq!(
+        s.get(&format!("/d/{other}/download?file={fid}"), Some(&cookie))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // others can't add or remove files
+    let bea = s.sign_up("bea%40example.com").await;
+    let r = s
+        .send(multipart(
+            &format!("/designs/{rose}/files"),
+            &[("file", "x.dst", sample(sf_formats::Format::Dst))],
+            &bea,
+        ))
+        .await;
+    assert_eq!(r.location(), "/designs");
+    s.post(&format!("/designs/{rose}/files/{fid}/delete"), "", Some(&bea))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_files").await, 1);
+    // removed by its maker: gone from storage too
+    let stored = s.stored.lock().unwrap().len();
+    s.post(&format!("/designs/{rose}/files/{fid}/delete"), "", Some(&cookie))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_files").await, 0);
+    assert_eq!(s.stored.lock().unwrap().len(), stored - 1);
+    assert!(
+        !s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("<h2>Formats</h2>")
+    );
+    // a deleted design takes its other files with it
+    s.send(add("rose.dst", sample(sf_formats::Format::Dst))).await;
+    s.post(&format!("/designs/{rose}/unpublish"), "", Some(&cookie)).await;
+    let before = s.stored.lock().unwrap().len();
+    s.post(&format!("/designs/{rose}/delete"), "", Some(&cookie)).await;
+    // the first file, its photo and thumbnail, and the DST
+    assert_eq!(s.stored.lock().unwrap().len(), before - 4);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_files").await, 0);
+}
+
+#[tokio::test]
+async fn a_paid_designs_other_formats_are_for_its_buyers() {
+    let Some((s, st, seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let r = s
+        .send(multipart(
+            &format!("/designs/{id}/files"),
+            &[("file", "fox.dst", sample(sf_formats::Format::Dst))],
+            &seller,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_design_files")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let buyer = s.sign_up("bea%40example.com").await;
+    // before buying: the formats named, not linked, and no file
+    let page = s.get(&format!("/d/{id}"), Some(&buyer)).await.body;
+    assert!(
+        page.contains("<li>DST</li>") && !page.contains(&format!("download?file={fid}")),
+        "{page}"
+    );
+    assert!(
+        !s.get(&format!("/d/{id}/download?file={fid}"), Some(&buyer))
+            .await
+            .location()
+            .contains("/files/")
+    );
+    // bought: every format
+    s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_p",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, true),
+    )
+    .await;
+    assert!(
+        s.get(&format!("/d/{id}"), Some(&buyer))
+            .await
+            .body
+            .contains(&format!("download?file={fid}"))
+    );
+    assert!(
+        s.get(&format!("/d/{id}/download?file={fid}"), Some(&buyer))
+            .await
+            .location()
+            .contains("/files/")
+    );
+    // and once bought, the seller can't take a format away
+    s.post(&format!("/designs/{id}/files/{fid}/delete"), "", Some(&seller))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_files").await, 1);
+    assert!(
+        !s.get(&format!("/designs/{id}"), Some(&seller))
+            .await
+            .body
+            .contains("/files/{fid}/delete")
+    );
+}

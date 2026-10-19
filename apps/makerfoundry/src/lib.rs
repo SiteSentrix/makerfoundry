@@ -10,6 +10,7 @@ pub mod cloud;
 pub mod db;
 pub mod designs;
 pub mod embroidery;
+pub mod files;
 pub mod laser;
 pub mod legal;
 pub mod licences;
@@ -113,6 +114,7 @@ pub fn app(state: AppState) -> Router {
         .route("/designs/{id}/download", get(designs::download))
         .route("/designs/{id}/photos/{photo}/{size}", get(designs::photo))
         .route("/designs/{id}/delete", post(designs::delete))
+        .route("/designs/{id}/files/{file}/delete", post(files::remove))
         .route("/designs/{id}/edit", get(listings::edit_page).post(listings::save))
         .route("/designs/{id}/publish", post(listings::publish))
         .route("/designs/{id}/unpublish", post(listings::unpublish))
@@ -150,6 +152,7 @@ pub fn app(state: AppState) -> Router {
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT_BYTES));
     let new_designs = Router::new()
         .route("/designs/new", get(designs::new_page).post(designs::upload))
+        .route("/designs/{id}/files", post(files::add))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
     let webhooks = Router::new()
