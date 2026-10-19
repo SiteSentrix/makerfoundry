@@ -31,13 +31,19 @@ Loop through the four steps until the bug cannot be reproduced; always start wit
 - **Shorten the loop first** (ch. 2): prefer a test over clicking through pages. An integration test
   that sends the request to `makerfoundry::app()` with `tower::ServiceExt::oneshot`
   (`apps/makerfoundry/tests/pages.rs` shows how) runs in milliseconds; `cargo test -p makerfoundry
-  <name>` runs just that one. For a bad upload, a parser test fed only that file.
+  <name>` runs just that one; never the whole CI run as the loop. For a page: run the server and
+  hit it with `curl`, or render it with Playwright (Chromium is installed in cloud sessions) and look
+  at the screenshot at phone and desktop widths.
+- For a bad upload: a parser test fed only that file. Keep the smallest file that breaks a parser
+  as a fixture, written from the format's public specification (never a user's or a copyrighted
+  design), and add it to the parser's fuzz tests.
 - **Cut the case down** (ch. 20): the smallest file, request or row set that still fails. If it
   stops failing, the part you removed matters; put it back in halves. Minimise the input when the
   code isn't ours.
 - Vary one thing at a time (order, size, user, browser, phone vs desktop) to learn which steps matter.
 - Production-only bug: reproduce locally with the same data shape, never by experimenting on live
-  users' data. Payments: **Stripe test mode only**, with the Stripe CLI to replay webhooks.
+  users' data. Payments: **Stripe test mode only** (test cards), with the Stripe CLI to replay webhooks.
+  Every money path is idempotent, so a replayed event must change nothing; check that too.
 
 ## 2. Probe: find an entry point (ch. 4-12)
 

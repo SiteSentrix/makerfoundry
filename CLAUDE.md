@@ -63,8 +63,9 @@ When something fails and the cause isn't obvious, follow the `/debug` skill
 (`.claude/skills/debug/SKILL.md`), based on Kuhlmann, *The Book of Debugging* (No Starch Press);
 [`docs/debug-book-notes.md`](docs/debug-book-notes.md) has the chapter notes behind it. The rules
 that matter most:
-- **Reproduce first, as a fast test.** A request sent to `makerfoundry::app()` in a test beats
-  clicking through pages; cut the input down to the smallest case that still fails.
+- **Reproduce first, as a fast test.** Run the one failing test, never the whole CI as the loop; a
+  request sent to `makerfoundry::app()` in a test beats clicking through pages; for a page, `curl`
+  or a Playwright screenshot. Cut the input down to the smallest case that still fails.
 - **Check you're running what you think**: rebuilt binary, current deploy (`/health` shows the
   version), right branch, right database, no cached CSS.
 - **Look at the data before theorising**: follow it to the last good and first bad step.
