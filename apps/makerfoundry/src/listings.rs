@@ -120,6 +120,10 @@ pub struct Filter {
     /// Laser designs for this material.
     pub material: Option<String>,
     pub popular: bool,
+    /// The most saved first.
+    pub most_saved: bool,
+    /// Designs in this collection (`collections`).
+    pub collection: Option<i64>,
     pub page: i64,
 }
 
@@ -149,7 +153,10 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
            AND ($9::float8 IS NULL OR (d.kind = 'embroidery'
                 AND ((d.width_mm <= $9 AND d.height_mm <= $10) OR (d.width_mm <= $10 AND d.height_mm <= $9))))
            AND ($11::text IS NULL OR (d.kind = 'laser' AND d.material = $11))
-         ORDER BY CASE WHEN $5 THEN d.downloads END DESC NULLS LAST,
+           AND ($12::bigint IS NULL OR d.id IN (SELECT design_id FROM mf_collection_items WHERE collection_id = $12))
+         ORDER BY CASE WHEN $13 THEN (SELECT count(DISTINCT c.account_id) FROM mf_collection_items i
+                                      JOIN mf_collections c ON c.id = i.collection_id WHERE i.design_id = d.id) END DESC NULLS LAST,
+                  CASE WHEN $5 THEN d.downloads END DESC NULLS LAST,
                   CASE WHEN $3::text IS NOT NULL AND NOT $5 THEN ts_rank(d.search, websearch_to_tsquery('english', $3)) END DESC NULLS LAST,
                   d.published_at DESC
          LIMIT $6 OFFSET $7",
@@ -165,6 +172,8 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     .bind(f.hoop.map(|h| h.width_mm))
     .bind(f.hoop.map(|h| h.height_mm))
     .bind(&f.material)
+    .bind(f.collection)
+    .bind(f.most_saved)
     .fetch_all(pool)
     .await;
     match rows {
@@ -274,6 +283,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
     let kind = matches!(q.kind.as_str(), "embroidery" | "laser").then(|| q.kind.clone());
     let tag = tidy_tags(&q.tag).into_iter().next();
     let popular = q.sort == "popular";
+    let most_saved = q.sort == "saved";
     let page_no = q.page.clamp(0, 1000);
     let free = match q.price.as_str() {
         "free" => Some(true),
@@ -300,7 +310,13 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
         k = escape(kind.as_deref().unwrap_or("")),
         h = hoop.map_or("", |h| h.id),
         m = escape(material.as_deref().unwrap_or("")),
-        s = if popular { "popular" } else { "newest" },
+        s = if popular {
+            "popular"
+        } else if most_saved {
+            "saved"
+        } else {
+            "newest"
+        },
     );
     let filter = Filter {
         kind: kind.clone(),
@@ -311,6 +327,8 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
         hoop,
         material: material.clone(),
         popular,
+        most_saved,
+        collection: None,
         page: page_no,
     };
     let found = match state.db.as_ref() {
@@ -350,7 +368,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
 <select name="price" aria-label="Price"><option value="">Free and paid</option><option value="free"{fr}>Free</option><option value="paid"{pd}>Paid</option></select>
 <select name="hoop" aria-label="Hoop"><option value="">Any hoop</option>{hoops}</select>
 <select name="material" aria-label="Material"><option value="">Any material</option>{materials}</select>
-<select name="sort" aria-label="Order"><option value="newest">Newest</option><option value="popular"{p}>Most downloaded</option></select>
+<select name="sort" aria-label="Order"><option value="newest">Newest</option><option value="popular"{p}>Most downloaded</option><option value="saved"{ms}>Most saved</option></select>
 <input type="hidden" name="tag" value="{tag}">
 <button type="submit">Search</button>
 </form>
@@ -360,6 +378,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
             e = selected(kind.as_deref() == Some("embroidery")),
             l = selected(kind.as_deref() == Some("laser")),
             p = selected(popular),
+            ms = selected(most_saved),
             hoops = HOOPS
                 .iter()
                 .map(|h| format!(
@@ -473,6 +492,11 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         n => format!(" · {n} downloads"),
     };
     let fits = fits_text(&d).map(|t| format!(" · {}", escape(&t))).unwrap_or_default();
+    let saves = match crate::collections::saves(pool, id).await {
+        0 => String::new(),
+        1 => " · saved by 1 person".into(),
+        n => format!(" · saved by {n} people"),
+    };
     let licence = d.licence.as_deref().and_then(licences::find);
     let licence_html = match licence {
         Some(l) => format!(
@@ -511,7 +535,12 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         &licence.map(|l| escape(l.name)).unwrap_or_default(),
     )
     .await;
-    let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}</p>{buy}"#);
+    let save = if d.status == "published" {
+        crate::collections::save_html(pool, viewer.as_ref(), id).await
+    } else {
+        String::new()
+    };
+    let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{saves}</p>{buy}{save}"#);
     let photos = designs::photos_html(pool, id).await;
     let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
     let first_format = d

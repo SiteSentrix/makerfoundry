@@ -7,6 +7,7 @@
 pub mod accounts;
 pub mod api;
 pub mod cloud;
+pub mod collections;
 pub mod convert;
 pub mod db;
 pub mod designs;
@@ -123,6 +124,12 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/download", get(listings::download))
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
+        .route("/d/{id}/save", post(collections::save))
+        .route("/collections", get(collections::list).post(collections::create))
+        .route("/collections/{cid}", get(collections::show))
+        .route("/collections/{cid}/edit", post(collections::edit))
+        .route("/collections/{cid}/delete", post(collections::delete))
+        .route("/collections/{cid}/remove/{id}", post(collections::remove))
         .route("/makers/{handle}", get(makers::show))
         .route("/account/maker", get(makers::edit_page).post(makers::save))
         .route("/d/{id}/report", get(moderation::report_page).post(moderation::report))

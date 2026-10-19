@@ -2626,3 +2626,143 @@ async fn a_paid_designs_conversions_are_for_its_buyers() {
     assert_eq!(r.status, StatusCode::SEE_OTHER);
     assert_eq!(r.location(), format!("/d/{id}/fox-patch"));
 }
+
+// ---------------------------------------------------------------- MF-10: saved designs and collections
+
+#[tokio::test]
+async fn people_save_designs_and_keep_collections_public_or_private() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &ann, "anns", "Rose").await;
+    let owl = published(&s, &ann, "anns", "Owl").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    // signed out: sign in first
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("Sign in to save")
+    );
+    assert_eq!(
+        s.post(&format!("/d/{rose}/save"), "", None).await.location(),
+        format!("/signin?next=/d/{rose}")
+    );
+    // Bea saves the rose to her Saved list (twice is once)
+    let r = s.post(&format!("/d/{rose}/save"), "collection=", Some(&bea)).await;
+    assert_eq!(r.location(), format!("/d/{rose}/rose"));
+    s.post(&format!("/d/{rose}/save"), "", Some(&bea)).await;
+    let page = s.get(&format!("/d/{rose}"), Some(&bea)).await.body;
+    assert!(
+        page.contains("saved by 1 person") && page.contains("In your <a href="),
+        "{page}"
+    );
+    // a public collection of her own, with the owl in it
+    let r = s
+        .post("/collections", "name=Christmas++ideas&public=yes", Some(&bea))
+        .await;
+    let christmas: i64 = r.location().trim_start_matches("/collections/").parse().unwrap();
+    s.post(
+        &format!("/d/{owl}/save"),
+        &format!("collection={christmas}"),
+        Some(&bea),
+    )
+    .await;
+    let public = s.get(&format!("/collections/{christmas}"), None).await;
+    assert_eq!(public.status, StatusCode::OK);
+    assert!(public.body.contains("<h1>Christmas ideas</h1>") && public.body.contains(&format!("/d/{owl}/")));
+    // her Saved list is hers alone
+    let saved: i64 = sqlx::query_scalar("SELECT id FROM mf_collections WHERE is_saved")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert!(
+        s.get(&format!("/collections/{saved}"), Some(&bea))
+            .await
+            .body
+            .contains(&format!("/d/{rose}/"))
+    );
+    assert_eq!(
+        s.get(&format!("/collections/{saved}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/collections/{saved}"), Some(&ann)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // nobody else adds to, takes from, renames or deletes it
+    s.post(
+        &format!("/d/{rose}/save"),
+        &format!("collection={christmas}"),
+        Some(&cal),
+    )
+    .await;
+    s.post(&format!("/collections/{christmas}/remove/{owl}"), "", Some(&cal))
+        .await;
+    s.post(&format!("/collections/{christmas}/edit"), "name=Mine", Some(&cal))
+        .await;
+    s.post(&format!("/collections/{christmas}/delete"), "", Some(&cal))
+        .await;
+    let items: Vec<i64> = sqlx::query_scalar("SELECT design_id FROM mf_collection_items WHERE collection_id = $1")
+        .bind(christmas)
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(items, [owl]);
+    assert!(
+        s.get(&format!("/collections/{christmas}"), None)
+            .await
+            .body
+            .contains("Christmas ideas")
+    );
+    // Cal saves the rose too: the most saved comes first
+    s.post(&format!("/d/{rose}/save"), "", Some(&cal)).await;
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("saved by 2 people")
+    );
+    let browse = s.get("/browse?sort=saved", None).await.body;
+    let (r_at, o_at) = (
+        browse.find(&format!("/d/{rose}/")).unwrap(),
+        browse.find(&format!("/d/{owl}/")).unwrap(),
+    );
+    assert!(r_at < o_at);
+    let browse = s.get("/browse", None).await.body;
+    assert!(browse.find(&format!("/d/{owl}/")).unwrap() < browse.find(&format!("/d/{rose}/")).unwrap());
+    // an unpublished design drops out of collections, and can't be saved
+    s.post(&format!("/designs/{owl}/unpublish"), "", Some(&ann)).await;
+    assert!(
+        !s.get(&format!("/collections/{christmas}"), None)
+            .await
+            .body
+            .contains(&format!("/d/{owl}/"))
+    );
+    assert_eq!(
+        s.post(&format!("/d/{owl}/save"), "", Some(&cal)).await.location(),
+        "/browse"
+    );
+    // a maker's public collections show on their page; private ones don't
+    s.post("/collections", "name=Favourites&public=yes", Some(&ann)).await;
+    s.post("/collections", "name=Secret", Some(&ann)).await;
+    let maker = s.get("/makers/anns", None).await.body;
+    assert!(maker.contains("Favourites") && !maker.contains("Secret"), "{maker}");
+    // Bea makes hers private, then deletes it; her Saved list can't be deleted
+    s.post(&format!("/collections/{christmas}/edit"), "name=Christmas", Some(&bea))
+        .await;
+    assert_eq!(
+        s.get(&format!("/collections/{christmas}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    s.post(&format!("/collections/{christmas}/delete"), "", Some(&bea))
+        .await;
+    s.post(&format!("/collections/{saved}/delete"), "", Some(&bea)).await;
+    let left: Vec<String> = sqlx::query_scalar("SELECT name FROM mf_collections WHERE account_id = 1001")
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, ["Saved"]);
+    let mine = s.get("/collections", Some(&bea)).await.body;
+    assert!(mine.contains("Saved") && mine.contains("1 design"), "{mine}");
+}

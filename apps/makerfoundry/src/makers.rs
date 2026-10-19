@@ -167,6 +167,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
         return not_found();
     };
     let designs = cards(pool, account_id, 200).await;
+    let collections = crate::collections::public_html(pool, account_id).await;
     let list = if designs.is_empty() {
         r#"<p class="muted">No designs published yet.</p>"#.to_string()
     } else {
@@ -175,7 +176,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     Html(page(
         &format!("{} · MakerFoundry", escape(&name)),
         &format!(
-            r#"<section class="design"><h1>{}</h1>{}<h2>Designs</h2>{list}</section>"#,
+            r#"<section class="design"><h1>{}</h1>{}<h2>Designs</h2>{list}{collections}</section>"#,
             escape(&name),
             paragraphs(&bio)
         ),
