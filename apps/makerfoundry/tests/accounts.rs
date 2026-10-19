@@ -635,3 +635,21 @@ async fn uploaded_laser_files_show_their_lines() {
         r.body
     );
 }
+
+#[tokio::test]
+async fn an_uploaded_pdf_is_read_as_a_laser_file() {
+    let Some(s) = site().await else { return };
+    let ours = format!("https://{HOST}");
+    let cookie = s
+        .post(
+            "/signup",
+            "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let r = s
+        .send(upload("broken.pdf", b"%PDF-1.7\nnot a real pdf", Some(&cookie), &ours))
+        .await;
+    assert!(r.body.contains("PDF couldn&#39;t be read"), "{}", r.body);
+}

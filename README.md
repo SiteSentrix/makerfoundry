@@ -9,7 +9,7 @@ October 2026: **MF-0** (workspace) done: a Rust web service with a home page and
 and a Dockerfile, live on Railway at <https://makerfoundry-production.up.railway.app>
 ([`docs/deploy.md`](docs/deploy.md)). **MF-1** (accounts) done and live: sign up, in and out with a Foundry Account, and a
 forgotten password. **MF-2** (upload and preview) under way: an
-uploaded embroidery file is drawn stitch by stitch, and an SVG or DXF laser file line by line
+uploaded embroidery file is drawn stitch by stitch, and an SVG, DXF or PDF laser file line by line
 (`/preview`, signed in). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop

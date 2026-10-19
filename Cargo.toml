@@ -27,6 +27,9 @@ getrandom = "0.3"
 # SVG laser files: parsed and resolved (units, transforms, viewBox) by usvg, Apache-2.0 OR MIT. No
 # default features: no fonts (text isn't drawn), and no svgz (gzip inside an upload is a bomb risk).
 usvg = { version = "0.48", default-features = false }
+# PDF laser files: lopdf, MIT, without its default features (no clock, no threads). Loaded with
+# a cap on every decompressed stream; see laser/pdf.rs for the rest of the limits.
+lopdf = { version = "0.45", default-features = false }
 # StitchFoundry's embroidery file readers (DST, PES, JEF, EXP, VP3, XXX, U01 and more; fuzzed
 # there against untrusted bytes) and its stitch statistics. MIT OR Apache-2.0, by SiteSentrix.
 # Pinned by commit: bump on purpose.

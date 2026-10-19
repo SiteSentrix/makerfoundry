@@ -10,6 +10,9 @@
 //!   read here, group code by group code: LINE, LWPOLYLINE (with bulges), POLYLINE, CIRCLE, ARC,
 //!   ELLIPSE and SPLINE, in the units `$INSUNITS` gives. Block references (INSERT) are counted,
 //!   not drawn.
+//! - PDF (`pdf`): the first page's drawing, read with lopdf under limits of our own.
+
+mod pdf;
 
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
@@ -23,7 +26,7 @@ pub const MAX_POINTS: usize = 2_000_000;
 /// The largest design accepted (mm, either side): bigger than any laser bed.
 pub const MAX_SIZE_MM: f64 = 5000.0;
 /// Pieces a curve is flattened into (at most).
-const CURVE_STEPS: usize = 48;
+pub(crate) const CURVE_STEPS: usize = 48;
 
 /// A colour of a design's lines (laser software uses colours for layers: cut, score, engrave).
 #[derive(Clone, Debug, PartialEq)]
@@ -38,7 +41,7 @@ pub struct LaserColour {
 /// A laser file, read and checked.
 #[derive(Clone, Debug)]
 pub struct Laser {
-    /// `SVG` or `DXF`.
+    /// `SVG`, `DXF` or `PDF`.
     pub format: String,
     pub width_mm: f64,
     pub height_mm: f64,
@@ -56,25 +59,33 @@ pub struct Laser {
 
 /// One shape: a line through `points` (mm, y down), maybe closed, in a colour.
 #[derive(Clone, Debug)]
-struct Shape {
-    points: Vec<(f64, f64)>,
-    closed: bool,
+pub(crate) struct Shape {
+    pub(crate) points: Vec<(f64, f64)>,
+    pub(crate) closed: bool,
     /// Filled (an engraved area) rather than only a line.
-    filled: bool,
-    rgb: (u8, u8, u8),
+    pub(crate) filled: bool,
+    pub(crate) rgb: (u8, u8, u8),
 }
 
 /// Shapes as they are read, with the caps kept.
 #[derive(Default)]
-struct Shapes {
+pub(crate) struct Shapes {
     list: Vec<Shape>,
     points: usize,
 }
 
 impl Shapes {
-    fn push(&mut self, shape: Shape) -> Result<(), String> {
+    pub(crate) fn push(&mut self, mut shape: Shape) -> Result<(), String> {
         if shape.points.len() < 2 {
             return Ok(());
+        }
+        // a line that ends where it began closes, said so or not (a cut frees what's inside)
+        if let (Some(a), Some(b)) = (shape.points.first(), shape.points.last())
+            && shape.points.len() > 2
+            && (a.0 - b.0).abs() < 0.01
+            && (a.1 - b.1).abs() < 0.01
+        {
+            shape.closed = true;
         }
         if shape.points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
             return Err("the file has lines at impossible positions".into());
@@ -96,6 +107,9 @@ pub fn kind(bytes: &[u8], file_name: &str) -> Option<&'static str> {
         .rsplit_once('.')
         .map(|(_, e)| e.to_ascii_lowercase())
         .unwrap_or_default();
+    if ext == "pdf" || bytes.starts_with(b"%PDF-") {
+        return Some("PDF");
+    }
     let head = String::from_utf8_lossy(bytes.get(..bytes.len().min(2048)).unwrap_or_default()).to_ascii_lowercase();
     if ext == "svg"
         || head.trim_start_matches('\u{feff}').trim_start().starts_with("<?xml") && head.contains("<svg")
@@ -115,7 +129,7 @@ pub fn kind(bytes: &[u8], file_name: &str) -> Option<&'static str> {
     None
 }
 
-/// Reads a laser file of the given `kind` (`SVG` or `DXF`).
+/// Reads a laser file of the given `kind` (`SVG`, `DXF` or `PDF`).
 pub fn read(bytes: &[u8], kind: &str) -> Result<Laser, String> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(format!("the file is larger than {} MB", MAX_FILE_BYTES / (1024 * 1024)));
@@ -126,7 +140,8 @@ pub fn read(bytes: &[u8], kind: &str) -> Result<Laser, String> {
     let (shapes, not_drawn) = match kind {
         "SVG" => read_svg(bytes)?,
         "DXF" => read_dxf(bytes)?,
-        _ => return Err("this isn't an SVG or DXF file".into()),
+        "PDF" => pdf::read(bytes)?,
+        _ => return Err("this isn't an SVG, DXF or PDF file".into()),
     };
     summarise(kind, shapes.list, not_drawn)
 }

@@ -1,5 +1,5 @@
 //! "See your design" (MF-2): a signed-in maker uploads an embroidery file or a laser file (SVG,
-//! DXF) and sees it drawn, with its size and colours, and its stitches or the length of its lines. Nothing is kept: the file is read, checked and
+//! DXF, PDF) and sees it drawn, with its size and colours, and its stitches or the length of its lines. Nothing is kept: the file is read, checked and
 //! answered. Listings (MF-3) will use the same reading when a design is uploaded for good.
 
 use axum::extract::{Multipart, State};
@@ -13,7 +13,7 @@ use crate::laser::{self, Laser};
 use crate::pages::escape;
 
 /// The extensions the file picker offers (any file is still read by its content).
-const ACCEPT: &str = ".dst,.pes,.pec,.jef,.exp,.vp3,.xxx,.u01,.pcs,.tap,.dsb,.dsz,.svg,.dxf";
+const ACCEPT: &str = ".dst,.pes,.pec,.jef,.exp,.vp3,.xxx,.u01,.pcs,.tap,.dsb,.dsz,.svg,.dxf,.pdf";
 
 const TITLE: &str = "See your design · MakerFoundry";
 
@@ -26,7 +26,7 @@ fn form(problem: &str) -> String {
     format!(
         r#"<section class="form">
 <h1>See your design</h1>
-<p class="lead">Upload a machine-embroidery file (DST, PES, JEF, EXP, VP3, XXX and more) or a laser file (SVG, DXF) to see it drawn, with its size and colours. The file isn't kept.</p>
+<p class="lead">Upload a machine-embroidery file (DST, PES, JEF, EXP, VP3, XXX and more) or a laser file (SVG, DXF, PDF) to see it drawn, with its size and colours. The file isn't kept.</p>
 {problem}
 <form method="post" action="/preview" enctype="multipart/form-data">
 <label>Design file <small>(embroidery up to {mb} MB, laser up to {laser_mb} MB)</small><input type="file" name="file" accept="{ACCEPT}" required></label>
