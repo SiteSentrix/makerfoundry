@@ -1,8 +1,16 @@
 # MakerFoundry's legal pages: drafts for the owner
 
-**Status:** 2026-10-19. Drafts, not reviewed by a lawyer, **not on the site**. Legal wording is the
-owner's (docs/start-here.md). Once approved, they become `/terms`, `/privacy` and
-`/seller-terms` (MF-6).
+**Status:** 2026-10-19. Drafts, not reviewed by a lawyer. Legal wording is the owner's
+(docs/start-here.md). The site shows these files as `/terms`, `/privacy` and `/seller-terms`
+(`src/legal.rs`): to admins only, marked as drafts, while any `[OWNER: …]`, "[When …]" or "DRAFT
+for the owner" is left; to everyone once none is and the site has launched (`docs/launch.md`).
+To approve a document, edit it here: decide each marker, delete the DRAFT line, set the date.
+
+Already decided since the drafts: the fee (10%, the card fee from the seller's share, monthly
+payouts: Seller Terms § 4, § 6), and selling is built (MF-4), so the drafts describe it. As built,
+a refund gives the buyer the whole price back, and the seller loses only their share (our fee and
+the card fee are refunded from MakerFoundry's part), which answers Seller Terms § 7's marker
+unless the owner decides otherwise; Stripe keeps its card fee on a refund, a cost to MakerFoundry.
 
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.

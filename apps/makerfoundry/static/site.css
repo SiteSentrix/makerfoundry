@@ -167,7 +167,21 @@ label.choice input { margin-top: .3rem; width: auto; }
 .prose ol { padding-left: 1.3rem; }
 .prose li { margin: .25rem 0; }
 address { font-style: normal; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .75rem 1rem; }
-.bottom a[href="/dmca"] { margin-left: .4rem; }
 
 /* Selling: a card's price */
 .cards .price { font-weight: 600; }
+
+/* The legal pages, and the footer's links */
+.legal blockquote { margin: 0 0 1rem; padding: .6rem .9rem; border-left: 3px solid var(--accent); background: var(--card); }
+.legal blockquote p { margin: 0; }
+.legal ul { padding-left: 1.3rem; }
+.legal li { margin: .3rem 0; }
+.legal mark { background: #f6d77a; color: #1f2328; padding: 0 .15rem; border-radius: .2rem; }
+.legal code { font-size: .9em; }
+.legal .table { overflow-x: auto; margin: 0 0 1rem; }
+.legal table { border-collapse: collapse; min-width: 34rem; font-size: .92rem; }
+.legal th, .legal td { border: 1px solid var(--line); padding: .45rem .6rem; text-align: left; vertical-align: top; }
+.legal th { background: var(--card); }
+.bottom .links { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin-top: -.4rem; }
+a.button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.hero .actions { display: flex; flex-wrap: wrap; gap: .6rem; }

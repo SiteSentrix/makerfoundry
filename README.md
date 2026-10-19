@@ -16,7 +16,9 @@ publishing, public design pages with free downloads, browse and search; publishi
 launch. **MF-4** (selling) built: sellers set up Stripe payouts (monthly), designs get a price,
 buyers pay on Stripe Checkout and find their designs in a library; MakerFoundry keeps 10% and the
 card fee, every sale and refund in a ledger; waiting for the Stripe test keys. **MF-5** (safety) built: reporting, the copyright (DMCA) process, an admin queue for
-takedowns, and rate limits. See [`docs/plan.md`](docs/plan.md).
+takedowns, and rate limits. **MF-6** (launch) ready: the Terms, Privacy Policy and Seller Terms
+pages, agreement on sign-up, publishing and selling, a launch switch that waits for the owner's
+approval of the legal wording ([`docs/launch.md`](docs/launch.md)). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

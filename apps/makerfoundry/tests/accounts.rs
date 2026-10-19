@@ -235,6 +235,11 @@ async fn site_with(admins: Vec<i64>) -> Option<Site> {
 
 /// The test site, with `admins` and Stripe.
 async fn site_full(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe>) -> Option<Site> {
+    site_opts(admins, stripe, false).await
+}
+
+/// The test site, open to everyone (`launched`) or not.
+async fn site_opts(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe>, launched: bool) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
     let (url, fake) = fake_cloud().await;
@@ -246,6 +251,8 @@ async fn site_full(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe
         admins,
         limits: std::sync::Arc::default(),
         stripe,
+        launched,
+        public_url: "https://makerfoundry.test".into(),
     });
     Some(Site {
         app,
@@ -536,6 +543,8 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
         stripe: None,
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
     });
     let s = Site {
         stored: Arc::default(),
@@ -557,6 +566,8 @@ async fn without_a_database_nobody_can_sign_in() {
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
         stripe: None,
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -953,6 +964,8 @@ async fn without_storage_designs_can_only_be_previewed() {
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
         stripe: None,
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
     });
     let s = Site {
         app,
@@ -1178,6 +1191,8 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
         stripe: None,
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
     });
     let s = Site {
         app,
@@ -1912,4 +1927,95 @@ async fn without_stripe_every_design_is_free() {
         StatusCode::NOT_FOUND
     );
     assert!(s.get(&format!("/d/{id}"), None).await.body.contains("Download free"));
+}
+
+// ---------------------------------------------------------------- MF-6: the launch
+
+#[tokio::test]
+async fn before_the_launch_the_legal_drafts_are_for_admins_only() {
+    let Some(s) = site_with(vec![1000]).await else { return };
+    let admin = s.sign_up("ada%40example.com").await;
+    let other = s.sign_up("bea%40example.com").await;
+    for path in ["/terms", "/privacy", "/seller-terms"] {
+        let public = s.get(path, None).await;
+        assert_eq!(public.status, StatusCode::OK);
+        assert!(public.body.contains("hasn't opened yet"), "{}", public.body);
+        assert!(!public.body.contains("OWNER"));
+        assert!(!s.get(path, Some(&other)).await.body.contains("OWNER"));
+        let draft = s.get(path, Some(&admin)).await.body;
+        assert!(
+            draft.contains("A draft for the owner") && draft.contains("<mark>[OWNER"),
+            "{draft}"
+        );
+    }
+    // no agreement asked for, search engines kept out, and still "coming soon"
+    assert!(!s.get("/signup", None).await.body.contains("name=\"agree\""));
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_agreements").await, 0);
+    assert_eq!(s.get("/robots.txt", None).await.body, "User-agent: *\nDisallow: /\n");
+    assert_eq!(s.get("/sitemap.xml", None).await.status, StatusCode::NOT_FOUND);
+    assert!(s.get("/", None).await.body.contains("Coming soon"));
+}
+
+#[tokio::test]
+async fn once_launched_people_agree_to_the_terms_and_the_site_is_found() {
+    let Some(s) = site_opts(Vec::new(), None, true).await else {
+        return;
+    };
+    let terms = s.get("/terms", None).await.body;
+    assert!(terms.contains("<h1>Terms of Service: MakerFoundry</h1>"), "{terms}");
+    // signing up asks for agreement to the Terms and the Privacy Policy, and keeps it
+    let form = s.get("/signup", None).await.body;
+    assert!(form.contains(r#"name="agree""#) && form.contains(r#"href="/terms""#));
+    let r = s
+        .post(
+            "/signup",
+            "email=ann%40example.com&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await;
+    assert!(r.body.contains("agree to the Terms"), "{}", r.body);
+    let cookie = s
+        .post(
+            "/signup",
+            "email=ann%40example.com&password=fire+truck+1&again=fire+truck+1&agree=yes",
+            None,
+        )
+        .await
+        .cookie();
+    let agreed: Vec<(String, String)> =
+        sqlx::query_as("SELECT document, version FROM mf_agreements WHERE account_id = 1000 ORDER BY document")
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        agreed,
+        [
+            (
+                "privacy".to_string(),
+                makerfoundry::legal::PRIVACY.version().to_string()
+            ),
+            ("terms".to_string(), makerfoundry::legal::TERMS.version().to_string()),
+        ]
+    );
+    // publishing is agreeing to the Seller Terms
+    let id = published(&s, &cookie, "anns", "Rose+Spray").await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_agreements WHERE document = 'seller-terms'")
+            .await,
+        1
+    );
+    // the home page invites people in; search engines are welcome, with a map
+    let home = s.get("/", None).await.body;
+    assert!(
+        home.contains("Browse designs") && !home.contains("Coming soon"),
+        "{home}"
+    );
+    let robots = s.get("/robots.txt", None).await.body;
+    assert!(robots.contains("Disallow: /account") && robots.contains("Sitemap: https://makerfoundry.test/sitemap.xml"));
+    let map = s.get("/sitemap.xml", None).await.body;
+    assert!(
+        map.contains(&format!("<loc>https://makerfoundry.test/d/{id}/rose-spray</loc>")),
+        "{map}"
+    );
+    assert!(map.contains("<loc>https://makerfoundry.test/makers/anns</loc>"));
 }

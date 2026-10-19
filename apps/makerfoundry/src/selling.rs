@@ -129,7 +129,14 @@ fn selling_html(state: &AppState, s: Option<&Seller>, allowed: bool) -> String {
         r#"<p class="problem">Selling opens when MakerFoundry launches.</p>"#.to_string()
     } else {
         match s {
-            None => r#"<form method="post" action="/account/selling/start"><button type="submit">Set up payouts with Stripe</button></form>"#.to_string(),
+            None => format!(
+                r#"<form method="post" action="/account/selling/start"><button type="submit">Set up payouts with Stripe</button></form>{agree}"#,
+                agree = if state.launched {
+                    r#"<p class="muted">By setting up payouts you agree to the <a href="/seller-terms">Seller Terms</a>.</p>"#
+                } else {
+                    ""
+                }
+            ),
             Some(s) if !s.charges_enabled => format!(
                 r#"<p class="problem">{why}</p><form method="post" action="/account/selling/start"><button type="submit">Carry on with Stripe</button></form>"#,
                 why = if s.details_submitted {
@@ -180,6 +187,9 @@ pub async fn start(State(state): State<AppState>, headers: HeaderMap) -> Respons
     };
     if !state.publishers.allows(user.account_id) {
         return Redirect::to("/account/selling").into_response();
+    }
+    if state.launched {
+        crate::legal::agree(pool, user.account_id, &[&crate::legal::SELLER_TERMS]).await;
     }
     let account = match seller(pool, user.account_id).await {
         Some(s) => s.stripe_account,

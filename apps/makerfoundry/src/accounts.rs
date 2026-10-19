@@ -164,6 +164,7 @@ pub struct Credentials {
     email: String,
     password: String,
     again: String,
+    agree: String,
 }
 
 /// Starts a session for an account the service just signed in: the cookie, then the account page.
@@ -207,7 +208,12 @@ fn signin_form(email: &str, problem: &str) -> String {
     )
 }
 
-fn signup_form(email: &str, problem: &str) -> String {
+fn signup_form(email: &str, problem: &str, launched: bool) -> String {
+    let agree = if launched {
+        r#"<label class="choice"><input type="checkbox" name="agree" value="yes" required> <span>I'm 18 or older and agree to the <a href="/terms">Terms of Service</a> and the <a href="/privacy">Privacy Policy</a>.</span></label>"#
+    } else {
+        ""
+    };
     format!(
         r#"<section class="form">
 <h1>Make an account</h1>
@@ -217,6 +223,7 @@ fn signup_form(email: &str, problem: &str) -> String {
 <label>Email<input type="email" name="email" value="{email}" autocomplete="email" required maxlength="254"></label>
 <label>Password <small>(at least 8 characters)</small><input type="password" name="password" autocomplete="new-password" required minlength="8" maxlength="200"></label>
 <label>The same password again<input type="password" name="again" autocomplete="new-password" required minlength="8" maxlength="200"></label>
+{agree}
 <button type="submit">Make the account</button>
 </form>
 <p>Already have a Foundry Account, from StitchFoundry say? <a href="/signin">Sign in</a>.</p>
@@ -259,7 +266,11 @@ pub async fn signup_page(State(state): State<AppState>, headers: HeaderMap) -> R
         return Redirect::to("/account").into_response();
     }
     let problem = if state.db.is_none() { UNAVAILABLE } else { "" };
-    private("Make an account · MakerFoundry", &signup_form("", problem), false)
+    private(
+        "Make an account · MakerFoundry",
+        &signup_form("", problem, state.launched),
+        false,
+    )
 }
 
 pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form): Form<Credentials>) -> Response {
@@ -269,7 +280,7 @@ pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form
     let again = |problem: &str| {
         private(
             "Make an account · MakerFoundry",
-            &signup_form(&form.email, problem),
+            &signup_form(&form.email, problem, state.launched),
             false,
         )
     };
@@ -279,6 +290,9 @@ pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form
     if form.password != form.again {
         return again("The two passwords aren't the same.");
     }
+    if state.launched && form.agree != "yes" {
+        return again("To make an account, agree to the Terms of Service and the Privacy Policy.");
+    }
     if !state
         .limits
         .allow(crate::limits::SIGNUP, &crate::limits::client(&headers))
@@ -286,7 +300,13 @@ pub async fn signup(State(state): State<AppState>, headers: HeaderMap, Form(form
         return again(TOO_MANY);
     }
     let result = match state.cloud.signup(form.email.trim(), &form.password).await {
-        Ok((token, account)) => start_session(&state, &token, &account).await,
+        Ok((token, account)) => {
+            let started = start_session(&state, &token, &account).await;
+            if let (true, Ok(_), Some(pool)) = (state.launched, &started, state.db.as_ref()) {
+                crate::legal::agree(pool, account.id, &[&crate::legal::TERMS, &crate::legal::PRIVACY]).await;
+            }
+            started
+        }
         Err(e) => Err(cloud_problem(&e)),
     };
     result.unwrap_or_else(|problem| again(&problem))

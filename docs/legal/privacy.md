@@ -32,10 +32,16 @@ Policy (stitchfoundry.app/privacy) covers it. This policy covers what MakerFound
 | Your network address, for a short time | To limit how often things can be tried (sign-ins, sign-ups, reports). Kept in memory only, never stored | Up to 24 hours |
 | Error logs | To find and fix problems. They don't contain passwords, files or photos | Up to 30 days |
 
-[When paid designs open (MF-4): purchase records (what you bought, when, the price, the fee and
-the Stripe payment's reference) to deliver your library and for our accounts, kept 7 years for tax
-records. Your card details go to Stripe and never reach us. Sellers' payout details are held by
-Stripe, not by us.]
+**Purchases and sales.** For each purchase we keep what was bought, by whom, from whom, when, the
+price, our fee, the card fee and Stripe's references for the payment, to deliver the buyer's
+library, show the seller their sales, and for our accounts: kept 7 years, for tax records. For
+sellers we keep the reference of their Stripe account and whether Stripe says it can take
+payments. Your card details go to Stripe and never reach us; sellers' bank and identity details
+are held by Stripe, not by us.
+
+**Agreements.** When you sign up, publish or set up selling, we keep which version of these
+policies and terms you agreed to, and when: as long as your account, and for 7 years after a
+sale.
 
 **What we never get:** your password (the account service checks it), your card number, and who
 downloaded which free design.
@@ -50,7 +56,7 @@ companies that run parts of MakerFoundry for us receive it:
 | SiteSentrix's StitchFoundry cloud service | Runs Foundry Accounts | Your email and password when you sign up or in; requests to check your sign-in |
 | Railway | Hosts the site and its database in the United States | Everything in section 2 except files and photos |
 | Cloudflare | Stores the design files and photos (R2), and the site's domain | Design files and photos; Cloudflare also passes visits to the site |
-| Stripe | [When paid designs open] takes payments and pays sellers | What you give on Stripe's pages |
+| Stripe | Takes payments and pays sellers | What you give on Stripe's pages; for a purchase, the design's title and price; for a seller, their account number on MakerFoundry |
 
 Each handles data under its own privacy policy: railway.com/legal/privacy,
 cloudflare.com/privacypolicy and stripe.com/privacy.

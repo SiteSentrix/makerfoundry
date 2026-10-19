@@ -98,7 +98,7 @@ you liable for damages (17 U.S.C. § 512(f)).
 
 ## 8. Buying designs
 
-[When paid designs open (MF-4).] Paid designs are sold by their makers. MakerFoundry takes
+Paid designs are sold by their makers. MakerFoundry takes
 payment for the maker through Stripe and passes it on, less our fee. Your card details go to
 Stripe and never reach us. Once your payment is confirmed, the design is in your library and you
 can download it again any time while your account is open.

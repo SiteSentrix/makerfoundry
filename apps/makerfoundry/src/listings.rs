@@ -727,7 +727,11 @@ pub async fn publish(
     } else if d.price_cents > 0 && !selling::can_sell(&state, &pool, user.account_id).await {
         Some("To sell this design, finish setting up selling first (Account › Selling), or make it free.")
     } else if f.confirm != "yes" {
-        Some("Confirm that the design is yours to share.")
+        Some(if state.launched {
+            "Confirm that the design is yours to share, and that you agree to the Seller Terms."
+        } else {
+            "Confirm that the design is yours to share."
+        })
     } else {
         None
     };
@@ -740,7 +744,12 @@ pub async fn publish(
         .execute(&pool)
         .await;
     match done {
-        Ok(_) => Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response(),
+        Ok(_) => {
+            if state.launched {
+                crate::legal::agree(&pool, user.account_id, &[&crate::legal::SELLER_TERMS]).await;
+            }
+            Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response()
+        }
         Err(e) => {
             eprintln!("listings: publish {id}: {e}");
             designs::manage_page(
@@ -776,7 +785,7 @@ pub async fn unpublish(State(state): State<AppState>, headers: HeaderMap, Path(i
 }
 
 /// The part of a design's own (maker's) page about its listing: its details, and publishing.
-pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool) -> String {
+pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool, launched: bool) -> String {
     let licence = d
         .licence
         .as_deref()
@@ -817,9 +826,14 @@ pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool) -> String {
             slug = slug(&d.title)
         )
     } else {
+        let seller_terms = if launched {
+            r#" I agree to the <a href="/seller-terms">Seller Terms</a>."#
+        } else {
+            ""
+        };
         format!(
             r#"{profile}<form method="post" action="/designs/{id}/publish" class="publish">
-<label class="choice"><input type="checkbox" name="confirm" value="yes"> <span>I made this design, or have the right to share it, and it doesn't copy anyone else's logos, characters or designs.</span></label>
+<label class="choice"><input type="checkbox" name="confirm" value="yes"> <span>I made this design, or have the right to share it, and it doesn't copy anyone else's logos, characters or designs.{seller_terms}</span></label>
 <button type="submit">Publish</button>
 </form>"#
         )

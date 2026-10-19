@@ -436,7 +436,7 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
 
 /// A maker's own page for a design: the drawing and facts, its listing and publishing, its
 /// photos, download and delete; `problem` above it all if there is one.
-pub async fn manage_page(_state: &AppState, pool: &PgPool, user: &User, id: i64, problem: &str) -> Response {
+pub async fn manage_page(state: &AppState, pool: &PgPool, user: &User, id: i64, problem: &str) -> Response {
     let d = match own_design(pool, user, id).await {
         Ok(d) => d,
         Err(r) => return r,
@@ -447,7 +447,7 @@ pub async fn manage_page(_state: &AppState, pool: &PgPool, user: &User, id: i64,
     } else {
         format!(r#"<p class="problem" role="alert">{}</p>"#, escape(problem))
     };
-    let listing = crate::listings::manage_html(&d, id, has_profile);
+    let listing = crate::listings::manage_html(&d, id, has_profile, state.launched);
     let photos = photos_html(pool, id).await;
     let delete = if d.status == "published" {
         String::new()

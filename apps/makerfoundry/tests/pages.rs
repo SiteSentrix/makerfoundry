@@ -20,6 +20,8 @@ fn app() -> axum::Router {
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
         stripe: None,
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
     })
 }
 
@@ -109,4 +111,15 @@ async fn oversized_bodies_are_refused() {
         .unwrap();
     let response = app().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn every_page_links_the_legal_pages_which_wait_for_the_launch() {
+    let (_, _, home) = get("/").await;
+    for link in ["/terms", "/privacy", "/seller-terms", "/dmca"] {
+        assert!(home.contains(&format!(r#"href="{link}""#)), "{link}");
+    }
+    let (status, _, terms) = get("/terms").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(terms.contains("hasn't opened yet"));
 }

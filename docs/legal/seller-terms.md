@@ -1,7 +1,6 @@
 # Seller Terms: MakerFoundry
 
-> **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.** Selling isn't open
-> yet (MF-4); these terms say how it would work.
+> **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
 
 Effective date: [OWNER: date]
 

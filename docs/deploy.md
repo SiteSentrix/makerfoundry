@@ -82,11 +82,12 @@ Then send the `*.up.railway.app` address back in the chat: MF-0 is done when tha
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | to keep designs | Cloudflare R2: the account's id, an API token's keys (Object Read & Write on the bucket only), and the bucket (`makerfoundry-files`). Without them designs can be previewed but not kept |
 | `MF_ADMINS` | for the report queue | account ids apart by commas: who sees `/admin` and can take designs down |
 | `MF_DMCA_AGENT` | before launch | the designated agent registered with the US Copyright Office, as shown on `/dmca`: lines apart by `|` (name, address, email, phone) |
-| `MF_PUBLISHERS` | no (nobody) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
+| `MF_LAUNCHED` | at the launch | `yes` opens MakerFoundry to everyone (`docs/launch.md`), but only once the legal pages have none of the owner's markers left; until then the log says what's left |
+| `MF_PUBLISHERS` | no (nobody; everyone once launched) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
 | `STRIPE_SECRET_KEY` | to sell | MakerFoundry's Stripe secret key (`sk_test_…` until launch), from Stripe › Developers › API keys, with Connect switched on. Without it every design is free |
 | `STRIPE_WEBHOOK_SECRET` | with the key | the signing secret (`whsec_…`) of the webhook endpoint `https://makerfoundry.app/stripe/webhook` listening to **your account's** events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `charge.refunded` |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
-| `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to |
+| `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |
 | `STRIPE_API_URL` | no | a stand-in for Stripe's API (local tests) |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |
 | `STITCHFOUNDRY_CLOUD_URL` | no (default `https://cloud.stitchfoundry.app`) | StitchFoundry's account service, which MakerFoundry's accounts are |

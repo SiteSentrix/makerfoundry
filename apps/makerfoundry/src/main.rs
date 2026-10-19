@@ -70,7 +70,6 @@ async fn main() -> ExitCode {
     if storage.is_none() {
         eprintln!("no R2 settings: designs can be previewed but not kept");
     }
-    let publishers = makerfoundry::listings::Publishers::from_setting(std::env::var("MF_PUBLISHERS").ok().as_deref());
     let admins: Vec<i64> = std::env::var("MF_ADMINS")
         .unwrap_or_default()
         .split(',')
@@ -88,6 +87,27 @@ async fn main() -> ExitCode {
         Some(s) if !s.test_mode() => eprintln!("Stripe: live mode"),
         Some(_) => eprintln!("Stripe: test mode"),
     }
+    // MF-6: open to everyone only once the legal pages are approved (no owner's markers left)
+    let launch_asked = std::env::var("MF_LAUNCHED").is_ok_and(|v| v.trim() == "yes");
+    let launched = launch_asked && makerfoundry::legal::ready();
+    if launch_asked && !launched {
+        for d in makerfoundry::legal::DOCS {
+            if d.unfinished() > 0 {
+                eprintln!(
+                    "MF_LAUNCHED is set, but the {} still has {} of the owner's markers: staying closed",
+                    d.title,
+                    d.unfinished()
+                );
+            }
+        }
+    }
+    let publishers = match (launched, std::env::var("MF_PUBLISHERS").ok()) {
+        (true, None) => makerfoundry::listings::Publishers::Everyone,
+        (_, setting) => makerfoundry::listings::Publishers::from_setting(setting.as_deref()),
+    };
+    let public_url = std::env::var("MF_PUBLIC_URL")
+        .map(|u| u.trim_end_matches('/').to_string())
+        .unwrap_or_else(|_| "https://makerfoundry.app".to_string());
     let limits = std::sync::Arc::new(makerfoundry::limits::Limits::default());
     let state = makerfoundry::AppState {
         cloud,
@@ -97,6 +117,8 @@ async fn main() -> ExitCode {
         admins,
         limits,
         stripe,
+        launched,
+        public_url,
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)

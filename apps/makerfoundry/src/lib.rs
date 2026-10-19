@@ -10,6 +10,7 @@ pub mod db;
 pub mod designs;
 pub mod embroidery;
 pub mod laser;
+pub mod legal;
 pub mod licences;
 pub mod limits;
 pub mod listings;
@@ -78,6 +79,12 @@ pub struct AppState {
     pub limits: std::sync::Arc<limits::Limits>,
     /// Stripe, for selling (MF-4); without it every design is free.
     pub stripe: Option<stripe::Stripe>,
+    /// Whether MakerFoundry has opened to everyone (MF-6: `MF_LAUNCHED`, once the legal pages are
+    /// approved): the legal pages are public, and signing up, publishing and selling ask people to
+    /// agree to them.
+    pub launched: bool,
+    /// The site's address (`MF_PUBLIC_URL`), for the sitemap.
+    pub public_url: String,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -87,6 +94,11 @@ pub fn app(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/static/site.css", get(stylesheet))
         .route("/favicon.svg", get(favicon))
+        .route("/robots.txt", get(robots))
+        .route("/sitemap.xml", get(sitemap))
+        .route("/terms", get(legal::terms))
+        .route("/privacy", get(legal::privacy))
+        .route("/seller-terms", get(legal::seller_terms))
         .route("/signin", get(accounts::signin_page).post(accounts::signin))
         .route("/signup", get(accounts::signup_page).post(accounts::signup))
         .route("/signout", post(accounts::signout))
@@ -201,6 +213,14 @@ async fn favicon() -> Response {
 async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String> {
     let signed_in = accounts::current_user(&state, &headers).await.is_some();
     let newest = listings::newest(&state).await;
+    let call = if state.launched {
+        let share = if signed_in { "/designs/new" } else { "/signup" };
+        format!(
+            r#"<p class="actions"><a class="button" href="/browse">Browse designs</a> <a class="button secondary" href="{share}">Share your designs</a></p>"#
+        )
+    } else {
+        r#"<p class="soon">Coming soon. MakerFoundry is being built now.</p>"#.to_string()
+    };
     Html(page(
         "MakerFoundry",
         &format!(
@@ -208,7 +228,7 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
   <h1>Designs for your machines</h1>
   <p class="lead">Machine-embroidery designs and laser-cut files, shared free or sold by the
   makers who made them.</p>
-  <p class="soon">Coming soon. MakerFoundry is being built now.</p>
+  {call}
 </section>
 <section class="kinds">
   <article>
@@ -223,13 +243,78 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
   </article>
   <article>
     <h2>For makers</h2>
-    <p>Share a design for free, or sell it and get paid for each sale.</p>
+    <p>Share a design for free, or sell it: you keep 90% of the price less the card fee, paid
+    monthly, and your designs stay yours.</p>
   </article>
 </section>
 {newest}"#
         ),
         signed_in,
     ))
+}
+
+/// Search engines: everything public once launched, nothing before.
+async fn robots(State(state): State<AppState>) -> Response {
+    let text = if state.launched {
+        format!(
+            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nSitemap: {}/sitemap.xml\n",
+            state.public_url
+        )
+    } else {
+        "User-agent: *\nDisallow: /\n".to_string()
+    };
+    (
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        text,
+    )
+        .into_response()
+}
+
+/// The public pages for search engines: the fixed pages, published designs and makers.
+async fn sitemap(State(state): State<AppState>) -> Response {
+    if !state.launched {
+        return not_found().await.into_response();
+    }
+    let base = &state.public_url;
+    let mut urls: Vec<String> = ["/", "/browse", "/terms", "/privacy", "/seller-terms", "/dmca"]
+        .iter()
+        .map(|p| format!("{base}{p}"))
+        .collect();
+    if let Some(pool) = &state.db {
+        let designs: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, title FROM mf_designs WHERE status = 'published' ORDER BY published_at DESC LIMIT 40000",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        urls.extend(
+            designs
+                .iter()
+                .map(|(id, t)| format!("{base}/d/{id}/{}", listings::slug(t))),
+        );
+        let makers: Vec<String> = sqlx::query_scalar(
+            "SELECT handle FROM mf_makers m WHERE EXISTS (SELECT 1 FROM mf_designs d WHERE d.account_id = m.account_id AND d.status = 'published') LIMIT 9000",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        urls.extend(makers.iter().map(|h| format!("{base}/makers/{h}")));
+    }
+    let body: String = urls
+        .iter()
+        .map(|u| format!("<url><loc>{}</loc></url>", pages::escape(u)))
+        .collect();
+    (
+        [
+            (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        format!(r#"<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{body}</urlset>"#),
+    )
+        .into_response()
 }
 
 async fn not_found() -> (StatusCode, Html<String>) {
