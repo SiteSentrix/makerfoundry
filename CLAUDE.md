@@ -58,6 +58,25 @@ These rules come from the VectorCraft/StitchFoundry `CLAUDE.md` (kept for refere
 - **Look at what you build.** For page work, render the page (Playwright/Chromium is installed in
   cloud sessions) and look at it at phone and desktop widths before calling it done.
 
+## Debugging
+When something fails and the cause isn't obvious, follow the `/debug` skill
+(`.claude/skills/debug/SKILL.md`), based on Kuhlmann, *The Book of Debugging* (No Starch Press);
+[`docs/debug-book-notes.md`](docs/debug-book-notes.md) has the chapter notes behind it. The rules
+that matter most:
+- **Reproduce first, as a fast test.** A request sent to `makerfoundry::app()` in a test beats
+  clicking through pages; cut the input down to the smallest case that still fails.
+- **Check you're running what you think**: rebuilt binary, current deploy (`/health` shows the
+  version), right branch, right database, no cached CSS.
+- **Look at the data before theorising**: follow it to the last good and first bad step.
+- **State a hypothesis and how you'll test it** before changing code; one change per run; time-box
+  guesses to about an hour.
+- **Verify a fix by undoing it** (the bug comes back) and redoing it (it goes); the repro becomes a
+  regression test; check side effects and look for the same mistake elsewhere.
+- **Ask how the cause got in** and add the safeguard (test, lint, `xtask` check, a stricter type).
+- Debugging never relaxes the other rules: no secrets or file contents in logs, Stripe test mode
+  only, no force-push (roll back with `git revert` or a Railway redeploy).
+- For a hard bug keep a log in `docs/debug-logs/YYYY-MM-DD-<topic>.md` and link it from the fix.
+
 ## Commit authorship
 Commits are authored by **Bruce Wattendorf**, so the work shows on his GitHub profile. AI
 assistance is credited with a trailer, not as the author.
