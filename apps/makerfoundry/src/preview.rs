@@ -1,5 +1,5 @@
-//! "See your stitches" (MF-2): a signed-in maker uploads an embroidery file and sees it drawn
-//! with its stitch count, size and colours. Nothing is kept: the file is read, checked and
+//! "See your design" (MF-2): a signed-in maker uploads an embroidery file or a laser file (SVG,
+//! DXF) and sees it drawn, with its size and colours, and its stitches or the length of its lines. Nothing is kept: the file is read, checked and
 //! answered. Listings (MF-3) will use the same reading when a design is uploaded for good.
 
 use axum::extract::{Multipart, State};
@@ -9,12 +9,13 @@ use axum::response::Response;
 use crate::AppState;
 use crate::accounts::{current_user, forbidden, private, same_origin};
 use crate::embroidery::{self, Embroidery};
+use crate::laser::{self, Laser};
 use crate::pages::escape;
 
 /// The extensions the file picker offers (any file is still read by its content).
-const ACCEPT: &str = ".dst,.pes,.pec,.jef,.exp,.vp3,.xxx,.u01,.pcs,.tap,.dsb,.dsz";
+const ACCEPT: &str = ".dst,.pes,.pec,.jef,.exp,.vp3,.xxx,.u01,.pcs,.tap,.dsb,.dsz,.svg,.dxf";
 
-const TITLE: &str = "See your stitches · MakerFoundry";
+const TITLE: &str = "See your design · MakerFoundry";
 
 fn form(problem: &str) -> String {
     let problem = if problem.is_empty() {
@@ -24,22 +25,23 @@ fn form(problem: &str) -> String {
     };
     format!(
         r#"<section class="form">
-<h1>See your stitches</h1>
-<p class="lead">Upload a machine-embroidery file (DST, PES, JEF, EXP, VP3, XXX and more) to see it drawn stitch by stitch, with its size and colours. The file isn't kept.</p>
+<h1>See your design</h1>
+<p class="lead">Upload a machine-embroidery file (DST, PES, JEF, EXP, VP3, XXX and more) or a laser file (SVG, DXF) to see it drawn, with its size and colours. The file isn't kept.</p>
 {problem}
 <form method="post" action="/preview" enctype="multipart/form-data">
-<label>Embroidery file <small>(up to {mb} MB)</small><input type="file" name="file" accept="{ACCEPT}" required></label>
+<label>Design file <small>(embroidery up to {mb} MB, laser up to {laser_mb} MB)</small><input type="file" name="file" accept="{ACCEPT}" required></label>
 <button type="submit">Show the stitches</button>
 </form>
 </section>"#,
         mb = embroidery::MAX_FILE_BYTES / (1024 * 1024),
+        laser_mb = laser::MAX_FILE_BYTES / (1024 * 1024),
     )
 }
 
 fn signed_out() -> Response {
     private(
         TITLE,
-        r#"<section class="form"><h1>See your stitches</h1><p class="lead">Sign in to upload an embroidery file and see it drawn stitch by stitch.</p><p><a href="/signin">Sign in</a> or <a href="/signup">make an account</a>.</p></section>"#,
+        r#"<section class="form"><h1>See your design</h1><p class="lead">Sign in to upload an embroidery or laser file and see it drawn.</p><p><a href="/signin">Sign in</a> or <a href="/signup">make an account</a>.</p></section>"#,
         false,
     )
 }
@@ -106,6 +108,66 @@ fn result(name: &str, e: &Embroidery) -> String {
     )
 }
 
+/// A laser file's page: its lines drawn, its size, shapes and line length, and its colours.
+fn laser_result(name: &str, l: &Laser) -> String {
+    let colours: String = l
+        .colours
+        .iter()
+        .map(|c| {
+            format!(
+                r#"<li><svg class="swatch" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="4.5" fill="{hex}"/></svg>{hex} <span class="muted">{n} shape{s}, {len}</span></li>"#,
+                hex = escape(&c.hex),
+                n = thousands(c.shapes),
+                s = if c.shapes == 1 { "" } else { "s" },
+                len = metres(c.length_mm),
+            )
+        })
+        .collect();
+    let not_drawn = if l.not_drawn.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<p class="problem">Not drawn: {}.</p>"#,
+            escape(&l.not_drawn.join("; "))
+        )
+    };
+    format!(
+        r#"<section class="design">
+<h1>{name}</h1>
+<figure class="preview">{svg}</figure>
+{not_drawn}
+<dl class="facts">
+<div><dt>Format</dt><dd>{format}</dd></div>
+<div><dt>Size</dt><dd>{w:.1} × {h:.1} mm <span class="muted">({wi:.2} × {hi:.2} in)</span></dd></div>
+<div><dt>Shapes</dt><dd>{shapes} <span class="muted">({closed} closed)</span></dd></div>
+<div><dt>Line length</dt><dd>{length}</dd></div>
+</dl>
+<h2>Colours</h2>
+<ul class="colours">{colours}</ul>
+<p><a href="/preview">Try another file</a></p>
+</section>"#,
+        name = escape(name),
+        svg = l.svg,
+        format = escape(&l.format),
+        w = l.width_mm,
+        h = l.height_mm,
+        wi = l.width_mm / 25.4,
+        hi = l.height_mm / 25.4,
+        shapes = thousands(l.shapes),
+        closed = thousands(l.closed),
+        length = metres(l.length_mm),
+    )
+}
+
+/// A length in mm, as mm under a metre and as metres above.
+fn metres(mm: f64) -> String {
+    if mm < 1000.0 {
+        format!("{mm:.0} mm")
+    } else {
+        format!("{:.2} m", mm / 1000.0)
+    }
+}
+
 pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multipart: Multipart) -> Response {
     if !same_origin(&headers) {
         return forbidden();
@@ -124,7 +186,7 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
                     Err(_) => {
                         return problem(&format!(
                             "The file couldn't be read: is it larger than {} MB?",
-                            embroidery::MAX_FILE_BYTES / (1024 * 1024)
+                            laser::MAX_FILE_BYTES / (1024 * 1024)
                         ));
                     }
                 }
@@ -135,7 +197,7 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
             Err(_) => {
                 return problem(&format!(
                     "The upload didn't come through whole. Files can be up to {} MB.",
-                    embroidery::MAX_FILE_BYTES / (1024 * 1024)
+                    laser::MAX_FILE_BYTES / (1024 * 1024)
                 ));
             }
         }
@@ -143,8 +205,12 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
     let Some((name, bytes)) = file else {
         return problem("Choose a file to upload.");
     };
-    match embroidery::read(&bytes, &name) {
-        Ok(e) => private(TITLE, &result(&name, &e), true),
+    let read = match laser::kind(&bytes, &name) {
+        Some(kind) => laser::read(&bytes, kind).map(|l| laser_result(&name, &l)),
+        None => embroidery::read(&bytes, &name).map(|e| result(&name, &e)),
+    };
+    match read {
+        Ok(page) => private(TITLE, &page, true),
         Err(why) => problem(&format!("{}: {why}.", name.chars().take(80).collect::<String>())),
     }
 }

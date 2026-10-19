@@ -8,6 +8,7 @@ pub mod accounts;
 pub mod cloud;
 pub mod db;
 pub mod embroidery;
+pub mod laser;
 pub mod pages;
 pub mod preview;
 
@@ -33,7 +34,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BODY_LIMIT_BYTES: usize = 64 * 1024;
 
 /// The upload routes' cap: the largest file accepted, and room for the form around it.
-const UPLOAD_LIMIT_BYTES: usize = embroidery::MAX_FILE_BYTES + 64 * 1024;
+const UPLOAD_LIMIT_BYTES: usize = laser::MAX_FILE_BYTES + 64 * 1024;
 
 /// A request that takes longer than this is answered with 408.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

@@ -575,17 +575,22 @@ async fn an_uploaded_pes_shows_its_stitches() {
     );
     // not a design, or too big: a reason, no preview
     let r = s
-        .send(upload("evil.pes", b"<svg onload=alert(1)>", Some(&cookie), &ours))
+        .send(upload(
+            "evil.pes",
+            b"MZ\x90\x00 this is not a design <b>",
+            Some(&cookie),
+            &ours,
+        ))
         .await;
     assert!(
-        r.body.contains("isn&#39;t an embroidery file") && !r.body.contains("<svg onload"),
+        r.body.contains("isn&#39;t an embroidery file") && !r.body.contains("<b>"),
         "{}",
         r.body
     );
-    let big = vec![0u8; makerfoundry::embroidery::MAX_FILE_BYTES + 200 * 1024];
+    let big = vec![0u8; makerfoundry::laser::MAX_FILE_BYTES + 200 * 1024];
     let r = s.send(upload("big.dst", &big, Some(&cookie), &ours)).await;
     assert!(
-        r.status == StatusCode::PAYLOAD_TOO_LARGE || r.body.contains("up to 4 MB"),
+        r.status == StatusCode::PAYLOAD_TOO_LARGE || r.body.contains("up to 8 MB"),
         "{}: {}",
         r.status,
         r.body
@@ -596,5 +601,37 @@ async fn an_uploaded_pes_shows_its_stitches() {
             .await
             .status,
         StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn uploaded_laser_files_show_their_lines() {
+    let Some(s) = site().await else { return };
+    let ours = format!("https://{HOST}");
+    let cookie = s
+        .post(
+            "/signup",
+            "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    // an SVG in mm with a script in it: drawn from its shapes, the script nowhere
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="40mm" viewBox="0 0 60 40" onload="alert(1)"><script>alert(2)</script><rect x="5" y="5" width="50" height="30" fill="none" stroke="#ff0000"/><text x="10" y="20">Name</text></svg>"##;
+    let r = s.send(upload("coaster.svg", svg, Some(&cookie), &ours)).await;
+    assert!(
+        r.body.contains("<dd>SVG</dd>") && r.body.contains("50.0 × 30.0 mm") && r.body.contains("160 mm"),
+        "{}",
+        r.body
+    );
+    assert!(r.body.contains("Not drawn: text"), "{}", r.body);
+    assert!(!r.body.contains("alert"), "{}", r.body);
+    // a DXF in inches
+    let dxf = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n1\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n62\n1\n10\n0\n20\n0\n40\n1\n0\nENDSEC\n0\nEOF\n";
+    let r = s.send(upload("disc.dxf", dxf.as_bytes(), Some(&cookie), &ours)).await;
+    assert!(
+        r.body.contains("<dd>DXF</dd>") && r.body.contains("50.8 × 50.8 mm"),
+        "{}",
+        r.body
     );
 }

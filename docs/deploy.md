@@ -14,6 +14,17 @@ Railway **Variables**.
   over Railway's private network. Its password is a Railway variable of that service, generated
   when it was made and never written anywhere else. **Backups:** turn them on in the Postgres
   service's settings (Railway › Postgres › Backups).
+- **makerfoundry.app** (bought 2026-10-19; DNS on Cloudflare) and **www.makerfoundry.app** were
+  added to the service on 2026-10-19. They answer once these records are in Cloudflare's DNS for
+  makerfoundry.app (each **DNS only**, the grey cloud, so Railway can issue the certificate):
+
+  | Type | Name | Content |
+  |---|---|---|
+  | CNAME | `@` | `ia5fx6io.up.railway.app` |
+  | TXT | `_railway-verify` | `railway-verify=2a9a13d59ed3a8efdd77e42fe0504484a5402ea13716bb305a6e7a39d2e9a7b0` |
+  | CNAME | `www` | `or0wbw4h.up.railway.app` |
+  | TXT | `_railway-verify.www` | `railway-verify=b0e0b032fbbc0ec44f91abba6e8d2e3e05e1528afb7d8118278525fa990049cb` |
+
 - Claude sessions reach this one project through a Railway **project token** in the cloud
   environment's `RAILWAY_TOKEN` variable (Railway's GraphQL API, header `Project-Access-Token`).
   The token can't see the owner's other projects. To revoke it: the project's **Settings → Tokens**.
