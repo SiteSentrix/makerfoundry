@@ -28,8 +28,9 @@ users and small laser businesses (LightFoundry's), and the designers who sell to
    isn't what the listing said).
 
 ## The first version (MVP)
-- Accounts: the **StitchFoundry cloud accounts** (owner's decision, 2026-10-19): one email and
-  password for StitchFoundry and MakerFoundry. See "Accounts (MF-1)" below.
+- Accounts: the StitchFoundry cloud service's accounts, called a **Foundry Account** (owner's
+  decisions, 2026-10-19): one email and password, and one credit balance, for every SiteSentrix
+  app. See "Accounts (MF-1)" below.
 - **Upload a design**: one or more files plus photos of the stitched or cut result, a title,
   description, tags, machine/hoop size or material and size, and a licence.
 - **Previews made by the site**: embroidery files drawn as stitches (from StitchFoundry's own
@@ -46,7 +47,7 @@ users and small laser businesses (LightFoundry's), and the designers who sell to
 ## Later
 - "Open in StitchFoundry" on embroidery designs and "Publish to MakerFoundry" from the app;
   the same for LightFoundry.
-- One SiteSentrix account across StitchFoundry, MakerFoundry and LightFoundry.
+- The Foundry Account across LightFoundry and PatternFoundry too.
 - Collections, likes, comments, makes (photos of others' sew-outs and cuts), seller follows.
 - Bundles, discount codes, "pay what you want".
 - Format conversion on download (buy a PES, also get a DST), using StitchFoundry's writers.
