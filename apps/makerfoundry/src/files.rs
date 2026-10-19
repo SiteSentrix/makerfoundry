@@ -86,10 +86,17 @@ pub fn manage_html(id: i64, first_format: &str, first_name: &str, others: &[Othe
     )
 }
 
-/// The formats on a design's public page: download links for those who may download it, the
-/// format names for everyone else.
-pub fn public_html(id: i64, first_format: &str, others: &[OtherFile], may_download: bool) -> String {
-    if others.is_empty() {
+/// The formats on a design's public page, its maker's and those MakerFoundry converts it to
+/// (`converted`, lower-case extensions): download links for those who may download it, the format
+/// names for everyone else.
+pub fn public_html(
+    id: i64,
+    first_format: &str,
+    others: &[OtherFile],
+    converted: &[&str],
+    may_download: bool,
+) -> String {
+    if others.is_empty() && converted.is_empty() {
         return String::new();
     }
     let item = |format: &str, link: String| {
@@ -106,7 +113,18 @@ pub fn public_html(id: i64, first_format: &str, others: &[OtherFile], may_downlo
                 .map(|f| item(&f.format, format!("/d/{id}/download?file={}", f.id))),
         )
         .collect();
-    format!(r#"<h2>Formats</h2><ul class="tags files-public">{list}</ul>"#)
+    let made = if converted.is_empty() {
+        String::new()
+    } else {
+        let list: String = converted
+            .iter()
+            .map(|ext| item(&ext.to_uppercase(), format!("/d/{id}/download?as={ext}")))
+            .collect();
+        format!(
+            r#"<p class="muted">Also in these formats, converted by MakerFoundry from the maker's file (formats without thread colours keep only the colour changes):</p><ul class="tags files-public">{list}</ul>"#
+        )
+    };
+    format!(r#"<h2>Formats</h2><ul class="tags files-public">{list}</ul>{made}"#)
 }
 
 /// The maker's design `id` → the maker, the pool and the design, or the response to give instead.

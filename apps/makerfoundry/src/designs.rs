@@ -381,12 +381,14 @@ pub struct DesignRow {
     /// A laser design's material (`sizes::MATERIALS`) and its thickness (mm), as its maker gives them.
     pub material: Option<String>,
     pub thickness_mm: Option<f64>,
+    /// Whether an embroidery design is also offered converted to other formats (`convert`).
+    pub convert: bool,
 }
 
 pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads,
-                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm
+                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm, convert
          FROM mf_designs WHERE id = $1",
     )
     .bind(id)
@@ -412,6 +414,7 @@ pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::E
             height_mm: r.try_get("height_mm")?,
             material: r.try_get("material")?,
             thickness_mm: r.try_get("thickness_mm")?,
+            convert: r.try_get("convert")?,
         })
     })
     .transpose()

@@ -85,6 +85,9 @@ stop selling.** They may not share, sell or give away the files themselves.
 
 You keep ownership of your designs, files and photos. You give us the permission in the Terms of
 Service (§ 4) to store them, make previews, show them and deliver them to buyers and downloaders.
+Unless you turn it off for a design, that includes delivering an embroidery design converted to
+the other embroidery formats MakerFoundry writes, made from your file when someone downloads it,
+under the same licence and price. [OWNER: confirm conversion is on by default.]
 For designs already sold, that permission continues so that buyers keep their files.
 
 ## 10. Leaving

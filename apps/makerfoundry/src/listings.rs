@@ -514,15 +514,21 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}</p>{buy}"#);
     let photos = designs::photos_html(pool, id).await;
     let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
-    let formats = crate::files::public_html(
-        id,
-        d.facts
-            .get("format")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("File"),
-        &crate::files::others(pool, id).await,
-        may_download,
-    );
+    let first_format = d
+        .facts
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("File");
+    let others = crate::files::others(pool, id).await;
+    let converted: Vec<&str> = if d.kind == "embroidery" && d.convert {
+        let had: Vec<&str> = std::iter::once(first_format)
+            .chain(others.iter().map(|f| f.format.as_str()))
+            .collect();
+        crate::convert::offered(&had).iter().map(|f| f.extension()).collect()
+    } else {
+        Vec::new()
+    };
+    let formats = crate::files::public_html(id, first_format, &others, &converted, may_download);
     let edit = if mine {
         format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
     } else if d.status == "published" {
@@ -550,6 +556,9 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
 pub struct DownloadQuery {
     /// One of the design's other files (`files`); the first file without it.
     file: Option<i64>,
+    /// The first file converted to this format (`convert`): `dst`.
+    #[serde(rename = "as")]
+    to: Option<String>,
 }
 
 /// Whether `viewer` may see design `d` (`id`) and whether they may download it: a free published
@@ -591,6 +600,9 @@ pub async fn download(
         // not bought: the page with the button to buy it
         return Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response();
     }
+    if let Some(ext) = &q.to {
+        return converted(&state, storage, pool, &d, id, ext, &headers).await;
+    }
     // which file: the first, or one of the others
     let (file_key, file_name) = match q.file {
         None => (d.file_key.clone(), d.file_name.clone()),
@@ -615,6 +627,89 @@ pub async fn download(
     Redirect::to(storage.download_url(&file_key, &name).as_str()).into_response()
 }
 
+/// The design's first file converted to `ext`, made now and sent straight back (not stored).
+async fn converted(
+    state: &AppState,
+    storage: &crate::storage::Storage,
+    pool: &PgPool,
+    d: &DesignRow,
+    id: i64,
+    ext: &str,
+    headers: &HeaderMap,
+) -> Response {
+    let Some(to) = crate::convert::format(ext).filter(|_| d.kind == "embroidery" && d.convert) else {
+        return not_found(true);
+    };
+    if !state
+        .limits
+        .allow(crate::limits::CONVERT, &crate::limits::client(headers))
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many converted downloads lately. Please wait a while.",
+        )
+            .into_response();
+    }
+    let bytes = match storage.get(&d.file_key).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return not_found(true),
+        Err(e) => {
+            eprintln!("convert: {id}: {e}");
+            return (StatusCode::BAD_GATEWAY, "The file can't be fetched just now.").into_response();
+        }
+    };
+    let (name, label) = (d.file_name.clone(), d.title.clone());
+    let made = tokio::task::spawn_blocking(move || crate::convert::convert(&bytes, &name, to, &label)).await;
+    let out = match made {
+        Ok(Ok(out)) => out,
+        Ok(Err(why)) => {
+            eprintln!("convert: {id} to {}: {why}", to.extension());
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!(
+                    "This design can't be converted to {}: {why}.",
+                    to.extension().to_uppercase()
+                ),
+            )
+                .into_response();
+        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "The file couldn't be converted.").into_response(),
+    };
+    if d.status == "published" {
+        let _ = sqlx::query("UPDATE mf_designs SET downloads = downloads + 1 WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await;
+    }
+    let stem = if d.title.is_empty() {
+        d.file_name
+            .rsplit_once('.')
+            .map_or(d.file_name.as_str(), |(n, _)| n)
+            .to_string()
+    } else {
+        slug(&d.title)
+    };
+    let stem: String = stem
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(80)
+        .collect();
+    let disposition = format!(
+        "attachment; filename=\"{}.{}\"",
+        if stem.is_empty() { "design" } else { &stem },
+        to.extension()
+    );
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/octet-stream".to_string()),
+            (axum::http::header::CONTENT_DISPOSITION, disposition),
+            (axum::http::header::CACHE_CONTROL, "private, no-store".to_string()),
+        ],
+        out,
+    )
+        .into_response()
+}
+
 // ---------------------------------------------------------------- details and publishing
 
 /// What a design's details form shows.
@@ -629,6 +724,8 @@ struct Details<'a> {
     kind: &'a str,
     material: &'a str,
     thickness: &'a str,
+    /// An embroidery design: offered converted to other formats.
+    convert: bool,
 }
 
 fn details_form(id: i64, f: &Details, problem: &str) -> String {
@@ -642,6 +739,7 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
         kind,
         material,
         thickness,
+        convert,
     } = *f;
     let made_for = if kind == "laser" {
         let options: String = MATERIALS
@@ -659,7 +757,11 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
             escape(thickness)
         )
     } else {
-        String::new()
+        // (the hidden field says the box was on the form, so an unticked box means off)
+        format!(
+            r#"<input type="hidden" name="convert_shown" value="yes"><label class="choice"><input type="checkbox" name="convert" value="yes"{}> <span>Also offer it in the other embroidery formats, converted by MakerFoundry from your file when someone downloads it</span></label>"#,
+            if convert { " checked" } else { "" }
+        )
     };
     let problem = if problem.is_empty() {
         String::new()
@@ -752,6 +854,7 @@ pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(i
                 kind: &d.kind,
                 material: d.material.as_deref().unwrap_or(""),
                 thickness: &thickness,
+                convert: d.convert,
             },
             "",
         ),
@@ -769,6 +872,8 @@ pub struct DetailsForm {
     price: String,
     material: String,
     thickness: String,
+    convert: String,
+    convert_shown: String,
 }
 
 pub async fn save(
@@ -803,6 +908,7 @@ pub async fn save(
                     kind: &d.kind,
                     material: &f.material,
                     thickness: &f.thickness,
+                    convert: f.convert == "yes",
                 },
                 why,
             ),
@@ -841,7 +947,7 @@ pub async fn save(
     };
     let saved = sqlx::query(
         "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5, price_cents = $7,
-             material = $8, thickness_mm = $9,
+             material = $8, thickness_mm = $9, convert = $10,
              search = setweight(to_tsvector('english', $2), 'A')
                    || setweight(to_tsvector('english', array_to_string($4::text[], ' ')), 'B')
                    || setweight(to_tsvector('english', $3), 'C')
@@ -856,6 +962,11 @@ pub async fn save(
     .bind(price)
     .bind(&material)
     .bind(thickness)
+    .bind(if f.convert_shown == "yes" {
+        f.convert == "yes"
+    } else {
+        d.convert
+    })
     .execute(&pool)
     .await;
     match saved {

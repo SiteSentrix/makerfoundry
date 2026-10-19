@@ -2431,12 +2431,7 @@ async fn a_design_has_more_formats_each_checked_and_downloadable() {
         .await;
     assert_eq!(s.scalar("SELECT count(*) FROM mf_design_files").await, 0);
     assert_eq!(s.stored.lock().unwrap().len(), stored - 1);
-    assert!(
-        !s.get(&format!("/d/{rose}"), None)
-            .await
-            .body
-            .contains("<h2>Formats</h2>")
-    );
+    assert!(!s.get(&format!("/d/{rose}"), None).await.body.contains("download?file="));
     // a deleted design takes its other files with it
     s.send(add("rose.dst", sample(sf_formats::Format::Dst))).await;
     s.post(&format!("/designs/{rose}/unpublish"), "", Some(&cookie)).await;
@@ -2509,4 +2504,125 @@ async fn a_paid_designs_other_formats_are_for_its_buyers() {
             .body
             .contains("/files/{fid}/delete")
     );
+}
+
+// ---------------------------------------------------------------- MF-9: converted downloads
+
+#[tokio::test]
+async fn an_embroidery_design_downloads_converted_to_the_other_formats() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &cookie, "anns", "Rose").await;
+    let page = s.get(&format!("/d/{rose}"), None).await.body;
+    assert!(
+        page.contains(&format!(r#"<a href="/d/{rose}/download?as=dst">DST</a>"#)),
+        "{page}"
+    );
+    assert!(!page.contains("download?as=pes") && !page.contains("download?as=dsz"));
+    // made on the spot, as a real DST
+    let r = s.get(&format!("/d/{rose}/download?as=dst"), None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        r.headers[header::CONTENT_DISPOSITION],
+        r#"attachment; filename="rose.dst""#
+    );
+    let resp = s
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/d/{rose}/download?as=jef"))
+                .header(header::HOST, HOST)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let back = sf_formats::read(sf_formats::Format::Jef, &bytes).unwrap();
+    let original = sf_formats::read(sf_formats::Format::Pes, &sample(sf_formats::Format::Pes)).unwrap();
+    // the same design in the other format: its stitches (long ones split where the format's
+    // stitches are shorter) over the same size, to a tenth of a millimetre
+    let sewn = |p: &sf_core::Pattern| p.stitches.iter().filter(|s| s.cmd == sf_core::Cmd::Stitch).count();
+    assert!(sewn(&back) >= sewn(&original));
+    let size = |p: &sf_core::Pattern| {
+        let xs = p.stitches.iter().map(|s| s.x);
+        let ys = p.stitches.iter().map(|s| s.y);
+        (
+            xs.clone().fold(f64::MIN, f64::max) - xs.fold(f64::MAX, f64::min),
+            ys.clone().fold(f64::MIN, f64::max) - ys.fold(f64::MAX, f64::min),
+        )
+    };
+    let ((w1, h1), (w2, h2)) = (size(&original), size(&back));
+    assert!(
+        (w1 - w2).abs() < 0.11 && (h1 - h2).abs() < 0.11,
+        "{w1}x{h1} became {w2}x{h2}"
+    );
+    assert_eq!(
+        s.scalar(&format!("SELECT downloads FROM mf_designs WHERE id = {rose}"))
+            .await,
+        2
+    );
+    // only formats that can be written
+    for bad in ["dsz", "svg", "x.dst", ""] {
+        assert_eq!(
+            s.get(&format!("/d/{rose}/download?as={bad}"), None).await.status,
+            StatusCode::NOT_FOUND,
+            "{bad}"
+        );
+    }
+    // a DST of its own: no longer converted to DST
+    s.send(multipart(
+        &format!("/designs/{rose}/files"),
+        &[("file", "rose.dst", sample(sf_formats::Format::Dst))],
+        &cookie,
+    ))
+    .await;
+    assert!(
+        !s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("download?as=dst")
+    );
+    // saving the details without the box (another form) leaves it on; unticking it turns it off
+    s.post(
+        &format!("/designs/{rose}/edit"),
+        "title=Rose&licence=personal&price=0",
+        Some(&cookie),
+    )
+    .await;
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("download?as=jef")
+    );
+    let form = s.get(&format!("/designs/{rose}/edit"), Some(&cookie)).await.body;
+    assert!(form.contains(r#"name="convert" value="yes" checked"#), "{form}");
+    s.post(
+        &format!("/designs/{rose}/edit"),
+        "title=Rose&licence=personal&price=0&convert_shown=yes",
+        Some(&cookie),
+    )
+    .await;
+    assert!(!s.get(&format!("/d/{rose}"), None).await.body.contains("download?as="));
+    assert_eq!(
+        s.get(&format!("/d/{rose}/download?as=jef"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_paid_designs_conversions_are_for_its_buyers() {
+    let Some((s, _st, _seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let buyer = s.sign_up("bea%40example.com").await;
+    let page = s.get(&format!("/d/{id}"), Some(&buyer)).await.body;
+    assert!(
+        page.contains("<li>DST</li>") && !page.contains("download?as=dst"),
+        "{page}"
+    );
+    let r = s.get(&format!("/d/{id}/download?as=dst"), Some(&buyer)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), format!("/d/{id}/fox-patch"));
 }

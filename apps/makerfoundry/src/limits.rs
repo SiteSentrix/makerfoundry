@@ -35,6 +35,8 @@ pub const PREVIEW: Rule = rule("preview", 60, 60);
 pub const UPLOAD: Rule = rule("upload", 50, 24 * 60);
 /// Reports and notices from one address an hour.
 pub const REPORT: Rule = rule("report", 10, 60);
+/// Converted downloads (MF-9) by one address an hour: each is made on the spot.
+pub const CONVERT: Rule = rule("convert", 120, 60);
 /// Purchases started (Stripe checkout pages made) by one account an hour.
 pub const CHECKOUT: Rule = rule("checkout", 30, 60);
 

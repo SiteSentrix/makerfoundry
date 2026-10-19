@@ -20,7 +20,8 @@ takedowns, and rate limits. **MF-6** (launch) ready: the Terms, Privacy Policy a
 pages, agreement on sign-up, publishing and selling, a launch switch that waits for the owner's
 approval of the legal wording ([`docs/launch.md`](docs/launch.md)). **MF-7** (apps) under way: the API the apps
 publish to ([`docs/api.md`](docs/api.md)); the apps' own command is next. **MF-8** (the first version's missing pieces) done:
-free/paid, hoop and material browsing, and several formats per design. See [`docs/plan.md`](docs/plan.md).
+free/paid, hoop and material browsing, and several formats per design. **MF-9** done: embroidery designs download converted
+to every format StitchFoundry writes. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

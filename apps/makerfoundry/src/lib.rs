@@ -7,6 +7,7 @@
 pub mod accounts;
 pub mod api;
 pub mod cloud;
+pub mod convert;
 pub mod db;
 pub mod designs;
 pub mod embroidery;

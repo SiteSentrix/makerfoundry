@@ -23,6 +23,9 @@ The copyright process matches the draft at `/dmca` (`src/moderation.rs`), and th
 drafts in `src/licences.rs`.
 
 ## The owner's decisions, marked [OWNER: …] in the drafts
+(Added since the first list: Seller Terms § 9, whether converting embroidery designs to other
+formats on download (MF-9) is on unless the maker turns it off, as built.)
+
 1. **Contact address.** The drafts use `support@makerfoundry.app`, which needs Cloudflare Email
    Routing for makerfoundry.app (in the bwattendorf@gmail.com Cloudflare account) forwarding to
    the owner's Gmail. Or use support@stitchfoundry.app.
