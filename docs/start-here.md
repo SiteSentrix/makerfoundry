@@ -26,7 +26,7 @@ phone. Plain, step-by-step instructions work best for anything he has to click t
 - Free sharing and paid sales; MakerFoundry is the broker and takes a fee on sales.
 - Rust, server-rendered, Postgres, Railway + Cloudflare, Stripe Connect, Resend (see the plan).
 - Same working rules as StitchFoundry (`CLAUDE.md`); commits authored as Bruce Wattendorf.
-- Accounts: the **StitchFoundry cloud accounts**, shared (2026-10-19), called a "StitchFoundry
+- Accounts: the **StitchFoundry cloud accounts**, shared (2026-10-19), called a "Foundry
   account" on every page, the one login for all of SiteSentrix's software; design in the plan's
   "Accounts (MF-1)".
 

@@ -123,7 +123,7 @@ async fn fake_cloud() -> (String, Shared) {
             "/v1/password/forgot",
             post(|State(s): State<Shared>, Json(b): Json<Value>| async move {
                 s.lock().unwrap().forgot.push(b["email"].as_str().unwrap_or("").to_string());
-                Json(json!({"sent": true, "message": "If there's a StitchFoundry account with that email, a link to reset its password is on its way. It works for an hour."}))
+                Json(json!({"sent": true, "message": "If there's a Foundry account with that email, a link to reset its password is on its way. It works for an hour."}))
             }),
         )
         .with_state(shared.clone());
@@ -241,7 +241,7 @@ impl Site {
 async fn a_person_makes_an_account_signs_out_and_back_in() {
     let Some(s) = site().await else { return };
     // the pages are there, signed out
-    assert!(s.get("/signup", None).await.body.contains("StitchFoundry account"));
+    assert!(s.get("/signup", None).await.body.contains("Foundry account"));
     assert_eq!(s.get("/account", None).await.location(), "/signin");
     // sign up → signed in, with a cookie only this site gets, over HTTPS, out of scripts' reach
     let r = s
@@ -335,7 +335,7 @@ async fn sign_up_problems_are_explained() {
             None,
         )
         .await;
-    assert!(r.body.contains("already a StitchFoundry account"));
+    assert!(r.body.contains("already a Foundry account"));
     // what was typed comes back escaped
     let r = s
         .post("/signup", "email=%22%3E%3Cscript%3E&password=x&again=y", None)

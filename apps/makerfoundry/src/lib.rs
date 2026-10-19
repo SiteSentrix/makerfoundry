@@ -1,7 +1,7 @@
 //! MakerFoundry's web service: server-rendered pages for the marketplace.
 //!
 //! MF-0: a home page, `/health` for the host's health check, a stylesheet and a 404 page, all
-//! behind the security headers every page gets. MF-1: accounts, which are StitchFoundry accounts
+//! behind the security headers every page gets. MF-1: accounts, which are Foundry accounts kept by StitchFoundry's account service
 //! (`cloud`), with MakerFoundry's own sessions in Postgres (`db`) and the pages in `accounts`.
 
 pub mod accounts;

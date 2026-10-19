@@ -73,8 +73,10 @@ How it works, given what that service has today (`apps/stitchfoundry-cloud`, `do
   2. **Password reset by email** (Resend): request a link, a single-use token that expires in an
      hour (kept only as its hash), set a new password, end the account's other sessions. Both
      sites link to it.
-- Pages call it a **StitchFoundry account** ("Sign in with your StitchFoundry account"): it is the
-  one login for all of SiteSentrix's software (owner's decision, 2026-10-19).
+- Pages call it a **Foundry account** ("Sign in with your Foundry account"): the one login for all
+  of SiteSentrix's software (owner's decision, 2026-10-19; it replaces "StitchFoundry account",
+  decided earlier the same day). The account service itself is StitchFoundry's, worked on in the
+  StitchFoundry repository.
 - Accounts made on MakerFoundry get the cloud's usual sign-up credits (100 AI credits, within
   the free-offer budget), the same as accounts made in StitchFoundry (owner's decision, 2026-10-19).
 - Later ("One SiteSentrix account" below): a sign-in page of the account service's own, so other
