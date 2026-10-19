@@ -26,7 +26,8 @@ users and small laser businesses (LightFoundry's), and the designers who sell to
    isn't what the listing said).
 
 ## The first version (MVP)
-- Accounts (email + password, as StitchFoundry's cloud service does; Argon2id, session tokens).
+- Accounts: the **StitchFoundry cloud accounts** (owner's decision, 2026-10-19): one email and
+  password for StitchFoundry and MakerFoundry. See "Accounts (MF-1)" below.
 - **Upload a design**: one or more files plus photos of the stitched or cut result, a title,
   description, tags, machine/hoop size or material and size, and a licence.
 - **Previews made by the site**: embroidery files drawn as stitches (from StitchFoundry's own
@@ -48,6 +49,30 @@ users and small laser businesses (LightFoundry's), and the designers who sell to
 - Bundles, discount codes, "pay what you want".
 - Format conversion on download (buy a PES, also get a DST), using StitchFoundry's writers.
 - PatternFoundry (sewing patterns) may share the marketplace engine.
+
+## Accounts (MF-1)
+The owner chose StitchFoundry's cloud accounts (cloud.stitchfoundry.app) over separate ones.
+How it works, given what that service has today (`apps/stitchfoundry-cloud`, `docs/cloud.md`):
+
+- The cloud service owns accounts: emails, Argon2id password hashes, sessions, lock-outs. It keeps
+  them in one record owned by its single process, so MakerFoundry **never touches its database**;
+  it goes through its API only.
+- **Sign up / sign in** on MakerFoundry's own pages: the form posts to MakerFoundry, which calls
+  the cloud's `POST /v1/signup` or `/v1/signin` over HTTPS and gets the account's session token.
+  The password passes through MakerFoundry's server but is never stored or logged.
+- The cloud token can spend the account's AI credits, so it **never goes to the browser**.
+  MakerFoundry keeps it server-side in its own Postgres, under a MakerFoundry session id that the
+  browser holds in a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax); form posts also check the
+  `Origin` header. Signing out ends both sessions (`POST /v1/signout`).
+- MakerFoundry's own tables (profile, shop name, later listings and sales) are keyed by the cloud
+  account's **id**.
+- **Changes needed in StitchFoundry's cloud service first:**
+  1. `/v1/account` (and sign-in/up) also return the account's `id`.
+  2. **Password reset by email** (Resend): request a link, a single-use token that expires in an
+     hour (kept only as its hash), set a new password, end the account's other sessions. Both
+     sites link to it.
+- Later ("One SiteSentrix account" below): a sign-in page of the account service's own, so other
+  sites never see passwords.
 
 ## Licences a listing can carry
 Plain-language choices (final wording is the owner's):
@@ -86,5 +111,5 @@ Nobody may resell or share the files themselves.
   decision (and ideally an accountant's word) before paid sales go live.
 - **DMCA designated agent**: register SiteSentrix with the US Copyright Office (a small online
   fee) before the public launch, for safe-harbour protection.
-- **Accounts**: separate MakerFoundry accounts at first, or the StitchFoundry cloud accounts.
+- ~~**Accounts**~~: **decided 2026-10-19: the StitchFoundry cloud accounts** (see "Accounts (MF-1)").
 - **Domain**: makerfoundry.app (and patternfoundry.app held for the sewing-pattern app).
