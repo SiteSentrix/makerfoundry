@@ -106,3 +106,23 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .swatch circle { stroke: var(--line); stroke-width: .6; }
 .muted { color: var(--muted); font-weight: 400; }
 .form input[type=file] { padding: .5rem; }
+
+/* A maker's designs: cards with a photo, a design's photos, its actions */
+.cards { list-style: none; padding: 0; margin: 1rem 0 2rem; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
+.cards a {
+  display: grid; gap: .3rem; padding: .6rem; border: 1px solid var(--line); border-radius: .75rem;
+  background: var(--card); color: var(--fg); text-decoration: none; overflow-wrap: anywhere;
+}
+.cards a:hover { border-color: var(--accent); }
+.cards .thumb {
+  display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden;
+  border-radius: .5rem; background: var(--bg);
+}
+.cards .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.photos { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); margin: 0 0 1.5rem; max-width: 40rem; }
+.photos img { width: 100%; height: auto; border-radius: .5rem; border: 1px solid var(--line); display: block; }
+a.button {
+  display: inline-block; font-weight: 600; text-decoration: none;
+  background: var(--accent); color: var(--on-accent); border-radius: .5rem; padding: .7rem 1.2rem;
+}
+.actions { margin: 0 0 1rem; }

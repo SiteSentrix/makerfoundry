@@ -60,7 +60,17 @@ async fn main() -> ExitCode {
         "makerfoundry {} listening on {addr}; accounts at {cloud_url}",
         makerfoundry::VERSION
     );
-    let state = makerfoundry::AppState { cloud, db };
+    let storage = match makerfoundry::storage::Storage::from_env(|k| std::env::var(k).ok()) {
+        Ok(storage) => storage,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if storage.is_none() {
+        eprintln!("no R2 settings: designs can be previewed but not kept");
+    }
+    let state = makerfoundry::AppState { cloud, db, storage };
     match axum::serve(listener, makerfoundry::app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await

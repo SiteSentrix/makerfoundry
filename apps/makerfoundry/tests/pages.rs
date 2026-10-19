@@ -12,7 +12,11 @@ use tower::ServiceExt;
 /// The site without a database or a reachable account service: the pages that need neither.
 fn app() -> axum::Router {
     let cloud = makerfoundry::cloud::Cloud::new("http://127.0.0.1:9").unwrap();
-    makerfoundry::app(makerfoundry::AppState { cloud, db: None })
+    makerfoundry::app(makerfoundry::AppState {
+        cloud,
+        db: None,
+        storage: None,
+    })
 }
 
 async fn get(path: &str) -> (StatusCode, axum::http::HeaderMap, String) {

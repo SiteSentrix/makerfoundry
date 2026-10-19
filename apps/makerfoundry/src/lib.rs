@@ -7,10 +7,13 @@
 pub mod accounts;
 pub mod cloud;
 pub mod db;
+pub mod designs;
 pub mod embroidery;
 pub mod laser;
 pub mod pages;
+pub mod photos;
 pub mod preview;
+pub mod storage;
 
 use std::time::Duration;
 
@@ -51,6 +54,8 @@ const STYLESHEET: &str = include_str!("../static/site.css");
 pub struct AppState {
     pub cloud: cloud::Cloud,
     pub db: Option<PgPool>,
+    /// Where files are kept (R2); without it designs can be previewed but not kept.
+    pub storage: Option<storage::Storage>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -65,14 +70,24 @@ pub fn app(state: AppState) -> Router {
         .route("/signout", post(accounts::signout))
         .route("/forgot", get(accounts::forgot_page).post(accounts::forgot))
         .route("/account", get(accounts::account_page))
+        .route("/designs", get(designs::list))
+        .route("/designs/{id}", get(designs::show))
+        .route("/designs/{id}/download", get(designs::download))
+        .route("/designs/{id}/photos/{photo}/{size}", get(designs::photo))
+        .route("/designs/{id}/delete", post(designs::delete))
         .fallback(not_found)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
     let uploads = Router::new()
         .route("/preview", get(preview::page).post(preview::upload))
         .layer(DefaultBodyLimit::max(UPLOAD_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT_BYTES));
+    let new_designs = Router::new()
+        .route("/designs/new", get(designs::new_page).post(designs::upload))
+        .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
+        .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
     pages
         .merge(uploads)
+        .merge(new_designs)
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

@@ -17,7 +17,7 @@ pub const MAX_STITCHES: usize = 300_000;
 pub const MAX_SIZE_MM: f64 = 1500.0;
 
 /// One thread colour of a design.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Colour {
     /// `#rrggbb`.
     pub hex: String,
@@ -27,7 +27,7 @@ pub struct Colour {
 }
 
 /// An embroidery file, read and checked.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Embroidery {
     /// The format's usual extension, in capitals (`PES`).
     pub format: String,
@@ -39,6 +39,7 @@ pub struct Embroidery {
     pub height_mm: f64,
     pub colours: Vec<Colour>,
     /// The stitches drawn, as an SVG element.
+    #[serde(skip)]
     pub svg: String,
 }
 

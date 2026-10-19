@@ -30,6 +30,13 @@ usvg = { version = "0.48", default-features = false }
 # PDF laser files: lopdf, MIT, without its default features (no clock, no threads). Loaded with
 # a cap on every decompressed stream; see laser/pdf.rs for the rest of the limits.
 lopdf = { version = "0.45", default-features = false }
+# Photos of the stitched or cut result: decoded, turned upright and saved again as JPEG (which drops
+# their metadata, location included). MIT OR Apache-2.0; only the formats we take.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# Files kept in Cloudflare R2 through its S3 API: rusty-s3 signs the requests (BSD-2-Clause), reqwest
+# sends them.
+rusty-s3 = "0.10"
+url = "2"
 # StitchFoundry's embroidery file readers (DST, PES, JEF, EXP, VP3, XXX, U01 and more; fuzzed
 # there against untrusted bytes) and its stitch statistics. MIT OR Apache-2.0, by SiteSentrix.
 # Pinned by commit: bump on purpose.
@@ -49,6 +56,11 @@ panic = "deny"
 todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
+
+# Dependencies built optimised in dev and test builds too: image resizing and parsing are many
+# times slower unoptimised (as StitchFoundry does).
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto = "thin"

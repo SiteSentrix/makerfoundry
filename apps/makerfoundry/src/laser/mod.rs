@@ -29,7 +29,7 @@ pub const MAX_SIZE_MM: f64 = 5000.0;
 pub(crate) const CURVE_STEPS: usize = 48;
 
 /// A colour of a design's lines (laser software uses colours for layers: cut, score, engrave).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LaserColour {
     /// `#rrggbb`.
     pub hex: String,
@@ -39,7 +39,7 @@ pub struct LaserColour {
 }
 
 /// A laser file, read and checked.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Laser {
     /// `SVG`, `DXF` or `PDF`.
     pub format: String,
@@ -54,6 +54,7 @@ pub struct Laser {
     /// What was in the file but isn't drawn: text, pictures, block references.
     pub not_drawn: Vec<String>,
     /// The design drawn, as an SVG element.
+    #[serde(skip)]
     pub svg: String,
 }
 

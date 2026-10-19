@@ -28,6 +28,9 @@ sf-formats = { workspace = true }
 sf-core = { workspace = true }
 usvg = { workspace = true }
 lopdf = { workspace = true }
+image = { workspace = true }
+rusty-s3 = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 # The tests' stand-in for StitchFoundry's account service answers JSON.

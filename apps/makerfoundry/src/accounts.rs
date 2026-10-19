@@ -359,6 +359,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
             r#"<section class="form">
 <h1>Your account</h1>
 <p class="lead">You're signed in as <strong>{email}</strong>, with your Foundry Account.</p>
+<p><a href="/designs">Your designs</a>: add a design file and photos of what it makes.</p>
 <p><a href="/preview">See your design</a>: upload an embroidery or laser file and see it drawn.</p>
 <p>Selling and your designs come here as MakerFoundry grows.</p>
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>

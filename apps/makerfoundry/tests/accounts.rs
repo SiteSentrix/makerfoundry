@@ -133,6 +133,65 @@ async fn fake_cloud() -> (String, Shared) {
     (format!("http://{addr}"), shared)
 }
 
+/// What the stand-in storage holds: key → (content type, bytes).
+type Stored = Arc<Mutex<HashMap<String, (String, Vec<u8>)>>>;
+
+/// A stand-in for R2's S3 API on a local port (path style: `/bucket/key`), checking each request
+/// is signed → the storage MakerFoundry uses with it, and what it holds.
+async fn fake_storage() -> (makerfoundry::storage::Storage, Stored) {
+    use axum::extract::{Path, RawQuery};
+    let stored: Stored = Arc::default();
+    let signed = |q: &Option<String>| q.as_deref().unwrap_or("").contains("X-Amz-Signature=");
+    let app = Router::new()
+        .route(
+            "/files/{*key}",
+            axum::routing::put(
+                move |State(s): State<Stored>,
+                      Path(key): Path<String>,
+                      RawQuery(q): RawQuery,
+                      headers: HeaderMap,
+                      body: axum::body::Bytes| async move {
+                    if !signed(&q) {
+                        return StatusCode::FORBIDDEN;
+                    }
+                    let ct = headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    s.lock().unwrap().insert(key, (ct, body.to_vec()));
+                    StatusCode::OK
+                },
+            )
+            .get(
+                move |State(s): State<Stored>, Path(key): Path<String>, RawQuery(q): RawQuery| async move {
+                    if !signed(&q) {
+                        return StatusCode::FORBIDDEN.into_response();
+                    }
+                    match s.lock().unwrap().get(&key) {
+                        Some((_, b)) => b.clone().into_response(),
+                        None => StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            )
+            .delete(
+                move |State(s): State<Stored>, Path(key): Path<String>, RawQuery(q): RawQuery| async move {
+                    if !signed(&q) {
+                        return StatusCode::FORBIDDEN;
+                    }
+                    s.lock().unwrap().remove(&key);
+                    StatusCode::NO_CONTENT
+                },
+            ),
+        )
+        .with_state(stored.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let storage = makerfoundry::storage::Storage::new(&format!("http://{addr}"), "files", "key", "secret").unwrap();
+    (storage, stored)
+}
+
 /// A database of this test's own (a fresh schema), its tables made; `None` without
 /// `MF_TEST_DATABASE_URL`.
 async fn test_db() -> Option<PgPool> {
@@ -162,16 +221,24 @@ struct Site {
     app: Router,
     pool: PgPool,
     fake: Shared,
+    stored: Stored,
 }
 
 async fn site() -> Option<Site> {
     let pool = test_db().await?;
+    let (storage, stored) = fake_storage().await;
     let (url, fake) = fake_cloud().await;
     let app = makerfoundry::app(AppState {
         cloud: Cloud::new(&url).unwrap(),
         db: Some(pool.clone()),
+        storage: Some(storage),
     });
-    Some(Site { app, pool, fake })
+    Some(Site {
+        app,
+        pool,
+        fake,
+        stored,
+    })
 }
 
 struct Answer {
@@ -205,7 +272,7 @@ impl Site {
         let resp = self.app.clone().oneshot(req).await.unwrap();
         let status = resp.status();
         let headers = resp.headers().clone();
-        let body = String::from_utf8(resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+        let body = String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes()).into_owned();
         Answer { status, headers, body }
     }
 
@@ -445,8 +512,10 @@ async fn without_the_account_service_people_are_told_to_try_later() {
     let app = makerfoundry::app(AppState {
         cloud: Cloud::new("http://127.0.0.1:9").unwrap(),
         db: Some(pool),
+        storage: None,
     });
     let s = Site {
+        stored: Arc::default(),
         app,
         pool: test_db().await.unwrap(),
         fake: Arc::default(),
@@ -460,6 +529,7 @@ async fn without_a_database_nobody_can_sign_in() {
     let app = makerfoundry::app(AppState {
         cloud: Cloud::new("http://127.0.0.1:9").unwrap(),
         db: None,
+        storage: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -652,4 +722,225 @@ async fn an_uploaded_pdf_is_read_as_a_laser_file() {
         .send(upload("broken.pdf", b"%PDF-1.7\nnot a real pdf", Some(&cookie), &ours))
         .await;
     assert!(r.body.contains("PDF couldn&#39;t be read"), "{}", r.body);
+}
+
+/// A multipart form of `(field, file name, bytes)` parts, posted to `path`.
+fn multipart(path: &str, parts: &[(&str, &str, Vec<u8>)], cookie: &str) -> Request<Body> {
+    let boundary = "----mf-test-parts";
+    let mut body = Vec::new();
+    for (field, name, bytes) in parts {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Request::post(path)
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, format!("https://{HOST}"))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A small JPEG with an EXIF block naming a place, as phones write them.
+fn photo_with_location() -> Vec<u8> {
+    let picture = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(800, 600, |x, y| {
+        image::Rgb([(x % 256) as u8, (y % 256) as u8, 90])
+    }));
+    let mut out = std::io::Cursor::new(Vec::new());
+    picture.write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+    let mut bytes = out.into_inner();
+    bytes.splice(2..2, b"\xff\xe1\x00\x18Exif\x00\x00GPSLatitude=41.8".iter().copied());
+    bytes
+}
+
+#[tokio::test]
+async fn a_maker_keeps_a_design_with_photos() {
+    let Some(s) = site().await else { return };
+    let cookie = s
+        .post(
+            "/signup",
+            "email=maker%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    assert!(
+        s.get("/designs", Some(&cookie))
+            .await
+            .body
+            .contains("haven't added a design")
+    );
+    assert!(
+        s.get("/designs/new", Some(&cookie))
+            .await
+            .body
+            .contains(r#"name="photos""#)
+    );
+    // a design and two photos
+    let parts = [
+        ("file", "rose.pes", sample(sf_formats::Format::Pes)),
+        ("photos", "sewn.jpg", photo_with_location()),
+        ("photos", "close-up.jpg", photo_with_location()),
+    ];
+    let r = s.send(multipart("/designs/new", &parts, &cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let page_path = r.location().to_string();
+    assert!(page_path.starts_with("/designs/"), "{page_path}");
+    // the design file, two photos and two thumbnails are stored under keys of our own
+    {
+        let stored = s.stored.lock().unwrap();
+        assert_eq!(stored.len(), 5, "{:?}", stored.keys().collect::<Vec<_>>());
+        assert!(
+            stored.keys().all(|k| !k.contains("rose") && !k.contains("sewn")),
+            "no uploader names in keys"
+        );
+        for (key, (ct, bytes)) in stored.iter() {
+            if key.starts_with("photo/") || key.starts_with("thumb/") {
+                assert_eq!(ct, "image/jpeg");
+                assert!(
+                    !bytes.windows(11).any(|w| w == b"GPSLatitude"),
+                    "where it was taken is gone"
+                );
+            }
+        }
+    }
+    // its page: the stitches, the facts, the photos; and it's in the list
+    let page = s.get(&page_path, Some(&cookie)).await;
+    assert!(
+        page.body.contains(r#"<svg class="stitches""#) && page.body.contains("<dd>PES</dd>"),
+        "{}",
+        page.body
+    );
+    assert_eq!(page.body.matches("/thumb\"").count(), 2, "{}", page.body);
+    assert!(s.get("/designs", Some(&cookie)).await.body.contains("rose.pes"));
+    // a photo comes back as a JPEG; the download goes to a signed link that names the file
+    let thumb_path = page
+        .body
+        .split("src=\"")
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .unwrap()
+        .to_string();
+    let thumb = s.get(&thumb_path, Some(&cookie)).await;
+    assert_eq!(thumb.headers[header::CONTENT_TYPE], "image/jpeg");
+    let dl = s.get(&format!("{page_path}/download"), Some(&cookie)).await;
+    assert_eq!(dl.status, StatusCode::SEE_OTHER);
+    assert!(
+        dl.location().contains("X-Amz-Signature=") && dl.location().contains("rose.pes"),
+        "{}",
+        dl.location()
+    );
+    // another maker sees none of it
+    let other = s
+        .post(
+            "/signup",
+            "email=other%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    assert_eq!(s.get(&page_path, Some(&other)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get(&thumb_path, Some(&other)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.get(&format!("{page_path}/download"), Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.post(&format!("{page_path}/delete"), "", Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.get(&page_path, None).await.location(), "/signin");
+    // deleting it takes its files too
+    let r = s.post(&format!("{page_path}/delete"), "", Some(&cookie)).await;
+    assert_eq!(r.location(), "/designs");
+    assert!(s.stored.lock().unwrap().is_empty());
+    assert_eq!(s.get(&page_path, Some(&cookie)).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn bad_photos_and_too_many_are_refused_and_nothing_is_kept() {
+    let Some(s) = site().await else { return };
+    let cookie = s
+        .post(
+            "/signup",
+            "email=maker%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let design = ("file", "rose.pes", sample(sf_formats::Format::Pes));
+    let r = s
+        .send(multipart(
+            "/designs/new",
+            &[design.clone(), ("photos", "x.jpg", b"<svg onload=alert(1)>".to_vec())],
+            &cookie,
+        ))
+        .await;
+    assert!(
+        r.body.contains("Photo 1: this isn&#39;t a JPEG, PNG or WebP photo."),
+        "{}",
+        r.body
+    );
+    let mut parts = vec![design.clone()];
+    for i in 0..=makerfoundry::designs::MAX_PHOTOS {
+        parts.push(("photos", if i == 0 { "a.jpg" } else { "b.jpg" }, photo_with_location()));
+    }
+    let r = s.send(multipart("/designs/new", &parts, &cookie)).await;
+    assert!(r.body.contains("up to 6 photos"), "{}", r.body);
+    let r = s
+        .send(multipart(
+            "/designs/new",
+            &[("file", "notes.txt", b"hello".to_vec())],
+            &cookie,
+        ))
+        .await;
+    assert!(
+        r.body.contains("notes.txt: this isn&#39;t an embroidery file"),
+        "{}",
+        r.body
+    );
+    assert!(s.stored.lock().unwrap().is_empty());
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM mf_designs")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn without_storage_designs_can_only_be_previewed() {
+    let Some(pool) = test_db().await else { return };
+    let (url, _fake) = fake_cloud().await;
+    let app = makerfoundry::app(AppState {
+        cloud: Cloud::new(&url).unwrap(),
+        db: Some(pool.clone()),
+        storage: None,
+    });
+    let s = Site {
+        app,
+        pool,
+        fake: Arc::default(),
+        stored: Arc::default(),
+    };
+    let cookie = s
+        .post(
+            "/signup",
+            "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    let r = s.get("/designs/new", Some(&cookie)).await;
+    assert!(
+        r.body.contains("isn't switched on yet") && r.body.contains("/preview"),
+        "{}",
+        r.body
+    );
 }

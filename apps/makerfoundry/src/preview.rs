@@ -15,6 +15,8 @@ use crate::pages::escape;
 /// The extensions the file picker offers (any file is still read by its content).
 const ACCEPT: &str = ".dst,.pes,.pec,.jef,.exp,.vp3,.xxx,.u01,.pcs,.tap,.dsb,.dsz,.svg,.dxf,.pdf";
 
+const ANOTHER: &str = r#"<p><a href="/preview">Try another file</a></p>"#;
+
 const TITLE: &str = "See your design · MakerFoundry";
 
 fn form(problem: &str) -> String {
@@ -54,7 +56,7 @@ pub async fn page(State(state): State<AppState>, headers: HeaderMap) -> Response
 }
 
 /// `n` with commas between thousands.
-fn thousands(n: usize) -> String {
+pub(crate) fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -66,7 +68,8 @@ fn thousands(n: usize) -> String {
     out
 }
 
-fn result(name: &str, e: &Embroidery) -> String {
+/// An embroidery design's section: name, stitches drawn, facts, colours, then `footer` (HTML).
+pub(crate) fn result(name: &str, e: &Embroidery, footer: &str) -> String {
     let colours: String = e
         .colours
         .iter()
@@ -93,7 +96,7 @@ fn result(name: &str, e: &Embroidery) -> String {
 </dl>
 <h2>Colours</h2>
 <ul class="colours">{colours}</ul>
-<p><a href="/preview">Try another file</a></p>
+{footer}
 </section>"#,
         name = escape(name),
         svg = e.svg,
@@ -108,8 +111,9 @@ fn result(name: &str, e: &Embroidery) -> String {
     )
 }
 
-/// A laser file's page: its lines drawn, its size, shapes and line length, and its colours.
-fn laser_result(name: &str, l: &Laser) -> String {
+/// A laser design's section: its lines drawn, its size, shapes and line length, its colours, then
+/// `footer` (HTML).
+pub(crate) fn laser_result(name: &str, l: &Laser, footer: &str) -> String {
     let colours: String = l
         .colours
         .iter()
@@ -144,7 +148,7 @@ fn laser_result(name: &str, l: &Laser) -> String {
 </dl>
 <h2>Colours</h2>
 <ul class="colours">{colours}</ul>
-<p><a href="/preview">Try another file</a></p>
+{footer}
 </section>"#,
         name = escape(name),
         svg = l.svg,
@@ -206,8 +210,8 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, mut multi
         return problem("Choose a file to upload.");
     };
     let read = match laser::kind(&bytes, &name) {
-        Some(kind) => laser::read(&bytes, kind).map(|l| laser_result(&name, &l)),
-        None => embroidery::read(&bytes, &name).map(|e| result(&name, &e)),
+        Some(kind) => laser::read(&bytes, kind).map(|l| laser_result(&name, &l, ANOTHER)),
+        None => embroidery::read(&bytes, &name).map(|e| result(&name, &e, ANOTHER)),
     };
     match read {
         Ok(page) => private(TITLE, &page, true),
