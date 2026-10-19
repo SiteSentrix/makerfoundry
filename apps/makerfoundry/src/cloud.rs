@@ -1,5 +1,5 @@
 //! StitchFoundry's account service (`apps/stitchfoundry-cloud` in the StitchFoundry repository,
-//! `docs/cloud.md` there): MakerFoundry's accounts are Foundry accounts, kept there (owner's decision,
+//! `docs/cloud.md` there): MakerFoundry's accounts are Foundry Accounts, kept there (owner's decision,
 //! 2026-10-19), so signing up, signing in and resetting a password go through its API. Its
 //! session tokens can spend the account's AI credits: they stay on the server, never in a page.
 

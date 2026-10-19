@@ -1,4 +1,4 @@
-//! Signing up, in and out, and a forgotten password (MF-1). Accounts are Foundry accounts, the one
+//! Signing up, in and out, and a forgotten password (MF-1). Accounts are Foundry Accounts, the one
 //! login for all of SiteSentrix's software, kept by StitchFoundry's account service
 //! (`cloud`); MakerFoundry keeps a session of its own for each browser (`db`), named by a random
 //! id in a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax) and kept only as its SHA-256. Every
@@ -122,7 +122,7 @@ fn cloud_problem(e: &CloudError) -> String {
     match e {
         CloudError::Refused { status: 401, .. } => "The email or the password is wrong.".into(),
         CloudError::Refused { status: 409, .. } => {
-            "There's already a Foundry account with that email: sign in instead.".into()
+            "There's already a Foundry Account with that email: sign in instead.".into()
         }
         CloudError::Refused {
             status: 400 | 429,
@@ -130,7 +130,7 @@ fn cloud_problem(e: &CloudError) -> String {
         } => sentence(message),
         CloudError::Refused { status: 503, .. } => "That isn't available yet. Please try again later.".into(),
         CloudError::Refused { .. } | CloudError::Unreachable => {
-            "Foundry accounts can't be reached right now. Please try again in a few minutes.".into()
+            "Foundry Accounts can't be reached right now. Please try again in a few minutes.".into()
         }
     }
 }
@@ -190,7 +190,7 @@ fn signin_form(email: &str, problem: &str) -> String {
     format!(
         r#"<section class="form">
 <h1>Sign in</h1>
-<p class="lead">Sign in with your Foundry account: the same email and password as in StitchFoundry and the other Foundry apps.</p>
+<p class="lead">Sign in with your Foundry Account: the same email and password as in StitchFoundry and the other Foundry apps.</p>
 {problem}
 <form method="post" action="/signin">
 <label>Email<input type="email" name="email" value="{email}" autocomplete="email" required maxlength="254"></label>
@@ -198,7 +198,7 @@ fn signin_form(email: &str, problem: &str) -> String {
 <button type="submit">Sign in</button>
 </form>
 <p><a href="/forgot">Forgot your password?</a></p>
-<p>No account yet? <a href="/signup">Make a Foundry account</a>.</p>
+<p>No account yet? <a href="/signup">Make a Foundry Account</a>.</p>
 </section>"#,
         email = escape(email),
         problem = problem_html(problem),
@@ -209,7 +209,7 @@ fn signup_form(email: &str, problem: &str) -> String {
     format!(
         r#"<section class="form">
 <h1>Make an account</h1>
-<p class="lead">A Foundry account is one email and password for MakerFoundry, StitchFoundry and the other Foundry apps.</p>
+<p class="lead">A Foundry Account is one email and password for MakerFoundry, StitchFoundry and the other Foundry apps.</p>
 {problem}
 <form method="post" action="/signup">
 <label>Email<input type="email" name="email" value="{email}" autocomplete="email" required maxlength="254"></label>
@@ -217,7 +217,7 @@ fn signup_form(email: &str, problem: &str) -> String {
 <label>The same password again<input type="password" name="again" autocomplete="new-password" required minlength="8" maxlength="200"></label>
 <button type="submit">Make the account</button>
 </form>
-<p>Already have a Foundry account, from StitchFoundry say? <a href="/signin">Sign in</a>.</p>
+<p>Already have a Foundry Account, from StitchFoundry say? <a href="/signin">Sign in</a>.</p>
 </section>"#,
         email = escape(email),
         problem = problem_html(problem),
@@ -305,7 +305,7 @@ fn forgot_form(email: &str, problem: &str) -> String {
     format!(
         r#"<section class="form">
 <h1>Forgot your password?</h1>
-<p class="lead">Give the email of your Foundry account, and we'll send a link to choose a new password.</p>
+<p class="lead">Give the email of your Foundry Account, and we'll send a link to choose a new password.</p>
 {problem}
 <form method="post" action="/forgot">
 <label>Email<input type="email" name="email" value="{email}" autocomplete="email" required maxlength="254"></label>
@@ -358,7 +358,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
         &format!(
             r#"<section class="form">
 <h1>Your account</h1>
-<p class="lead">You're signed in as <strong>{email}</strong>, with your Foundry account.</p>
+<p class="lead">You're signed in as <strong>{email}</strong>, with your Foundry Account.</p>
 <p><a href="/preview">See your stitches</a>: upload an embroidery file and see it drawn.</p>
 <p>Selling and your designs come here as MakerFoundry grows.</p>
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>
