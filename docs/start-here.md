@@ -19,7 +19,7 @@ phone. Plain, step-by-step instructions work best for anything he has to click t
 | Legal | stitchfoundry.app/terms, /privacy | drafted, not lawyer-reviewed; MakerFoundry needs its own Terms, Privacy and Seller Terms |
 | Hosting | Railway Pro ($20/mo) | other projects: StitchHub, stitchbench, stitchshop (demos for the StitchBench repair-shop software) |
 | Payments | Stripe (owner's account) | StitchFoundry uses Checkout; MakerFoundry needs **Stripe Connect** |
-| Domains | Namecheap → Cloudflare DNS | makerfoundry.app and patternfoundry.app to be bought |
+| Domains | Namecheap → Cloudflare DNS | makerfoundry.app bought 2026-10-19 and live (see `docs/deploy.md`); patternfoundry.app to be bought |
 
 ## Decided
 - Name: **MakerFoundry**. Embroidery designs **and** laser-cut files.
@@ -29,7 +29,22 @@ phone. Plain, step-by-step instructions work best for anything he has to click t
 - Accounts: the StitchFoundry cloud service's accounts, shared (2026-10-19), called a **Foundry
   Account** on every page (owner's choice of name, 2026-10-19: not "StitchFoundry account"), the
   one sign-in and one credit balance ("Foundry credits") for all of SiteSentrix's software; design
-  in the plan's "Accounts (MF-1)".
+  in the plan's "Accounts (MF-1)". StitchFoundry's app, docs, Terms and Privacy use the name too
+  (StitchFoundry commit 53514ec14, 2026-10-19).
+- **Hosting** (2026-10-19): Railway runs only the two servers, MakerFoundry and the shared
+  StitchFoundry cloud service (cloud.stitchfoundry.app). The apps (StitchFoundry, LaserFoundry,
+  PatternFoundry) stay on GitHub Pages and GitHub Releases, and the websites on Cloudflare Pages.
+- **AI**: there is one Anthropic key, only in the cloud service's Railway variables. MakerFoundry
+  never holds one: AI features, if it gets any, go to the cloud service's `/v1/messages` from the
+  server, with the person's session token (which never reaches the browser).
+- **Email**: the cloud service's `RESEND_API_KEY` sends both the password-reset emails (CLOUD-07)
+  and StitchFoundry's sew-out reports (SO-02, which also need
+  `SF_CLOUD_REPORTS_TO=support@stitchfoundry.app`). Both send from @stitchfoundry.app, so that
+  domain must show Verified in Resend. MakerFoundry sends no email of its own.
+- **Changing the cloud service** (github.com/Stitchwright/StitchFoundry, `apps/stitchfoundry-cloud`)
+  is fine, as CLOUD-06 and CLOUD-07 did. Follow StitchFoundry's `CLAUDE.md` there: pull first (the
+  StitchFoundry chat pushes to it too), `cargo xtask ci` green before every push, one task id per
+  commit (`CLOUD-xx`), and update its `docs/cloud.md`.
 
 ## The owner decides (ask, don't assume)
 Anything that costs money, takes payment, is legal wording, or goes public: the fee, who may sell,
