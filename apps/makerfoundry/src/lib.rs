@@ -7,12 +7,14 @@
 pub mod accounts;
 pub mod cloud;
 pub mod db;
+pub mod embroidery;
 pub mod pages;
+pub mod preview;
 
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -29,6 +31,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Bodies bigger than this are refused before a handler sees them. Uploads (MF-2) get their own,
 /// larger cap on their own route.
 const BODY_LIMIT_BYTES: usize = 64 * 1024;
+
+/// The upload routes' cap: the largest file accepted, and room for the form around it.
+const UPLOAD_LIMIT_BYTES: usize = embroidery::MAX_FILE_BYTES + 64 * 1024;
 
 /// A request that takes longer than this is answered with 408.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -49,7 +54,7 @@ pub struct AppState {
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
 pub fn app(state: AppState) -> Router {
-    Router::new()
+    let pages = Router::new()
         .route("/", get(home))
         .route("/health", get(health))
         .route("/static/site.css", get(stylesheet))
@@ -60,8 +65,14 @@ pub fn app(state: AppState) -> Router {
         .route("/forgot", get(accounts::forgot_page).post(accounts::forgot))
         .route("/account", get(accounts::account_page))
         .fallback(not_found)
+        .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
+    let uploads = Router::new()
+        .route("/preview", get(preview::page).post(preview::upload))
+        .layer(DefaultBodyLimit::max(UPLOAD_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(UPLOAD_LIMIT_BYTES));
+    pages
+        .merge(uploads)
         .with_state(state)
-        .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,

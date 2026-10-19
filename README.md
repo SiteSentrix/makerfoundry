@@ -8,7 +8,8 @@ files**: free designs shared openly, paid designs sold through MakerFoundry. By
 October 2026: **MF-0** (workspace) done: a Rust web service with a home page and `/health`, CI,
 and a Dockerfile, live on Railway at <https://makerfoundry-production.up.railway.app>
 ([`docs/deploy.md`](docs/deploy.md)). **MF-1** (accounts) done and live: sign up, in and out with a StitchFoundry account, and a
-forgotten password. Next: **MF-2** (upload and preview). See [`docs/plan.md`](docs/plan.md).
+forgotten password. **MF-2** (upload and preview) under way: an
+uploaded embroidery file is drawn stitch by stitch (`/preview`, signed in). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

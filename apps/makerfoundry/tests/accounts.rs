@@ -469,3 +469,132 @@ async fn without_a_database_nobody_can_sign_in() {
     let body = String::from_utf8(resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
     assert!(body.contains("isn&#39;t available yet"));
 }
+
+/// A small two-colour design as `format`, written by StitchFoundry's own writer.
+fn sample(format: sf_formats::Format) -> Vec<u8> {
+    use sf_core::{Cmd, Pattern, Point, Rgb, Thread};
+    let mut p = Pattern::new();
+    p.threads = vec![
+        Thread {
+            color: Rgb { r: 200, g: 30, b: 40 },
+            name: "Rose <red>".into(),
+            code: String::new(),
+            chart: String::new(),
+        },
+        Thread {
+            color: Rgb { r: 20, g: 60, b: 200 },
+            name: String::new(),
+            code: String::new(),
+            chart: String::new(),
+        },
+    ];
+    for i in 0..=30 {
+        p.add(Point::new(f64::from(i), f64::from(i % 2) * 4.0), Cmd::Stitch);
+    }
+    p.add(Point::new(30.0, 0.0), Cmd::ColorChange);
+    for i in 0..=30 {
+        p.add(Point::new(f64::from(i), 10.0 + f64::from(i % 2) * 4.0), Cmd::Stitch);
+    }
+    p.add(Point::new(30.0, 14.0), Cmd::End);
+    sf_formats::write(format, &p, &sf_formats::WriteOptions::default()).unwrap()
+}
+
+/// A multipart upload of `bytes` as the form's `file`, named `name`.
+fn upload(name: &str, bytes: &[u8], cookie: Option<&str>, origin: &str) -> Request<Body> {
+    let boundary = "----mf-test-boundary";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let mut req = Request::post("/preview")
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, origin)
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        );
+    if let Some(c) = cookie {
+        req = req.header(header::COOKIE, c);
+    }
+    req.body(Body::from(body)).unwrap()
+}
+
+#[tokio::test]
+async fn an_uploaded_pes_shows_its_stitches() {
+    use sf_formats::Format::{Pes, Vp3};
+    let Some(s) = site().await else { return };
+    let ours = format!("https://{HOST}");
+    // signed out: asked to sign in, and nothing is read
+    assert!(s.get("/preview", None).await.body.contains("Sign in to upload"));
+    assert!(
+        s.send(upload("rose.pes", &sample(Pes), None, &ours))
+            .await
+            .body
+            .contains("Sign in to upload")
+    );
+    let cookie = s
+        .post(
+            "/signup",
+            "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+            None,
+        )
+        .await
+        .cookie();
+    assert!(
+        s.get("/preview", Some(&cookie))
+            .await
+            .body
+            .contains(r#"enctype="multipart/form-data""#)
+    );
+    // the done-when of MF-2: an uploaded PES shows its stitches
+    let r = s.send(upload("rose.pes", &sample(Pes), Some(&cookie), &ours)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains(r#"<svg class="stitches""#) && r.body.matches("<path stroke=").count() == 2,
+        "{}",
+        r.body
+    );
+    assert!(
+        r.body.contains("<dd>PES</dd>") && r.body.contains("30.0 × 14.0 mm"),
+        "{}",
+        r.body
+    );
+    assert!(
+        r.body.contains("Red 5 (#ed171f)"),
+        "PES colours are Brother's thread chart: {}",
+        r.body
+    );
+    // VP3 keeps the file's own thread names, which come back escaped
+    let r = s.send(upload("rose.vp3", &sample(Vp3), Some(&cookie), &ours)).await;
+    assert!(
+        r.body.contains("Rose &lt;red&gt; (#c81e28)") && !r.body.contains("<red>"),
+        "{}",
+        r.body
+    );
+    // not a design, or too big: a reason, no preview
+    let r = s
+        .send(upload("evil.pes", b"<svg onload=alert(1)>", Some(&cookie), &ours))
+        .await;
+    assert!(
+        r.body.contains("isn&#39;t an embroidery file") && !r.body.contains("<svg onload"),
+        "{}",
+        r.body
+    );
+    let big = vec![0u8; makerfoundry::embroidery::MAX_FILE_BYTES + 200 * 1024];
+    let r = s.send(upload("big.dst", &big, Some(&cookie), &ours)).await;
+    assert!(
+        r.status == StatusCode::PAYLOAD_TOO_LARGE || r.body.contains("up to 4 MB"),
+        "{}: {}",
+        r.status,
+        r.body
+    );
+    // from another site: refused
+    assert_eq!(
+        s.send(upload("rose.pes", &sample(Pes), Some(&cookie), "https://evil.example"))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+}

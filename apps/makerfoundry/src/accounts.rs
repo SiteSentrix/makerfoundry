@@ -84,7 +84,7 @@ pub async fn current_user(state: &AppState, headers: &HeaderMap) -> Option<User>
 
 /// Whether a form post came from one of our own pages: its `Origin` (or, without one, its
 /// `Referer`) names the host it was sent to. Other sites can't post forms on someone's behalf.
-fn same_origin(headers: &HeaderMap) -> bool {
+pub(crate) fn same_origin(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
         return false;
     };
@@ -101,12 +101,12 @@ fn same_origin(headers: &HeaderMap) -> bool {
     !from_host.is_empty() && from_host.eq_ignore_ascii_case(host)
 }
 
-fn forbidden() -> Response {
+pub(crate) fn forbidden() -> Response {
     (StatusCode::FORBIDDEN, Html(page("Not allowed · MakerFoundry", r#"<section class="hero"><h1>Not allowed</h1><p class="lead">That form has to be sent from MakerFoundry's own page. <a href="/">Go to the home page</a>.</p></section>"#, false))).into_response()
 }
 
 /// A page that isn't kept in caches (it may name the account).
-fn private(title: &str, body: &str, signed_in: bool) -> Response {
+pub(crate) fn private(title: &str, body: &str, signed_in: bool) -> Response {
     (
         [(header::CACHE_CONTROL, "no-store")],
         Html(page(title, body, signed_in)),
@@ -358,6 +358,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
             r#"<section class="form">
 <h1>Your account</h1>
 <p class="lead">You're signed in as <strong>{email}</strong>, with your StitchFoundry account.</p>
+<p><a href="/preview">See your stitches</a>: upload an embroidery file and see it drawn.</p>
 <p>Selling and your designs come here as MakerFoundry grows.</p>
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
