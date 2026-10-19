@@ -2255,3 +2255,87 @@ async fn browsing_finds_free_or_paid_designs_and_unpaid_checkouts_expire() {
     let r = s.post(&format!("/designs/{paid}/delete"), "", Some(&seller)).await;
     assert_eq!(r.location(), "/designs", "{}", r.body);
 }
+
+#[tokio::test]
+async fn designs_are_found_by_the_hoop_they_fit_and_the_material_they_cut() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    // the sample PES is 60 × 60 mm
+    let rose = published(&s, &cookie, "anns", "Rose").await;
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("fits a 4×4 in hoop")
+    );
+    // a laser design, 300 × 200 mm, made for 3 mm plywood
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="300mm" height="200mm" viewBox="0 0 300 200"><rect x="1" y="1" width="298" height="198" fill="none" stroke="red"/></svg>"#;
+    let r = s
+        .send(multipart("/designs/new", &[("file", "box.svg", svg.to_vec())], &cookie))
+        .await;
+    let boxed = design_id(r.location());
+    let edit = format!("/designs/{boxed}/edit");
+    assert!(
+        s.get(&edit, Some(&cookie))
+            .await
+            .body
+            .contains(r#"<select name="material">"#)
+    );
+    let r = s
+        .post(
+            &edit,
+            "title=Box&licence=personal&price=0&material=plywood&thickness=sixty",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("thickness in mm"), "{}", r.body);
+    let r = s
+        .post(
+            &edit,
+            "title=Box&licence=personal&price=0&material=gold&thickness=3",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("Choose a material"), "{}", r.body);
+    let r = s
+        .post(
+            &edit,
+            "title=Box&licence=personal&price=0&material=plywood&thickness=3",
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    s.post(&format!("/designs/{boxed}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert!(
+        s.get(&format!("/d/{boxed}"), None)
+            .await
+            .body
+            .contains("for 3 mm plywood")
+    );
+    // an embroidery design has no material, whatever is sent
+    s.post(
+        &format!("/designs/{rose}/edit"),
+        "title=Rose&licence=personal&price=0&material=acrylic",
+        Some(&cookie),
+    )
+    .await;
+    assert!(
+        !s.get(&format!("/designs/{rose}/edit"), Some(&cookie))
+            .await
+            .body
+            .contains("Material")
+    );
+    // browsing
+    let has = |body: &str, id: i64| body.contains(&format!("/d/{id}/"));
+    let fits = s.get("/browse?hoop=4x4", None).await.body;
+    assert!(has(&fits, rose) && !has(&fits, boxed));
+    assert!(fits.contains(r#"<option value="4x4" selected>"#));
+    let ply = s.get("/browse?material=plywood", None).await.body;
+    assert!(has(&ply, boxed) && !has(&ply, rose));
+    let acrylic = s.get("/browse?material=acrylic", None).await.body;
+    assert!(!has(&acrylic, boxed) && !has(&acrylic, rose));
+    // nonsense is ignored
+    let all = s.get("/browse?hoop=99x99&material=gold", None).await.body;
+    assert!(has(&all, boxed) && has(&all, rose));
+}

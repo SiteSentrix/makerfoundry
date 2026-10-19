@@ -288,15 +288,28 @@ async fn keep(
             stored.push(thumb_key.clone());
             photo_keys.push((photo_key, thumb_key, p.width, p.height));
         }
-        let (format, facts, svg) = match read {
-            Read::Embroidery(e) => (e.format.clone(), serde_json::to_value(e), e.svg.clone()),
-            Read::Laser(l) => (l.format.clone(), serde_json::to_value(l), l.svg.clone()),
+        let (format, facts, svg, w, h) = match read {
+            Read::Embroidery(e) => (
+                e.format.clone(),
+                serde_json::to_value(e),
+                e.svg.clone(),
+                e.width_mm,
+                e.height_mm,
+            ),
+            Read::Laser(l) => (
+                l.format.clone(),
+                serde_json::to_value(l),
+                l.svg.clone(),
+                l.width_mm,
+                l.height_mm,
+            ),
         };
+        let size = |v: f64| v.is_finite().then_some(v);
         let facts = facts.map_err(|e| e.to_string())?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO mf_designs (account_id, kind, file_name, file_key, file_bytes, format, facts, preview_svg)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+            "INSERT INTO mf_designs (account_id, kind, file_name, file_key, file_bytes, format, facts, preview_svg, width_mm, height_mm)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
         )
         .bind(account)
         .bind(read.kind())
@@ -306,6 +319,8 @@ async fn keep(
         .bind(format)
         .bind(facts)
         .bind(svg)
+        .bind(size(w))
+        .bind(size(h))
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
@@ -353,12 +368,18 @@ pub struct DesignRow {
     pub removed_reason: Option<String>,
     /// 0 for a free design.
     pub price_cents: i64,
+    /// Its size, as reading it found (mm).
+    pub width_mm: Option<f64>,
+    pub height_mm: Option<f64>,
+    /// A laser design's material (`sizes::MATERIALS`) and its thickness (mm), as its maker gives them.
+    pub material: Option<String>,
+    pub thickness_mm: Option<f64>,
 }
 
 pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads,
-                removed_reason, price_cents
+                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm
          FROM mf_designs WHERE id = $1",
     )
     .bind(id)
@@ -380,6 +401,10 @@ pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::E
             downloads: r.try_get("downloads")?,
             removed_reason: r.try_get("removed_reason")?,
             price_cents: r.try_get("price_cents")?,
+            width_mm: r.try_get("width_mm")?,
+            height_mm: r.try_get("height_mm")?,
+            material: r.try_get("material")?,
+            thickness_mm: r.try_get("thickness_mm")?,
         })
     })
     .transpose()

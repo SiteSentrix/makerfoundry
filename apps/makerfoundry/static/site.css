@@ -185,3 +185,4 @@ address { font-style: normal; background: var(--card); border: 1px solid var(--l
 .bottom .links { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin-top: -.4rem; }
 a.button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
 .hero .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.search select { flex: 1 1 9rem; min-width: 0; }

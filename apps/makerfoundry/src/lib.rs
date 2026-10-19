@@ -22,6 +22,7 @@ pub mod pages;
 pub mod photos;
 pub mod preview;
 pub mod selling;
+pub mod sizes;
 pub mod storage;
 pub mod stripe;
 

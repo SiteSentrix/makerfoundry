@@ -20,6 +20,7 @@ use crate::makers;
 use crate::money::dollars;
 use crate::pages::{escape, page};
 use crate::selling;
+use crate::sizes::{self, HOOPS, Hoop, MATERIALS};
 
 pub const MAX_TITLE: usize = 100;
 pub const MAX_DESCRIPTION: usize = 5000;
@@ -114,6 +115,10 @@ pub struct Filter {
     pub account: Option<i64>,
     /// `Some(true)`: free designs only; `Some(false)`: paid only.
     pub free: Option<bool>,
+    /// Embroidery designs that fit this hoop.
+    pub hoop: Option<&'static Hoop>,
+    /// Laser designs for this material.
+    pub material: Option<String>,
     pub popular: bool,
     pub page: i64,
 }
@@ -141,6 +146,9 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
            AND ($3::text IS NULL OR d.search @@ websearch_to_tsquery('english', $3))
            AND ($4::bigint IS NULL OR d.account_id = $4)
            AND ($8::bool IS NULL OR (d.price_cents = 0) = $8)
+           AND ($9::float8 IS NULL OR (d.kind = 'embroidery'
+                AND ((d.width_mm <= $9 AND d.height_mm <= $10) OR (d.width_mm <= $10 AND d.height_mm <= $9))))
+           AND ($11::text IS NULL OR (d.kind = 'laser' AND d.material = $11))
          ORDER BY CASE WHEN $5 THEN d.downloads END DESC NULLS LAST,
                   CASE WHEN $3::text IS NOT NULL AND NOT $5 THEN ts_rank(d.search, websearch_to_tsquery('english', $3)) END DESC NULLS LAST,
                   d.published_at DESC
@@ -154,6 +162,9 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     .bind(limit)
     .bind(f.page.max(0).saturating_mul(limit))
     .bind(f.free)
+    .bind(f.hoop.map(|h| h.width_mm))
+    .bind(f.hoop.map(|h| h.height_mm))
+    .bind(&f.material)
     .fetch_all(pool)
     .await;
     match rows {
@@ -252,6 +263,8 @@ pub struct BrowseQuery {
     tag: String,
     sort: String,
     price: String,
+    hoop: String,
+    material: String,
     page: i64,
 }
 
@@ -272,12 +285,31 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
         Some(false) => "paid",
         None => "",
     };
+    let hoop = sizes::hoop(&q.hoop);
+    let material = sizes::material_name(&q.material).map(|_| q.material.clone());
+    // a hoop means embroidery, a material laser
+    let kind = match (hoop, &material) {
+        (Some(_), _) => Some("embroidery".to_string()),
+        (None, Some(_)) => Some("laser".to_string()),
+        _ => kind,
+    };
+    // the search as it stands, for links that change one part of it
+    let search = format!(
+        "q={q}&amp;kind={k}&amp;price={price}&amp;hoop={h}&amp;material={m}&amp;sort={s}",
+        q = escape(&url_word(&words)),
+        k = escape(kind.as_deref().unwrap_or("")),
+        h = hoop.map_or("", |h| h.id),
+        m = escape(material.as_deref().unwrap_or("")),
+        s = if popular { "popular" } else { "newest" },
+    );
     let filter = Filter {
         kind: kind.clone(),
         tag: tag.clone(),
         words: (!words.is_empty()).then(|| words.clone()),
         account: None,
         free,
+        hoop,
+        material: material.clone(),
         popular,
         page: page_no,
     };
@@ -288,11 +320,8 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
     let selected = |on: bool| if on { " selected" } else { "" };
     let tag_note = match &tag {
         Some(t) => format!(
-            r#"<p>Tagged <strong>{t}</strong> · <a href="/browse?q={q}&amp;kind={k}&amp;price={price}&amp;sort={s}">show all tags</a></p>"#,
+            r#"<p>Tagged <strong>{t}</strong> · <a href="/browse?{search}">show all tags</a></p>"#,
             t = escape(t),
-            q = escape(&url_word(&words)),
-            k = escape(kind.as_deref().unwrap_or("")),
-            s = if popular { "popular" } else { "newest" },
         ),
         None => String::new(),
     };
@@ -303,11 +332,8 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
     };
     let more = if found.len() as i64 == PAGE_SIZE {
         format!(
-            r#"<p><a href="/browse?q={q}&amp;kind={k}&amp;price={price}&amp;tag={t}&amp;sort={s}&amp;page={n}">More designs</a></p>"#,
-            q = escape(&url_word(&words)),
-            k = escape(kind.as_deref().unwrap_or("")),
+            r#"<p><a href="/browse?{search}&amp;tag={t}&amp;page={n}">More designs</a></p>"#,
             t = escape(&url_word(tag.as_deref().unwrap_or(""))),
-            s = if popular { "popular" } else { "newest" },
             n = page_no + 1,
         )
     } else {
@@ -322,6 +348,8 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
 <input type="search" name="q" value="{words}" placeholder="Search designs" aria-label="Search designs" maxlength="200">
 <select name="kind" aria-label="Kind"><option value="">Embroidery and laser</option><option value="embroidery"{e}>Embroidery</option><option value="laser"{l}>Laser</option></select>
 <select name="price" aria-label="Price"><option value="">Free and paid</option><option value="free"{fr}>Free</option><option value="paid"{pd}>Paid</option></select>
+<select name="hoop" aria-label="Hoop"><option value="">Any hoop</option>{hoops}</select>
+<select name="material" aria-label="Material"><option value="">Any material</option>{materials}</select>
 <select name="sort" aria-label="Order"><option value="newest">Newest</option><option value="popular"{p}>Most downloaded</option></select>
 <input type="hidden" name="tag" value="{tag}">
 <button type="submit">Search</button>
@@ -332,6 +360,22 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
             e = selected(kind.as_deref() == Some("embroidery")),
             l = selected(kind.as_deref() == Some("laser")),
             p = selected(popular),
+            hoops = HOOPS
+                .iter()
+                .map(|h| format!(
+                    r#"<option value="{}"{}>Fits {}</option>"#,
+                    h.id,
+                    selected(hoop.is_some_and(|x| x.id == h.id)),
+                    escape(h.name)
+                ))
+                .collect::<String>(),
+            materials = MATERIALS
+                .iter()
+                .map(|(id, name)| format!(
+                    r#"<option value="{id}"{}>{name}</option>"#,
+                    selected(material.as_deref() == Some(*id))
+                ))
+                .collect::<String>(),
             fr = selected(free == Some(true)),
             pd = selected(free == Some(false)),
             tag = escape(tag.as_deref().unwrap_or("")),
@@ -358,6 +402,21 @@ fn url_word(text: &str) -> String {
 
 fn not_found(signed_in: bool) -> Response {
     (StatusCode::NOT_FOUND, Html(page("Not found · MakerFoundry", r#"<section class="hero"><h1>Design not found</h1><p class="lead"><a href="/browse">Browse designs</a></p></section>"#, signed_in))).into_response()
+}
+
+/// What a design fits or is made for: "fits a 4×4 in hoop", "for 3 mm plywood".
+pub fn fits_text(d: &DesignRow) -> Option<String> {
+    if d.kind == "laser" {
+        let material = d.material.as_deref().and_then(sizes::material_name)?;
+        Some(match d.thickness_mm {
+            Some(t) => format!("for {} {}", sizes::thickness_text(t), material.to_lowercase()),
+            None => format!("for {}", material.to_lowercase()),
+        })
+    } else {
+        let hoop = sizes::smallest_hoop(d.width_mm?, d.height_mm?)?;
+        let short = hoop.name.split(" (").next().unwrap_or(hoop.name);
+        Some(format!("fits a {short} hoop"))
+    }
 }
 
 /// Whether `viewer` may see design `d`: anyone once it's published; otherwise (a draft, or taken
@@ -413,6 +472,7 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         1 => " · 1 download".into(),
         n => format!(" · {n} downloads"),
     };
+    let fits = fits_text(&d).map(|t| format!(" · {}", escape(&t))).unwrap_or_default();
     let licence = d.licence.as_deref().and_then(licences::find);
     let licence_html = match licence {
         Some(l) => format!(
@@ -451,7 +511,7 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         &licence.map(|l| escape(l.name)).unwrap_or_default(),
     )
     .await;
-    let intro = format!(r#"{draft_note}<p class="byline">{byline}{downloads}</p>{buy}"#);
+    let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}</p>{buy}"#);
     let photos = designs::photos_html(pool, id).await;
     let edit = if mine {
         format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
@@ -527,6 +587,10 @@ struct Details<'a> {
     licence: &'a str,
     price: &'a str,
     can_sell: bool,
+    /// `laser` designs also take a material and a thickness.
+    kind: &'a str,
+    material: &'a str,
+    thickness: &'a str,
 }
 
 fn details_form(id: i64, f: &Details, problem: &str) -> String {
@@ -537,7 +601,28 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
         licence,
         price,
         can_sell,
+        kind,
+        material,
+        thickness,
     } = *f;
+    let made_for = if kind == "laser" {
+        let options: String = MATERIALS
+            .iter()
+            .map(|(id, name)| {
+                format!(
+                    r#"<option value="{id}"{}>{name}</option>"#,
+                    if *id == material { " selected" } else { "" }
+                )
+            })
+            .collect();
+        format!(
+            r#"<label>Material <small>(what it's made to cut)</small><select name="material"><option value="">Not given</option>{options}</select></label>
+<label>Thickness <small>(mm, optional)</small><input name="thickness" value="{}" inputmode="decimal" maxlength="8"></label>"#,
+            escape(thickness)
+        )
+    } else {
+        String::new()
+    };
     let problem = if problem.is_empty() {
         String::new()
     } else {
@@ -563,6 +648,7 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
 <label>Title<input name="title" value="{title}" required maxlength="{MAX_TITLE}"></label>
 <label>Description <small>(what it is, sizes, fabrics or materials, tips)</small><textarea name="description" rows="8" maxlength="{MAX_DESCRIPTION}">{description}</textarea></label>
 <label>Tags <small>(apart by commas, up to {MAX_TAGS}: flowers, christmas, coaster…)</small><input name="tags" value="{tags}" maxlength="400"></label>
+{made_for}
 <fieldset><legend>Licence: what people may do with what they make</legend>{choices}</fieldset>
 <label>Price <small>({price_note})</small><input name="price" value="{price}" inputmode="decimal" maxlength="10"></label>
 <button type="submit">Save</button>
@@ -610,6 +696,10 @@ pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(i
         dollars(d.price_cents).trim_start_matches('$').to_string()
     };
     let can_sell = selling::can_sell(&state, &pool, user.account_id).await;
+    let thickness = d
+        .thickness_mm
+        .map(|t| sizes::thickness_text(t).replace(" mm", ""))
+        .unwrap_or_default();
     private(
         "Design details · MakerFoundry",
         &details_form(
@@ -621,6 +711,9 @@ pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(i
                 licence: d.licence.as_deref().unwrap_or(""),
                 price: &price,
                 can_sell,
+                kind: &d.kind,
+                material: d.material.as_deref().unwrap_or(""),
+                thickness: &thickness,
             },
             "",
         ),
@@ -636,6 +729,8 @@ pub struct DetailsForm {
     tags: String,
     licence: String,
     price: String,
+    material: String,
+    thickness: String,
 }
 
 pub async fn save(
@@ -647,7 +742,7 @@ pub async fn save(
     if !same_origin(&headers) {
         return forbidden();
     }
-    let (user, pool, _) = match own(&state, &headers, id).await {
+    let (user, pool, d) = match own(&state, &headers, id).await {
         Ok(o) => o,
         Err(r) => return r,
     };
@@ -667,6 +762,9 @@ pub async fn save(
                     licence: &f.licence,
                     price: &f.price,
                     can_sell,
+                    kind: &d.kind,
+                    material: &f.material,
+                    thickness: &f.thickness,
                 },
                 why,
             ),
@@ -689,8 +787,23 @@ pub async fn save(
     if price > 0 && !can_sell {
         return again("To sell a design, first set up selling (Account › Selling). Until then, give it a price of 0.");
     }
+    // a laser design's material and thickness (an embroidery design has neither)
+    let (material, thickness) = if d.kind == "laser" {
+        let material = match f.material.as_str() {
+            "" => None,
+            m if sizes::material_name(m).is_some() => Some(m.to_string()),
+            _ => return again("Choose a material from the list."),
+        };
+        match sizes::check_thickness(&f.thickness) {
+            Ok(t) => (material, t),
+            Err(why) => return again(&why),
+        }
+    } else {
+        (None, None)
+    };
     let saved = sqlx::query(
         "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5, price_cents = $7,
+             material = $8, thickness_mm = $9,
              search = setweight(to_tsvector('english', $2), 'A')
                    || setweight(to_tsvector('english', array_to_string($4::text[], ' ')), 'B')
                    || setweight(to_tsvector('english', $3), 'C')
@@ -703,6 +816,8 @@ pub async fn save(
     .bind(&f.licence)
     .bind(user.account_id)
     .bind(price)
+    .bind(&material)
+    .bind(thickness)
     .execute(&pool)
     .await;
     match saved {
@@ -812,11 +927,20 @@ pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool, launched: bool) ->
         .map(|l| escape(l.name))
         .unwrap_or_else(|| "none yet".into());
     let details = format!(
-        r#"<h2>Listing</h2><dl class="facts"><div><dt>Title</dt><dd>{title}</dd></div><div><dt>Licence</dt><dd>{licence}</dd></div><div><dt>Price</dt><dd>{price}</dd></div><div><dt>Tags</dt><dd>{tags}</dd></div></dl><p><a href="/designs/{id}/edit">Edit details</a></p>"#,
+        r#"<h2>Listing</h2><dl class="facts"><div><dt>Title</dt><dd>{title}</dd></div><div><dt>Licence</dt><dd>{licence}</dd></div><div><dt>Price</dt><dd>{price}</dd></div>{made_for}<div><dt>Tags</dt><dd>{tags}</dd></div></dl><p><a href="/designs/{id}/edit">Edit details</a></p>"#,
         title = if d.title.is_empty() {
             "none yet".into()
         } else {
             escape(&d.title)
+        },
+        made_for = match fits_text(d) {
+            Some(t) if d.kind == "laser" => format!(
+                r#"<div><dt>Made for</dt><dd>{}</dd></div>"#,
+                escape(t.trim_start_matches("for "))
+            ),
+            Some(t) => format!(r#"<div><dt>Hoop</dt><dd>{}</dd></div>"#, escape(&t)),
+            None if d.kind == "laser" => r#"<div><dt>Made for</dt><dd>not given</dd></div>"#.to_string(),
+            None => String::new(),
         },
         price = if d.price_cents == 0 {
             "Free".to_string()
