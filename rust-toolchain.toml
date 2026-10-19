@@ -1,0 +1,5 @@
+# The toolchain the code is checked with, locally and in CI. Each Rust release adds clippy lints,
+# so bump it on purpose and fix what the new lints flag in the same commit.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]

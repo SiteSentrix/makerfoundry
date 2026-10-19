@@ -1,0 +1,47 @@
+# MakerFoundry's checks: on every push to main and every pull request, the gate contributors run
+# before committing, `cargo xtask ci` (fmt, clippy -D warnings, tests, assets), and a Docker build
+# of the image Railway runs.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  ci:
+    name: cargo xtask ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # The toolchain in rust-toolchain.toml; bump both together.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo xtask ci
+        run: cargo xtask ci
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker build
+        run: docker build -t makerfoundry .

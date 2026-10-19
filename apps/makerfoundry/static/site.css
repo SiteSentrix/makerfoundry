@@ -1,0 +1,57 @@
+/* MakerFoundry's stylesheet: hand-written, no framework. System fonts only (no font files). */
+:root {
+  --bg: #fbfaf7;
+  --fg: #1f2328;
+  --muted: #59606a;
+  --accent: #b4462a;
+  --card: #ffffff;
+  --line: #e4e0d8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --fg: #e9e7e3;
+    --muted: #a3a8b0;
+    --accent: #f08a6c;
+    --card: #1f2228;
+    --line: #33373e;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+a { color: var(--accent); }
+main, .top, .bottom { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 1rem; }
+main { flex: 1; }
+.top { padding-top: 1rem; padding-bottom: 1rem; }
+.brand {
+  display: inline-flex; align-items: center; gap: .5rem;
+  color: var(--fg); text-decoration: none; font-weight: 700; font-size: 1.25rem;
+}
+.brand .mark { color: var(--accent); }
+.hero { padding: 3rem 0 2rem; }
+.hero h1 { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.1; margin: 0 0 1rem; }
+.lead { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 0 1rem; }
+.soon {
+  display: inline-block; margin: .5rem 0 0; padding: .35rem .8rem;
+  border: 1px solid var(--line); border-radius: .75rem; background: var(--card); font-size: .95rem;
+}
+.kinds {
+  display: grid; gap: 1rem; padding-bottom: 3rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.kinds article {
+  background: var(--card); border: 1px solid var(--line); border-radius: .75rem; padding: 1.25rem;
+}
+.kinds h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+.kinds p { margin: 0; color: var(--muted); }
+.bottom { border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }

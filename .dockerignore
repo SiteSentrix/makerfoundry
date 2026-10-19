@@ -1,0 +1,5 @@
+target/
+plan/
+.git/
+.env
+*.log

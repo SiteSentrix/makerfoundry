@@ -1,6 +1,7 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-19. Idea and plan only; no code yet. Owner: Bruce Wattendorf (SiteSentrix).
+**Status:** 2026-10-19. MF-0 built (workspace, CI, `/health`, home page, Dockerfile); waiting on
+the owner's first Railway deploy (`docs/deploy.md`). Owner: Bruce Wattendorf (SiteSentrix).
 
 ## What it is
 A place, like Thingiverse for 3D prints, where makers find, share and sell files for their
@@ -68,7 +69,7 @@ Nobody may resell or share the files themselves.
 ## Milestones and task ids
 | Id | What | Done when |
 |---|---|---|
-| MF-0 | Workspace: Cargo workspace, CI (fmt, clippy -D warnings, tests), `/health`, a hello page deployed to Railway | the page answers on a Railway address |
+| MF-0 | Workspace: Cargo workspace, CI (fmt, clippy -D warnings, tests), `/health`, a hello page deployed to Railway | the page answers on a Railway address. **Code done 2026-10-19**; deploy is the owner's (`docs/deploy.md`) |
 | MF-1 | Accounts: sign up, sign in, sessions, password reset by email | a person can make an account |
 | MF-2 | Upload and preview: embroidery and laser files read, checked and drawn; photos; R2 storage | an uploaded PES shows its stitches |
 | MF-3 | Listings: design pages, browse, search, tags, seller pages; free downloads | a free design can be found and downloaded |
