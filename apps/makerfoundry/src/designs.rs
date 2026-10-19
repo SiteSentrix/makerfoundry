@@ -298,12 +298,14 @@ pub struct DesignRow {
     pub licence: Option<String>,
     pub downloads: i64,
     pub removed_reason: Option<String>,
+    /// 0 for a free design.
+    pub price_cents: i64,
 }
 
 pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads,
-                removed_reason
+                removed_reason, price_cents
          FROM mf_designs WHERE id = $1",
     )
     .bind(id)
@@ -324,6 +326,7 @@ pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::E
             licence: r.try_get("licence")?,
             downloads: r.try_get("downloads")?,
             removed_reason: r.try_get("removed_reason")?,
+            price_cents: r.try_get("price_cents")?,
         })
     })
     .transpose()
@@ -561,6 +564,16 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
     };
     if d.status == "published" {
         return manage_page(&state, &pool, &user, id, "Unpublish the design before deleting it.").await;
+    }
+    if crate::selling::has_sales(&pool, id).await {
+        return manage_page(
+            &state,
+            &pool,
+            &user,
+            id,
+            "People have bought this design, so it's kept for their downloads. It stays unpublished.",
+        )
+        .await;
     }
     let keys: Vec<(String, String)> =
         sqlx::query_as("SELECT photo_key, thumb_key FROM mf_design_photos WHERE design_id = $1")

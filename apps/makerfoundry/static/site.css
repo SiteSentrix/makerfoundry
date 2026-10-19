@@ -168,3 +168,6 @@ label.choice input { margin-top: .3rem; width: auto; }
 .prose li { margin: .25rem 0; }
 address { font-style: normal; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .75rem 1rem; }
 .bottom a[href="/dmca"] { margin-left: .4rem; }
+
+/* Selling: a card's price */
+.cards .price { font-weight: 600; }

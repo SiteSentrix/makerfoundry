@@ -23,6 +23,7 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+hmac = { workspace = true }
 getrandom = { workspace = true }
 sf-formats = { workspace = true }
 sf-core = { workspace = true }

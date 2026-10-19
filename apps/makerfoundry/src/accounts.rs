@@ -386,7 +386,8 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <p><a href="/designs">Your designs</a>: add a design file and photos of what it makes.</p>
 <p><a href="/account/maker">Your maker profile</a>: the name people see on your designs.</p>
 <p><a href="/preview">See your design</a>: upload an embroidery or laser file and see it drawn.</p>
-<p>Selling and your designs come here as MakerFoundry grows.</p>
+<p><a href="/library">Your library</a>: the designs you've bought.</p>
+<p><a href="/account/selling">Selling</a>: get paid for your designs, and <a href="/account/sales">your sales</a>.</p>
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
 </section>"#,

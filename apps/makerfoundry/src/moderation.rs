@@ -538,7 +538,7 @@ pub async fn counter(
 // ---------------------------------------------------------------- the admin queue
 
 /// The signed-in admin, or "not found" for anyone else (the queue isn't advertised).
-async fn admin(state: &AppState, headers: &HeaderMap) -> Result<(User, PgPool), Response> {
+pub(crate) async fn admin(state: &AppState, headers: &HeaderMap) -> Result<(User, PgPool), Response> {
     let (Some(user), Some(pool)) = (current_user(state, headers).await, state.db.clone()) else {
         return Err(not_found(false));
     };

@@ -15,10 +15,13 @@ pub mod limits;
 pub mod listings;
 pub mod makers;
 pub mod moderation;
+pub mod money;
 pub mod pages;
 pub mod photos;
 pub mod preview;
+pub mod selling;
 pub mod storage;
+pub mod stripe;
 
 use std::time::Duration;
 
@@ -47,9 +50,15 @@ const UPLOAD_LIMIT_BYTES: usize = laser::MAX_FILE_BYTES + 64 * 1024;
 /// A request that takes longer than this is answered with 408.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Scripts, frames, plug-ins and other origins are off; pages use only our own stylesheet.
+/// Scripts, frames, plug-ins and other origins are off; pages use only our own stylesheet. Forms
+/// post only here, and may be sent on to Stripe's checkout and set-up pages (browsers check
+/// `form-action` against a form's redirects too).
 const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; style-src 'self'; img-src 'self' data:; \
-     base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+     base-uri 'none'; form-action 'self' https://checkout.stripe.com https://connect.stripe.com; \
+     frame-ancestors 'none'";
+
+/// Stripe's events can be larger than a form.
+const WEBHOOK_LIMIT_BYTES: usize = 1024 * 1024;
 
 const STYLESHEET: &str = include_str!("../static/site.css");
 
@@ -67,6 +76,8 @@ pub struct AppState {
     pub admins: Vec<i64>,
     /// How often an address or an account may do things.
     pub limits: std::sync::Arc<limits::Limits>,
+    /// Stripe, for selling (MF-4); without it every design is free.
+    pub stripe: Option<stripe::Stripe>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -106,6 +117,15 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/reports/{rid}/takedown", post(moderation::takedown))
         .route("/admin/reports/{rid}/dismiss", post(moderation::dismiss))
         .route("/admin/reports/{rid}/restore", post(moderation::restore))
+        .route("/account/selling", get(selling::selling_page))
+        .route("/account/selling/start", post(selling::start))
+        .route("/account/selling/return", get(selling::returned))
+        .route("/account/selling/dashboard", post(selling::dashboard))
+        .route("/account/sales", get(selling::sales))
+        .route("/library", get(selling::library))
+        .route("/d/{id}/buy", post(selling::buy))
+        .route("/admin/orders", get(selling::orders))
+        .route("/admin/orders/{order}/refund", post(selling::refund))
         .fallback(not_found)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
     let uploads = Router::new()
@@ -116,9 +136,14 @@ pub fn app(state: AppState) -> Router {
         .route("/designs/new", get(designs::new_page).post(designs::upload))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
+    let webhooks = Router::new()
+        .route("/stripe/webhook", post(selling::webhook))
+        .layer(DefaultBodyLimit::max(WEBHOOK_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(WEBHOOK_LIMIT_BYTES));
     pages
         .merge(uploads)
         .merge(new_designs)
+        .merge(webhooks)
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

@@ -36,14 +36,16 @@ your bank details. You must be 18 or older and able to accept Stripe's terms
 
 ## 3. Prices
 
-You set each paid design's price in US dollars, from [OWNER: e.g. $1.00] to [OWNER: e.g. $200].
+You set each paid design's price in US dollars, from $1.00 to $200 [OWNER: confirm the range; it's
+what the site allows now].
 You can change it at any time; a change doesn't affect sales already made.
 
 ## 4. Our fee
 
-For each sale, MakerFoundry keeps a **platform fee** of [OWNER: e.g. 10% of the price, at least
-$0.30]. Stripe also takes its own card processing fee from the payment. You receive the rest.
-Each sale on your sales page shows the price, our fee, Stripe's fee and what you receive.
+For each sale, MakerFoundry keeps a **platform fee** of 10% of the price. The **card fee**
+(2.9% of the price + $0.30) also comes out of your share. Each is rounded to the nearest cent, and
+you receive the rest: for a $5.00 design, our fee is $0.50, the card fee $0.45, and you receive
+$4.05. Each sale on your sales page shows the price, our fee, the card fee and what you receive.
 
 We may change our fee with at least 30 days' notice by email; changes never apply to sales
 already made.
@@ -60,8 +62,8 @@ Form 1099-K where the law requires.
 
 ## 6. Getting paid
 
-Stripe pays you on its schedule (usually a few days after each sale) to the bank account you gave
-Stripe. [OWNER: whether new sellers' first payouts wait, e.g. 7 days.] We may ask Stripe to hold
+Stripe pays your earnings **once a month** (on the 1st, for the sales that have cleared by then)
+to the bank account you gave Stripe. [OWNER: whether new sellers' first payouts wait, e.g. 7 days.] We may ask Stripe to hold
 payouts while a refund, dispute or suspected fraud is being resolved.
 
 ## 7. Refunds and disputes

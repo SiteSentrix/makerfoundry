@@ -230,6 +230,11 @@ async fn site() -> Option<Site> {
 
 /// The test site, with `admins` (account ids: the stand-in service numbers accounts from 1000).
 async fn site_with(admins: Vec<i64>) -> Option<Site> {
+    site_full(admins, None).await
+}
+
+/// The test site, with `admins` and Stripe.
+async fn site_full(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe>) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
     let (url, fake) = fake_cloud().await;
@@ -240,6 +245,7 @@ async fn site_with(admins: Vec<i64>) -> Option<Site> {
         publishers: makerfoundry::listings::Publishers::Everyone,
         admins,
         limits: std::sync::Arc::default(),
+        stripe,
     });
     Some(Site {
         app,
@@ -529,6 +535,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
+        stripe: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -549,6 +556,7 @@ async fn without_a_database_nobody_can_sign_in() {
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
+        stripe: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -944,6 +952,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
+        stripe: None,
     });
     let s = Site {
         app,
@@ -1168,6 +1177,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         publishers: makerfoundry::listings::Publishers::Only(vec![]),
         admins: Vec::new(),
         limits: std::sync::Arc::default(),
+        stripe: None,
     });
     let s = Site {
         app,
@@ -1457,4 +1467,449 @@ async fn sessions_past_their_days_are_forgotten() {
         .unwrap();
     assert_eq!(makerfoundry::db::forget_old_sessions(&s.pool).await.unwrap(), 1);
     assert_eq!(s.sessions().await, 1, "the recent one stays");
+}
+
+// ---------------------------------------------------------------- MF-4: selling
+
+const STRIPE_KEY: &str = "sk_test_fake";
+const WEBHOOK_SECRET: &str = "whsec_fake";
+
+/// The stand-in Stripe's state.
+#[derive(Default)]
+struct StripeFake {
+    /// Express account → whether Stripe lets it take payments.
+    accounts: HashMap<String, bool>,
+    /// Idempotency key → the account made with it.
+    made: HashMap<String, String>,
+    /// Checkout Session → (its form, paid).
+    sessions: HashMap<String, (HashMap<String, String>, bool)>,
+    /// Every form posted, by path.
+    posts: Vec<(String, HashMap<String, String>)>,
+    refunds: Vec<HashMap<String, String>>,
+}
+
+type StripeShared = Arc<Mutex<StripeFake>>;
+
+/// A stand-in for Stripe's API (the few calls MakerFoundry makes, answered as
+/// https://docs.stripe.com/api says) → MakerFoundry's client for it, and its state.
+async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
+    use axum::Form;
+    use axum::extract::Path;
+    use axum::routing::get;
+    let shared: StripeShared = Arc::default();
+    let authorised = |h: &HeaderMap| token_of(h) == STRIPE_KEY;
+    let app = Router::new()
+        .route(
+            "/v1/accounts",
+            post(move |State(s): State<StripeShared>, h: HeaderMap, Form(f): Form<HashMap<String, String>>| async move {
+                assert!(authorised(&h));
+                let key = h.get("idempotency-key").unwrap().to_str().unwrap().to_string();
+                let mut st = s.lock().unwrap();
+                st.posts.push(("/v1/accounts".into(), f));
+                let n = st.made.len();
+                let id = st.made.entry(key).or_insert_with(|| format!("acct_test{n}")).clone();
+                st.accounts.entry(id.clone()).or_insert(false);
+                Json(json!({"id": id, "object": "account"}))
+            }),
+        )
+        .route(
+            "/v1/account_links",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                let url = format!("https://connect.stripe.com/setup/e/{}/x", f["account"]);
+                s.lock().unwrap().posts.push(("/v1/account_links".into(), f));
+                Json(json!({"object": "account_link", "url": url}))
+            }),
+        )
+        .route(
+            "/v1/accounts/{id}",
+            get(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
+                let on = s.lock().unwrap().accounts.get(&id).copied().unwrap_or(false);
+                Json(json!({"id": id, "details_submitted": true, "charges_enabled": on, "payouts_enabled": on}))
+            }),
+        )
+        .route(
+            "/v1/accounts/{id}/login_links",
+            post(|Path(id): Path<String>| async move {
+                Json(json!({"object": "login_link", "url": format!("https://connect.stripe.com/express/{id}")}))
+            }),
+        )
+        .route(
+            "/v1/checkout/sessions",
+            post(move |State(s): State<StripeShared>, h: HeaderMap, Form(f): Form<HashMap<String, String>>| async move {
+                assert!(authorised(&h));
+                let mut st = s.lock().unwrap();
+                let id = format!("cs_test_{}", st.sessions.len() + 1);
+                st.sessions.insert(id.clone(), (f.clone(), false));
+                st.posts.push(("/v1/checkout/sessions".into(), f));
+                Json(json!({"id": id, "url": format!("https://checkout.stripe.com/c/pay/{id}"), "payment_status": "unpaid"}))
+            }),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}",
+            get(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
+                let st = s.lock().unwrap();
+                let (f, paid) = st.sessions.get(&id).cloned().unwrap();
+                Json(session_json(&id, &f, paid))
+            }),
+        )
+        .route(
+            "/v1/refunds",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                s.lock().unwrap().refunds.push(f);
+                Json(json!({"id": "re_test_1", "object": "refund", "status": "succeeded"}))
+            }),
+        )
+        .with_state(shared.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let stripe = makerfoundry::stripe::Stripe::new(
+        &format!("http://{addr}"),
+        STRIPE_KEY,
+        vec![WEBHOOK_SECRET.into()],
+        "https://makerfoundry.test",
+    )
+    .unwrap();
+    (stripe, shared)
+}
+
+/// A Checkout Session as Stripe describes it, made from the form that made it.
+fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
+    json!({
+        "id": id,
+        "object": "checkout.session",
+        "payment_status": if paid { "paid" } else { "unpaid" },
+        "amount_total": f["line_items[0][price_data][unit_amount]"].parse::<i64>().unwrap(),
+        "currency": "usd",
+        "payment_intent": format!("pi_{id}"),
+        "metadata": {"order": f["metadata[order]"]},
+    })
+}
+
+impl Site {
+    /// A Stripe event sent to the webhook, signed with `secret`.
+    async fn stripe_event(&self, secret: &str, id: &str, kind: &str, object: Value) -> Answer {
+        let body = json!({"id": id, "object": "event", "type": kind, "data": {"object": object}}).to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let sig = makerfoundry::stripe::signature(secret, now, body.as_bytes());
+        self.send(
+            Request::post("/stripe/webhook")
+                .header(header::HOST, HOST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("stripe-signature", format!("t={now},v1={sig}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+    }
+
+    async fn scalar(&self, sql: &str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(&self.pool).await.unwrap()
+    }
+
+    async fn sign_up(&self, email: &str) -> String {
+        self.post(
+            "/signup",
+            &format!("email={email}&password=fire+truck+1&again=fire+truck+1"),
+            None,
+        )
+        .await
+        .cookie()
+    }
+}
+
+/// A seller (account 1000) whose Stripe account can take payments, with a published design
+/// priced $5 → the site, the stand-in Stripe, the seller's cookie and the design.
+async fn selling_site(admins: Vec<i64>) -> Option<(Site, StripeShared, String, i64)> {
+    let (stripe, st) = fake_stripe().await;
+    let s = site_full(admins, Some(stripe)).await?;
+    let seller = s.sign_up("sam%40example.com").await;
+    let id = published(&s, &seller, "sams-shop", "Fox+Patch").await;
+    // a price needs selling set up first
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Fox+Patch&licence=personal&price=5",
+            Some(&seller),
+        )
+        .await;
+    assert!(r.body.contains("first set up selling"), "{}", r.body);
+    // setting up: a Stripe Express account, paid monthly, then Stripe's own pages
+    let r = s.post("/account/selling/start", "", Some(&seller)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(
+        r.location()
+            .starts_with("https://connect.stripe.com/setup/e/acct_test0"),
+        "{}",
+        r.location()
+    );
+    {
+        let f = st.lock().unwrap();
+        let made = &f.posts.iter().find(|(p, _)| p == "/v1/accounts").unwrap().1;
+        assert_eq!(made["type"], "express");
+        assert_eq!(made["settings[payouts][schedule][interval]"], "monthly");
+    }
+    // pressed again: the same account
+    s.post("/account/selling/start", "", Some(&seller)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_sellers").await, 1);
+    // back from Stripe, not finished yet
+    assert_eq!(
+        s.get("/account/selling/return", Some(&seller)).await.location(),
+        "/account/selling"
+    );
+    assert!(
+        s.get("/account/selling", Some(&seller))
+            .await
+            .body
+            .contains("Carry on with Stripe")
+    );
+    // Stripe says it's done, by a webhook from the connected accounts' endpoint
+    st.lock().unwrap().accounts.insert("acct_test0".into(), true);
+    let account = json!({"id": "acct_test0", "object": "account", "details_submitted": true, "charges_enabled": true, "payouts_enabled": true});
+    let r = s
+        .stripe_event("whsec_wrong", "evt_acct_0", "account.updated", account.clone())
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert!(
+        s.get("/account/selling", Some(&seller))
+            .await
+            .body
+            .contains("Carry on with Stripe")
+    );
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_acct_1", "account.updated", account)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        s.get("/account/selling", Some(&seller))
+            .await
+            .body
+            .contains("You can sell")
+    );
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Fox+Patch&licence=personal&price=%245.00",
+            Some(&seller),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    Some((s, st, seller, id))
+}
+
+#[tokio::test]
+async fn a_design_is_sold_paid_for_delivered_and_refunded() {
+    let Some((s, st, seller, id)) = selling_site(vec![1002]).await else {
+        return;
+    };
+    let page = s.get(&format!("/d/{id}"), None).await.body;
+    assert!(page.contains("Sign in to buy · $5"), "{page}");
+    let buyer = s.sign_up("bea%40example.com").await;
+    let admin = s.sign_up("ada%40example.com").await;
+    // not bought: no file, just the page with the button
+    let r = s.get(&format!("/d/{id}/download"), Some(&buyer)).await;
+    assert_eq!(r.location(), format!("/d/{id}/fox-patch"));
+    assert!(s.get(&format!("/d/{id}"), Some(&buyer)).await.body.contains("Buy · $5"));
+    // buying: an order with its amounts fixed, then Stripe's checkout page
+    let r = s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "https://checkout.stripe.com/c/pay/cs_test_1");
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(form["line_items[0][price_data][unit_amount]"], "500");
+    // 10% ($0.50) and the card fee ($0.45) to MakerFoundry, $4.05 to the seller's Stripe account
+    assert_eq!(form["payment_intent_data[application_fee_amount]"], "95");
+    assert_eq!(form["payment_intent_data[transfer_data][destination]"], "acct_test0");
+    let order = form["metadata[order]"].clone();
+    // back from Stripe before the payment is confirmed: no download yet
+    let lib = s.get(&format!("/library?order={order}"), Some(&buyer)).await.body;
+    assert!(lib.contains("Waiting for the payment"), "{lib}");
+    assert!(
+        !s.get(&format!("/d/{id}/download"), Some(&buyer))
+            .await
+            .location()
+            .contains("/files/")
+    );
+    // a forged event changes nothing
+    let paid = session_json("cs_test_1", &form, true);
+    let r = s
+        .stripe_event("whsec_wrong", "evt_1", "checkout.session.completed", paid.clone())
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 0);
+    // a session paid for less than the price changes nothing
+    let mut short = paid.clone();
+    short["amount_total"] = json!(100);
+    assert_eq!(
+        s.stripe_event(WEBHOOK_SECRET, "evt_short", "checkout.session.completed", short)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 0);
+    // Stripe's signed event: paid, and the sale in the ledger, to the cent
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_1", "checkout.session.completed", paid.clone())
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let ledger: Vec<(i64, String, i64)> = sqlx::query_as("SELECT account_id, kind, cents FROM mf_ledger ORDER BY kind")
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ledger,
+        [
+            (0, "fee".to_string(), 50),
+            (0, "processing".to_string(), 45),
+            (1000, "seller".to_string(), 405)
+        ]
+    );
+    // sent again, or as another event for the same payment: handled once
+    s.stripe_event(WEBHOOK_SECRET, "evt_1", "checkout.session.completed", paid.clone())
+        .await;
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_2",
+        "checkout.session.async_payment_succeeded",
+        paid.clone(),
+    )
+    .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_stripe_events").await, 4);
+    // delivered: the buyer downloads it, from their library too
+    let r = s.get(&format!("/d/{id}/download"), Some(&buyer)).await;
+    assert!(r.location().contains("/files/"), "{}", r.location());
+    assert!(
+        s.get(&format!("/d/{id}"), Some(&buyer))
+            .await
+            .body
+            .contains("You bought this")
+    );
+    assert!(
+        s.get("/library", Some(&buyer))
+            .await
+            .body
+            .contains(&format!(r#"href="/d/{id}/download""#))
+    );
+    // buying again goes to the library
+    assert_eq!(
+        s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await.location(),
+        "/library"
+    );
+    // the seller's sales
+    let sales = s.get("/account/sales", Some(&seller)).await.body;
+    assert!(
+        sales.contains("$5 − fee $0.50 − card fee $0.45 = <strong>$4.05</strong>"),
+        "{sales}"
+    );
+    // unpublished, it's still the buyer's; and it can't be deleted
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&seller)).await;
+    assert!(
+        s.get(&format!("/d/{id}/download"), Some(&buyer))
+            .await
+            .location()
+            .contains("/files/")
+    );
+    let r = s.post(&format!("/designs/{id}/delete"), "", Some(&seller)).await;
+    assert!(r.body.contains("People have bought this design"), "{}", r.body);
+    // an admin refunds it in full: the sale reversed in the ledger, and no more download
+    assert_eq!(s.get("/admin/orders", Some(&buyer)).await.status, StatusCode::NOT_FOUND);
+    let r = s.post(&format!("/admin/orders/{order}/refund"), "", Some(&admin)).await;
+    assert!(r.body.contains("refunded"), "{}", r.body);
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.refunds[0]["payment_intent"], "pi_cs_test_1");
+        assert_eq!(f.refunds[0]["reverse_transfer"], "true");
+        assert_eq!(f.refunds[0]["refund_application_fee"], "true");
+    }
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 6);
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 0);
+    // Stripe's own word of the refund afterwards changes nothing more
+    let charge = json!({"id": "ch_1", "object": "charge", "payment_intent": "pi_cs_test_1", "refunded": true});
+    assert_eq!(
+        s.stripe_event(WEBHOOK_SECRET, "evt_3", "charge.refunded", charge)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 6);
+    assert!(
+        !s.get(&format!("/d/{id}/download"), Some(&buyer))
+            .await
+            .location()
+            .contains("/files/")
+    );
+    assert!(s.get("/library", Some(&buyer)).await.body.contains("Refunded"));
+    assert!(
+        s.get("/account/sales", Some(&seller))
+            .await
+            .body
+            .contains("<dd>$0</dd>")
+    );
+}
+
+#[tokio::test]
+async fn coming_back_from_stripe_delivers_without_waiting_for_the_webhook() {
+    let Some((s, st, seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let buyer = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    // the seller can't buy their own; someone else can't see the buyer's order
+    assert_eq!(
+        s.post(&format!("/d/{id}/buy"), "", Some(&seller)).await.location(),
+        format!("/d/{id}")
+    );
+    let order = st.lock().unwrap().sessions["cs_test_1"].0["metadata[order]"].clone();
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = true;
+    s.get(&format!("/library?order={order}"), Some(&seller)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'paid'").await,
+        0
+    );
+    let lib = s.get(&format!("/library?order={order}"), Some(&buyer)).await.body;
+    assert!(lib.contains(&format!(r#"href="/d/{id}/download""#)), "{lib}");
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE reason = 'sale'")
+            .await,
+        500
+    );
+    // and the webhook arriving later adds nothing
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_9",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, true),
+    )
+    .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 3);
+}
+
+#[tokio::test]
+async fn without_stripe_every_design_is_free() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    let id = published(&s, &cookie, "anns", "Rose").await;
+    assert!(
+        s.get("/account/selling", Some(&cookie))
+            .await
+            .body
+            .contains("isn't switched on")
+    );
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Rose&licence=personal&price=3",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("first set up selling"), "{}", r.body);
+    assert_eq!(
+        s.post("/stripe/webhook", "{}", None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(s.get(&format!("/d/{id}"), None).await.body.contains("Download free"));
 }

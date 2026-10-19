@@ -23,6 +23,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Session ids: random bytes, kept only as their SHA-256.
 sha2 = "0.10"
+# Stripe webhook signatures: HMAC-SHA256 (MIT OR Apache-2.0).
+hmac = "0.12"
 getrandom = "0.3"
 # SVG laser files: parsed and resolved (units, transforms, viewBox) by usvg, Apache-2.0 OR MIT. No
 # default features: no fonts (text isn't drawn), and no svgz (gzip inside an upload is a bomb risk).

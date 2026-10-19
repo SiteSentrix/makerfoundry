@@ -76,6 +76,18 @@ async fn main() -> ExitCode {
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
         .collect();
+    let stripe = match makerfoundry::stripe::Stripe::from_env(|k| std::env::var(k).ok()) {
+        Ok(stripe) => stripe,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match &stripe {
+        None => eprintln!("no STRIPE_SECRET_KEY: every design is free"),
+        Some(s) if !s.test_mode() => eprintln!("Stripe: live mode"),
+        Some(_) => eprintln!("Stripe: test mode"),
+    }
     let limits = std::sync::Arc::new(makerfoundry::limits::Limits::default());
     let state = makerfoundry::AppState {
         cloud,
@@ -84,6 +96,7 @@ async fn main() -> ExitCode {
         publishers,
         admins,
         limits,
+        stripe,
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)

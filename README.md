@@ -13,7 +13,9 @@ uploaded embroidery file is drawn stitch by stitch, and an SVG, DXF or PDF laser
 (`/preview`, signed in); a maker keeps designs with photos as drafts (`/designs`) 
 in Cloudflare R2. **MF-3** (listings) built: maker pages, design details and licences,
 publishing, public design pages with free downloads, browse and search; publishing opens at the
-launch. **MF-5** (safety) built: reporting, the copyright (DMCA) process, an admin queue for
+launch. **MF-4** (selling) built: sellers set up Stripe payouts (monthly), designs get a price,
+buyers pay on Stripe Checkout and find their designs in a library; MakerFoundry keeps 10% and the
+card fee, every sale and refund in a ledger; waiting for the Stripe test keys. **MF-5** (safety) built: reporting, the copyright (DMCA) process, an admin queue for
 takedowns, and rate limits. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop

@@ -17,7 +17,9 @@ use crate::accounts::{User, current_user, forbidden, private, same_origin};
 use crate::designs::{self, DesignRow};
 use crate::licences::{self, LICENCES};
 use crate::makers;
+use crate::money::dollars;
 use crate::pages::{escape, page};
+use crate::selling;
 
 pub const MAX_TITLE: usize = 100;
 pub const MAX_DESCRIPTION: usize = 5000;
@@ -123,11 +125,12 @@ pub struct Card {
     pub photo: Option<i64>,
     pub maker: String,
     pub downloads: i64,
+    pub price: i64,
 }
 
 pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     let rows = sqlx::query(
-        "SELECT d.id, d.title, d.kind, d.format, d.downloads, m.name AS maker,
+        "SELECT d.id, d.title, d.kind, d.format, d.downloads, d.price_cents, m.name AS maker,
                 (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1) AS photo
          FROM mf_designs d JOIN mf_makers m ON m.account_id = d.account_id
          WHERE d.status = 'published'
@@ -161,6 +164,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
                     photo: r.try_get("photo").ok()?,
                     maker: r.try_get("maker").ok()?,
                     downloads: r.try_get("downloads").ok()?,
+                    price: r.try_get("price_cents").ok()?,
                 })
             })
             .collect(),
@@ -187,7 +191,7 @@ pub fn cards_html(cards: &[Card]) -> String {
                 None => r#"<span class="muted">No photo</span>"#.to_string(),
             };
             format!(
-                r#"<li><a href="/d/{id}/{slug}"><span class="thumb">{picture}</span><strong>{title}</strong><span class="muted">by {maker} · {kind}, {format}{downloads}</span></a></li>"#,
+                r#"<li><a href="/d/{id}/{slug}"><span class="thumb">{picture}</span><strong>{title}</strong><span class="muted">by {maker} · {kind}, {format}{downloads}</span><span class="price">{price}</span></a></li>"#,
                 id = c.id,
                 slug = slug(&c.title),
                 title = escape(&c.title),
@@ -199,6 +203,7 @@ pub fn cards_html(cards: &[Card]) -> String {
                     1 => " · 1 download".to_string(),
                     n => format!(" · {n} downloads"),
                 },
+                price = if c.price == 0 { "Free".to_string() } else { dollars(c.price) },
             )
         })
         .collect();
@@ -418,11 +423,16 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         format!(r#"<ul class="tags">{tags}</ul>"#)
     };
-    let intro = format!(
-        r#"{draft_note}<p class="byline">{byline}{downloads}</p>
-<p class="actions"><a class="button" href="/d/{id}/download">Download free</a> <span class="muted">{licence_name}</span></p>"#,
-        licence_name = licence.map(|l| escape(l.name)).unwrap_or_default(),
-    );
+    let buy = selling::buy_html(
+        &state,
+        pool,
+        viewer.as_ref(),
+        id,
+        d.price_cents,
+        &licence.map(|l| escape(l.name)).unwrap_or_default(),
+    )
+    .await;
+    let intro = format!(r#"{draft_note}<p class="byline">{byline}{downloads}</p>{buy}"#);
     let photos = designs::photos_html(pool, id).await;
     let edit = if mine {
         format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
@@ -446,16 +456,32 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     }
 }
 
-/// A published design's file (or a draft's, for its maker): counted, then a short-lived link.
+/// A design's file, by a short-lived link: a free published design's for anyone, a paid one's for
+/// the people who bought it (even once it's unpublished, unless it was taken down), and any for its
+/// maker and the admins. Downloads of published designs are counted.
 pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
     let viewer = current_user(&state, &headers).await;
     let (Some(pool), Some(storage)) = (state.db.as_ref(), state.storage.as_ref()) else {
         return not_found(viewer.is_some());
     };
-    let d = match designs::design(pool, id).await {
-        Ok(Some(d)) if visible(&d, viewer.as_ref(), &state.admins) => d,
-        _ => return not_found(viewer.is_some()),
+    let Ok(Some(d)) = designs::design(pool, id).await else {
+        return not_found(viewer.is_some());
     };
+    let staff = viewer
+        .as_ref()
+        .is_some_and(|u| u.account_id == d.account_id || state.admins.contains(&u.account_id));
+    let buyer = match &viewer {
+        Some(u) if d.status != "removed" && !staff => selling::bought(pool, u.account_id, id).await,
+        _ => false,
+    };
+    let seen = visible(&d, viewer.as_ref(), &state.admins) || buyer;
+    if !seen {
+        return not_found(viewer.is_some());
+    }
+    if d.price_cents > 0 && !staff && !buyer {
+        // not bought: the page with the button to buy it
+        return Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response();
+    }
     if d.status == "published" {
         let _ = sqlx::query("UPDATE mf_designs SET downloads = downloads + 1 WHERE id = $1")
             .bind(id)
@@ -474,7 +500,25 @@ pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id
 
 // ---------------------------------------------------------------- details and publishing
 
-fn details_form(id: i64, title: &str, description: &str, tags: &str, licence: &str, problem: &str) -> String {
+/// What a design's details form shows.
+struct Details<'a> {
+    title: &'a str,
+    description: &'a str,
+    tags: &'a str,
+    licence: &'a str,
+    price: &'a str,
+    can_sell: bool,
+}
+
+fn details_form(id: i64, f: &Details, problem: &str) -> String {
+    let Details {
+        title,
+        description,
+        tags,
+        licence,
+        price,
+        can_sell,
+    } = *f;
     let problem = if problem.is_empty() {
         String::new()
     } else {
@@ -501,6 +545,7 @@ fn details_form(id: i64, title: &str, description: &str, tags: &str, licence: &s
 <label>Description <small>(what it is, sizes, fabrics or materials, tips)</small><textarea name="description" rows="8" maxlength="{MAX_DESCRIPTION}">{description}</textarea></label>
 <label>Tags <small>(apart by commas, up to {MAX_TAGS}: flowers, christmas, coaster…)</small><input name="tags" value="{tags}" maxlength="400"></label>
 <fieldset><legend>Licence: what people may do with what they make</legend>{choices}</fieldset>
+<label>Price <small>({price_note})</small><input name="price" value="{price}" inputmode="decimal" maxlength="10"></label>
 <button type="submit">Save</button>
 </form>
 <p><a href="/designs/{id}">Back to the design</a></p>
@@ -508,6 +553,12 @@ fn details_form(id: i64, title: &str, description: &str, tags: &str, licence: &s
         title = escape(title),
         description = escape(description),
         tags = escape(tags),
+        price = escape(price),
+        price_note = if can_sell {
+            "US dollars, from $1 to $200; 0 shares it free. You get the price less 10% and the card fee."
+        } else {
+            r#"0 shares it free. To sell it, first <a href="/account/selling">set up selling</a>."#
+        },
     )
 }
 
@@ -522,7 +573,7 @@ async fn own(state: &AppState, headers: &HeaderMap, id: i64) -> Result<(User, Pg
 }
 
 pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
-    let (_, _, d) = match own(&state, &headers, id).await {
+    let (user, pool, d) = match own(&state, &headers, id).await {
         Ok(o) => o,
         Err(r) => return r,
     };
@@ -534,14 +585,24 @@ pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(i
     } else {
         d.title.clone()
     };
+    let price = if d.price_cents == 0 {
+        "0".to_string()
+    } else {
+        dollars(d.price_cents).trim_start_matches('$').to_string()
+    };
+    let can_sell = selling::can_sell(&state, &pool, user.account_id).await;
     private(
         "Design details · MakerFoundry",
         &details_form(
             id,
-            &title,
-            &d.description,
-            &d.tags.join(", "),
-            d.licence.as_deref().unwrap_or(""),
+            &Details {
+                title: &title,
+                description: &d.description,
+                tags: &d.tags.join(", "),
+                licence: d.licence.as_deref().unwrap_or(""),
+                price: &price,
+                can_sell,
+            },
             "",
         ),
         true,
@@ -555,6 +616,7 @@ pub struct DetailsForm {
     description: String,
     tags: String,
     licence: String,
+    price: String,
 }
 
 pub async fn save(
@@ -573,10 +635,22 @@ pub async fn save(
     let title = f.title.split_whitespace().collect::<Vec<_>>().join(" ");
     let description = f.description.trim().replace("\r\n", "\n");
     let tags = tidy_tags(&f.tags);
+    let can_sell = selling::can_sell(&state, &pool, user.account_id).await;
     let again = |why: &str| {
         private(
             "Design details · MakerFoundry",
-            &details_form(id, &title, &description, &f.tags, &f.licence, why),
+            &details_form(
+                id,
+                &Details {
+                    title: &title,
+                    description: &description,
+                    tags: &f.tags,
+                    licence: &f.licence,
+                    price: &f.price,
+                    can_sell,
+                },
+                why,
+            ),
             true,
         )
     };
@@ -589,8 +663,15 @@ pub async fn save(
     if licences::find(&f.licence).is_none() {
         return again("Choose a licence.");
     }
+    let price = match selling::check_price(&f.price) {
+        Ok(p) => p,
+        Err(why) => return again(&why),
+    };
+    if price > 0 && !can_sell {
+        return again("To sell a design, first set up selling (Account › Selling). Until then, give it a price of 0.");
+    }
     let saved = sqlx::query(
-        "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5,
+        "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5, price_cents = $7,
              search = setweight(to_tsvector('english', $2), 'A')
                    || setweight(to_tsvector('english', array_to_string($4::text[], ' ')), 'B')
                    || setweight(to_tsvector('english', $3), 'C')
@@ -602,6 +683,7 @@ pub async fn save(
     .bind(&tags)
     .bind(&f.licence)
     .bind(user.account_id)
+    .bind(price)
     .execute(&pool)
     .await;
     match saved {
@@ -642,6 +724,8 @@ pub async fn publish(
         Some("Set up your maker profile first: it's the name people see on your designs.")
     } else if d.title.is_empty() || d.licence.is_none() {
         Some("Give the design a title and a licence first (Edit details).")
+    } else if d.price_cents > 0 && !selling::can_sell(&state, &pool, user.account_id).await {
+        Some("To sell this design, finish setting up selling first (Account › Selling), or make it free.")
     } else if f.confirm != "yes" {
         Some("Confirm that the design is yours to share.")
     } else {
@@ -700,11 +784,16 @@ pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool) -> String {
         .map(|l| escape(l.name))
         .unwrap_or_else(|| "none yet".into());
     let details = format!(
-        r#"<h2>Listing</h2><dl class="facts"><div><dt>Title</dt><dd>{title}</dd></div><div><dt>Licence</dt><dd>{licence}</dd></div><div><dt>Tags</dt><dd>{tags}</dd></div></dl><p><a href="/designs/{id}/edit">Edit details</a></p>"#,
+        r#"<h2>Listing</h2><dl class="facts"><div><dt>Title</dt><dd>{title}</dd></div><div><dt>Licence</dt><dd>{licence}</dd></div><div><dt>Price</dt><dd>{price}</dd></div><div><dt>Tags</dt><dd>{tags}</dd></div></dl><p><a href="/designs/{id}/edit">Edit details</a></p>"#,
         title = if d.title.is_empty() {
             "none yet".into()
         } else {
             escape(&d.title)
+        },
+        price = if d.price_cents == 0 {
+            "Free".to_string()
+        } else {
+            dollars(d.price_cents)
         },
         tags = if d.tags.is_empty() {
             "none".into()
