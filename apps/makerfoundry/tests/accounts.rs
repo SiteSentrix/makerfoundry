@@ -3287,3 +3287,141 @@ async fn a_maker_downloads_their_data_and_deletes_it_and_buyers_keep_their_desig
     // Bea's own things are untouched
     assert!(s.get(&format!("/d/{cat}"), None).await.status == StatusCode::OK);
 }
+
+// ---------------------------------------------------------------- everything people type is escaped
+
+#[tokio::test]
+async fn hostile_text_in_every_field_never_reaches_a_page_as_html() {
+    let Some(s) = site_with(vec![1002]).await else { return };
+    const X: &str = "%3Cscript%3Ex()%3C%2Fscript%3E%22%27";
+    let eve = s.sign_up("eve%40example.com").await;
+    let bob = s.sign_up("bob%40example.com").await;
+    let ada = s.sign_up("ada%40example.com").await;
+    // a design whose file name, title, description, tags, maker name and bio are all script
+    let r = s
+        .send(multipart(
+            "/designs/new",
+            &[
+                ("file", "<script>x()</script>.pes", sample(sf_formats::Format::Pes)),
+                ("photos", "p.jpg", photo_with_location()),
+            ],
+            &eve,
+        ))
+        .await;
+    let id = design_id(r.location());
+    s.post("/account/maker", &format!("name={X}&handle=eve&bio={X}"), Some(&eve))
+        .await;
+    s.post(
+        &format!("/designs/{id}/edit"),
+        &format!("title={X}&description={X}&tags={X}&licence=personal&price=0"),
+        Some(&eve),
+    )
+    .await;
+    s.post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&eve))
+        .await;
+    let r = s
+        .send(multipart(
+            &format!("/designs/{id}/files"),
+            &[("file", "<script>.dst", sample(sf_formats::Format::Dst))],
+            &eve,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    // a collection, a comment, a make and reports, all script
+    s.post("/collections", &format!("name={X}&public=yes"), Some(&eve))
+        .await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_collections")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/d/{id}/save"), &format!("collection={cid}"), Some(&eve))
+        .await;
+    s.post("/account/maker", &format!("name={X}&handle=bob"), Some(&bob))
+        .await;
+    say(&s, id, &bob, X).await;
+    s.send(multipart(
+        &format!("/d/{id}/makes"),
+        &[
+            ("photo", "a.jpg", photo_with_location()),
+            ("note", "", b"<script>x()</script>".to_vec()),
+            ("confirm", "", b"yes".to_vec()),
+        ],
+        &bob,
+    ))
+    .await;
+    let mid: i64 = sqlx::query_scalar("SELECT id FROM mf_makes")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let comment: i64 = sqlx::query_scalar("SELECT id FROM mf_comments")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(
+        &format!("/d/{id}/report"),
+        &format!("reason=other&details={X}&email={X}"),
+        None,
+    )
+    .await;
+    s.post(
+        &format!("/makes/{mid}/report"),
+        &format!("reason=other&details={X}"),
+        None,
+    )
+    .await;
+    s.post(
+        &format!("/comments/{comment}/report"),
+        &format!("reason=other&details={X}"),
+        None,
+    )
+    .await;
+    s.post(
+        "/dmca/notice",
+        &format!("name={X}&email=a%40b.c&address={X}&phone={X}&original={X}&designs=%2Fd%2F{id}&good_faith=yes&accurate=yes&signature={X}"),
+        None,
+    )
+    .await;
+    // a report of the design, the make and the comment, and a copyright notice
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_reports").await, 4);
+    // forms sent back with a problem show what was typed, escaped
+    let again = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            &format!("title={X}&licence=nope"),
+            Some(&eve),
+        )
+        .await;
+    let signup = s.post("/signup", &format!("email={X}&password=a&again=b"), None).await;
+    let mut pages = vec![again.body, signup.body];
+    for path in [
+        "/".to_string(),
+        "/browse".into(),
+        format!("/browse?q={X}&tag={X}"),
+        format!("/d/{id}"),
+        format!("/designs/{id}"),
+        format!("/designs/{id}/edit"),
+        "/designs".into(),
+        "/makers/eve".into(),
+        format!("/collections/{cid}"),
+        "/collections".into(),
+        format!("/makes/{mid}/report"),
+        format!("/comments/{comment}/report"),
+        "/admin".into(),
+        "/account".into(),
+        "/following".into(),
+        "/library".into(),
+        "/account/sales".into(),
+    ] {
+        for who in [None, Some(&eve), Some(&bob), Some(&ada)] {
+            pages.push(s.get(&path, who.map(String::as_str)).await.body);
+        }
+    }
+    let raw = pages.iter().filter(|p| p.contains("<script")).count();
+    assert_eq!(raw, 0, "{}", pages.iter().find(|p| p.contains("<script")).unwrap());
+    // and it was all there, escaped
+    assert!(
+        pages
+            .iter()
+            .any(|p| p.contains("&lt;script&gt;x()&lt;/script&gt;&quot;&#39;"))
+    );
+}
