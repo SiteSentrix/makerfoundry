@@ -212,3 +212,7 @@ a.button.secondary { background: transparent; color: var(--fg); border: 1px soli
 .add-make summary { cursor: pointer; color: var(--accent); font-weight: 600; margin-bottom: .6rem; }
 .report-make { display: inline-block; margin-top: .25rem; font-size: .85rem; }
 img.reported { max-width: 12rem; height: auto; border-radius: .5rem; border: 1px solid var(--line); }
+
+/* Following makers */
+.follow { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: -.4rem 0 1rem; }
+.follow button { padding: .45rem 1rem; }

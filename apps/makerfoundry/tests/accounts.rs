@@ -2989,3 +2989,64 @@ async fn a_reported_make_is_taken_down_from_the_admin_queue() {
         StatusCode::NOT_FOUND
     );
 }
+
+// ---------------------------------------------------------------- MF-13: following makers
+
+#[tokio::test]
+async fn following_a_maker_shows_their_new_designs() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &ann, "anns", "Rose").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    let owl = published(&s, &cal, "cals", "Owl").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    assert!(s.get("/makers/anns", None).await.body.contains("Sign in to follow"));
+    assert!(
+        s.get("/following", Some(&bea))
+            .await
+            .body
+            .contains("don't follow any makers")
+    );
+    // Bea follows Ann (twice is once); Ann can't follow herself
+    assert_eq!(
+        s.post("/makers/anns/follow", "", Some(&bea)).await.location(),
+        "/makers/anns"
+    );
+    s.post("/makers/anns/follow", "", Some(&bea)).await;
+    s.post("/makers/anns/follow", "", Some(&ann)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_follows").await, 1);
+    let page = s.get("/makers/anns", Some(&bea)).await.body;
+    assert!(
+        page.contains("1 follower") && page.contains("/makers/anns/unfollow"),
+        "{page}"
+    );
+    assert!(!s.get("/makers/anns", Some(&ann)).await.body.contains("/follow\""));
+    // her Following page: Ann's designs, not Cal's
+    let feed = s.get("/following", Some(&bea)).await.body;
+    assert!(
+        feed.contains(&format!("/d/{rose}/")) && !feed.contains(&format!("/d/{owl}/")),
+        "{feed}"
+    );
+    assert!(feed.contains(r#"<a href="/makers/anns">Maker</a>"#));
+    assert_eq!(s.get("/following", None).await.location(), "/signin?next=/following");
+    // a form from elsewhere, or a maker who isn't there, changes nothing
+    let mut req = Request::post("/makers/cals/follow").header(header::HOST, HOST);
+    req = req
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &bea);
+    assert_eq!(
+        s.send(req.body(Body::empty()).unwrap()).await.status,
+        StatusCode::FORBIDDEN
+    );
+    s.post("/makers/nobody-here/follow", "", Some(&bea)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_follows").await, 1);
+    // unfollowed
+    s.post("/makers/anns/unfollow", "", Some(&bea)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_follows").await, 0);
+    assert!(
+        s.get("/following", Some(&bea))
+            .await
+            .body
+            .contains("don't follow any makers")
+    );
+}

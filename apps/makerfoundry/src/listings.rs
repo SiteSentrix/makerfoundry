@@ -124,6 +124,8 @@ pub struct Filter {
     pub most_saved: bool,
     /// Designs in this collection (`collections`).
     pub collection: Option<i64>,
+    /// Designs by the makers this account follows (`follows`).
+    pub followed_by: Option<i64>,
     pub page: i64,
 }
 
@@ -154,6 +156,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
                 AND ((d.width_mm <= $9 AND d.height_mm <= $10) OR (d.width_mm <= $10 AND d.height_mm <= $9))))
            AND ($11::text IS NULL OR (d.kind = 'laser' AND d.material = $11))
            AND ($12::bigint IS NULL OR d.id IN (SELECT design_id FROM mf_collection_items WHERE collection_id = $12))
+           AND ($14::bigint IS NULL OR d.account_id IN (SELECT maker_account FROM mf_follows WHERE follower_account = $14))
          ORDER BY CASE WHEN $13 THEN (SELECT count(DISTINCT c.account_id) FROM mf_collection_items i
                                       JOIN mf_collections c ON c.id = i.collection_id WHERE i.design_id = d.id) END DESC NULLS LAST,
                   CASE WHEN $5 THEN d.downloads END DESC NULLS LAST,
@@ -174,6 +177,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     .bind(&f.material)
     .bind(f.collection)
     .bind(f.most_saved)
+    .bind(f.followed_by)
     .fetch_all(pool)
     .await;
     match rows {
@@ -329,6 +333,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
         popular,
         most_saved,
         collection: None,
+        followed_by: None,
         page: page_no,
     };
     let found = match state.db.as_ref() {
@@ -405,7 +410,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
 }
 
 /// `text` for a URL's query.
-fn url_word(text: &str) -> String {
+pub(crate) fn url_word(text: &str) -> String {
     text.bytes()
         .map(|b| {
             if b.is_ascii_alphanumeric() || b"-_.".contains(&b) {

@@ -13,6 +13,7 @@ pub mod db;
 pub mod designs;
 pub mod embroidery;
 pub mod files;
+pub mod follows;
 pub mod laser;
 pub mod legal;
 pub mod licences;
@@ -139,6 +140,9 @@ pub fn app(state: AppState) -> Router {
         .route("/collections/{cid}/delete", post(collections::delete))
         .route("/collections/{cid}/remove/{id}", post(collections::remove))
         .route("/makers/{handle}", get(makers::show))
+        .route("/makers/{handle}/follow", post(follows::follow))
+        .route("/makers/{handle}/unfollow", post(follows::unfollow))
+        .route("/following", get(follows::following))
         .route("/account/maker", get(makers::edit_page).post(makers::save))
         .route("/d/{id}/report", get(moderation::report_page).post(moderation::report))
         .route(

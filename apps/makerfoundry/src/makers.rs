@@ -138,7 +138,8 @@ pub async fn save(State(state): State<AppState>, headers: HeaderMap, Form(f): Fo
 }
 
 pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle): Path<String>) -> Response {
-    let signed_in = current_user(&state, &headers).await.is_some();
+    let viewer = current_user(&state, &headers).await;
+    let signed_in = viewer.is_some();
     let not_found = || {
         (
             StatusCode::NOT_FOUND,
@@ -168,6 +169,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     };
     let designs = cards(pool, account_id, 200).await;
     let collections = crate::collections::public_html(pool, account_id).await;
+    let follow = crate::follows::button_html(pool, viewer.as_ref(), account_id, &handle).await;
     let list = if designs.is_empty() {
         r#"<p class="muted">No designs published yet.</p>"#.to_string()
     } else {
@@ -176,7 +178,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     Html(page(
         &format!("{} · MakerFoundry", escape(&name)),
         &format!(
-            r#"<section class="design"><h1>{}</h1>{}<h2>Designs</h2>{list}{collections}</section>"#,
+            r#"<section class="design"><h1>{}</h1>{follow}{}<h2>Designs</h2>{list}{collections}</section>"#,
             escape(&name),
             paragraphs(&bio)
         ),
