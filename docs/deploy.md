@@ -9,6 +9,8 @@ Railway **Variables**.
 - Railway project **MakerFoundry**, environment `production`, service `makerfoundry`, deploying
   `main` of `SiteSentrix/makerfoundry`.
 - Address: <https://makerfoundry-production.up.railway.app> (first deployed 2026-10-19).
+- `/health` answers `ok <version> <commit>` (the commit from Railway's `RAILWAY_GIT_COMMIT_SHA`),
+  so `curl https://makerfoundry.app/health` shows which commit is live.
 - MakerFoundry has no code signing (a server built by Docker on Railway: no GitHub `environment:`,
   no AZURE_* secrets); the desktop apps sign in their own repository's `release` environment.
 - Service `Postgres` (image `postgres:16`, a volume at `/var/lib/postgresql/data`, made

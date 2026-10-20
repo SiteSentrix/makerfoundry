@@ -49,6 +49,18 @@ use crate::pages::{MARK_SVG, page};
 /// The version shown on `/health`, from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The commit running, also shown on `/health` so a deploy can be checked from outside: set once
+/// at start-up from Railway's `RAILWAY_GIT_COMMIT_SHA` (its first 7 characters).
+pub static COMMIT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// A commit id as shown: its first 7 hex digits, or nothing if it isn't one.
+pub fn short_commit(sha: &str) -> Option<String> {
+    let sha = sha.trim();
+    sha.get(..7)
+        .filter(|_| sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_ascii_lowercase)
+}
+
 /// Bodies bigger than this are refused before a handler sees them. Uploads (MF-2) get their own,
 /// larger cap on their own route.
 const BODY_LIMIT_BYTES: usize = 64 * 1024;
@@ -221,7 +233,10 @@ async fn health() -> Response {
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        format!("ok {VERSION}\n"),
+        match COMMIT.get() {
+            Some(c) => format!("ok {VERSION} {c}\n"),
+            None => format!("ok {VERSION}\n"),
+        },
     )
         .into_response()
 }

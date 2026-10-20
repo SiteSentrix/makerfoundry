@@ -34,6 +34,13 @@ async fn main() -> ExitCode {
             }
         },
     };
+    if let Some(c) = std::env::var("RAILWAY_GIT_COMMIT_SHA")
+        .ok()
+        .as_deref()
+        .and_then(makerfoundry::short_commit)
+    {
+        let _ = makerfoundry::COMMIT.set(c);
+    }
     let cloud_url =
         std::env::var("STITCHFOUNDRY_CLOUD_URL").unwrap_or_else(|_| makerfoundry::cloud::DEFAULT_URL.to_string());
     let cloud = match makerfoundry::cloud::Cloud::new(&cloud_url) {

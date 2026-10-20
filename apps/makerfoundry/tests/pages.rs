@@ -124,3 +124,14 @@ async fn every_page_links_the_legal_pages_which_wait_for_the_launch() {
     assert_eq!(status, StatusCode::OK);
     assert!(terms.contains("hasn't opened yet"));
 }
+
+#[test]
+fn commit_ids_are_shortened_and_checked() {
+    assert_eq!(
+        makerfoundry::short_commit("E82F8691dc91fbdfd74427f84f8d7b259801b99d").as_deref(),
+        Some("e82f869")
+    );
+    for bad in ["", "abc", "e82f869x", "../../etc", "ééééééé"] {
+        assert_eq!(makerfoundry::short_commit(bad), None, "{bad}");
+    }
+}
