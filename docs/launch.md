@@ -32,8 +32,9 @@ pages; published designs stay up.
 3. **DMCA agent.** Register SiteSentrix at copyright.gov/dmca-directory (a small fee), then set
    `MF_DMCA_AGENT` (lines apart by `|`: name, address, email, phone) and put the same in Terms § 7.
 4. **Selling** (or launch with free designs only and open selling later):
-   - Stripe test keys first (`docs/deploy.md`: `STRIPE_SECRET_KEY`, the two webhook secrets), and
-     one test-mode sale end to end.
+   - In StitchFoundry's Stripe account, test mode first (`docs/deploy.md` › Stripe): turn on
+     Connect (Express), make MakerFoundry's restricted key and its two webhooks, put them in
+     Railway, and one test-mode sale end to end.
    - Sales tax: decide (Stripe Tax, marketplace-facilitator states), ideally with an accountant.
    - Then the live keys and live webhooks in place of the test ones.
 5. **Admins.** Sign in on makerfoundry.app once; I read your account number from the database for

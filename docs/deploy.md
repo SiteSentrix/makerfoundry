@@ -78,6 +78,30 @@ Then send the `*.up.railway.app` address back in the chat: MF-0 is done when tha
 - **MF-6**: the `makerfoundry.app` domain (the owner buys it) pointed at the service through
   Cloudflare.
 
+## Stripe (selling)
+MakerFoundry uses **StitchFoundry's Stripe account** (owner's decision, 2026-10-20): one set of
+books and one name on card statements for both. What keeps the two apart:
+
+- **Its own restricted key**, not StitchFoundry's secret key. In the Stripe Dashboard (test mode
+  first): **Developers › API keys › Create restricted key**, named `makerfoundry`, with only these
+  permissions, everything else **None**:
+  - **Checkout Sessions:** Write (makes and reads a buyer's checkout page)
+  - **Refunds:** Write (an admin's full refund)
+  - **Connect › Accounts:** Write (sellers' Express accounts, their set-up and dashboard links)
+
+  It goes in `STRIPE_SECRET_KEY` (`rk_test_…`, later `rk_live_…`). If it ever leaked, it couldn't
+  touch StitchFoundry's products, prices or payouts settings, and it can be rolled on its own.
+- **Its own webhook endpoints**, each with its own signing secret, at
+  `https://makerfoundry.app/stripe/webhook` (below). StitchFoundry's endpoint stays as it is.
+- **Each side ignores the other's payments.** Both endpoints receive every event of the account.
+  MakerFoundry labels its checkouts `metadata[app]=makerfoundry` and acts only on those, and only
+  for an order of its own at its amount; StitchFoundry adds credits only for checkouts carrying its
+  `account` and `credits` labels, which MakerFoundry's never have. Tested both ways
+  (`a_shared_stripe_accounts_other_payments_are_left_alone`).
+- **Connect** must be on in the account: Marketplace, **Express** accounts, US; the platform's
+  name and icon are what sellers see while setting up.
+- Everything travels over HTTPS; the keys and secrets live only in Railway's variables.
+
 ## Settings the service reads
 | Variable | Needed | What |
 |---|---|---|
@@ -89,7 +113,7 @@ Then send the `*.up.railway.app` address back in the chat: MF-0 is done when tha
 | `MF_API_ORIGINS` | no (default `https://stitchfoundry.app`) | the web apps' sites that may call the apps' API from a browser (`docs/api.md`), apart by commas |
 | `MF_LAUNCHED` | at the launch | `yes` opens MakerFoundry to everyone (`docs/launch.md`), but only once the legal pages have none of the owner's markers left; until then the log says what's left |
 | `MF_PUBLISHERS` | no (nobody; everyone once launched) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
-| `STRIPE_SECRET_KEY` | to sell | MakerFoundry's Stripe secret key (`sk_test_…` until launch), from Stripe › Developers › API keys, with Connect switched on. Without it every design is free |
+| `STRIPE_SECRET_KEY` | to sell | MakerFoundry's restricted key in StitchFoundry's Stripe account (`rk_test_…` until launch; see "Stripe" above). Without it every design is free |
 | `STRIPE_WEBHOOK_SECRET` | with the key | the signing secret (`whsec_…`) of the webhook endpoint `https://makerfoundry.app/stripe/webhook` listening to **your account's** events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded` |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
 | `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |

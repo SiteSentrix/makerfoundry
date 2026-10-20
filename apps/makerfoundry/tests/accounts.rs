@@ -1605,8 +1605,56 @@ fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
         "amount_total": f["line_items[0][price_data][unit_amount]"].parse::<i64>().unwrap(),
         "currency": "usd",
         "payment_intent": format!("pi_{id}"),
-        "metadata": {"order": f["metadata[order]"]},
+        "metadata": {"order": f["metadata[order]"], "app": f["metadata[app]"]},
     })
+}
+
+#[tokio::test]
+async fn a_shared_stripe_accounts_other_payments_are_left_alone() {
+    let Some((s, st, _sam, fox)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{fox}/buy"), "", Some(&bea)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(form["metadata[app]"], "makerfoundry");
+    assert_eq!(form["payment_intent_data[metadata][app]"], "makerfoundry");
+    // StitchFoundry's credit pack, paid in the same Stripe account: its event comes here too
+    let credits = json!({"id": "cs_sf_1", "object": "checkout.session", "payment_status": "paid", "amount_total": 1000,
+        "currency": "usd", "payment_intent": "pi_sf_1", "metadata": {"account": "1000", "credits": "1000", "pack": "small"}});
+    assert_eq!(
+        s.stripe_event(WEBHOOK_SECRET, "evt_sf_1", "checkout.session.completed", credits)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let refund = json!({"id": "ch_sf_1", "object": "charge", "payment_intent": "pi_sf_1", "refunded": true});
+    assert_eq!(
+        s.stripe_event(WEBHOOK_SECRET, "evt_sf_2", "charge.refunded", refund)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // a session that names one of our orders but isn't labelled ours changes nothing either
+    let mut unlabelled = session_json("cs_test_1", &form, true);
+    unlabelled["metadata"]["app"] = json!("stitchfoundry");
+    s.stripe_event(WEBHOOK_SECRET, "evt_sf_3", "checkout.session.completed", unlabelled)
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 0);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'pending'")
+            .await,
+        1
+    );
+    // ours, labelled, is paid
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_mf_1",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, true),
+    )
+    .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 3);
 }
 
 impl Site {

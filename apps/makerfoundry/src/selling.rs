@@ -24,6 +24,10 @@ use crate::money::{self, dollars, split};
 use crate::pages::escape;
 use crate::stripe::Stripe;
 
+/// The label on MakerFoundry's checkouts (`metadata[app]`): the Stripe account may also take
+/// StitchFoundry's payments, whose events reach this webhook too.
+pub const APP: &str = "makerfoundry";
+
 /// The ledger's account for MakerFoundry itself.
 pub const MAKERFOUNDRY: i64 = 0;
 
@@ -448,7 +452,9 @@ pub async fn buy(State(state): State<AppState>, headers: HeaderMap, Path(id): Pa
                     s.stripe_account.clone(),
                 ),
                 ("payment_intent_data[metadata][order]", order.to_string()),
+                ("payment_intent_data[metadata][app]", APP.into()),
                 ("metadata[order]", order.to_string()),
+                ("metadata[app]", APP.into()),
             ],
             Some(&format!("mf-order-{order}")),
         )
@@ -622,7 +628,11 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
         return tx.commit().await;
     }
     match kind {
-        "checkout.session.completed" | "checkout.session.async_payment_succeeded" => {
+        // (the Stripe account may be shared with StitchFoundry's credit packs: only checkouts
+        // labelled as MakerFoundry's are MakerFoundry's)
+        "checkout.session.completed" | "checkout.session.async_payment_succeeded"
+            if object.pointer("/metadata/app").and_then(Value::as_str) == Some(APP) =>
+        {
             let order = object
                 .pointer("/metadata/order")
                 .and_then(Value::as_str)
