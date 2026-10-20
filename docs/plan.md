@@ -1,9 +1,10 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-19. MF-0 done: live at https://makerfoundry-production.up.railway.app.
-MF-1 done and live (accounts through StitchFoundry's account service, which gained the account
-id, CLOUD-06, and password reset by email, CLOUD-07). Reset emails go out once the account service
-has its Resend key. Next: MF-2. Owner: Bruce Wattendorf (SiteSentrix).
+**Status:** 2026-10-20. MF-0 to MF-15 built and live at https://makerfoundry.app (the table below);
+the site is closed until the owner's launch (`docs/launch.md`: legal wording, the DMCA agent,
+Stripe keys and sales tax, then `MF_LAUNCHED=yes`). MF-7's app side is StitchFoundry's
+(`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
+pay-what-you-want. Owner: Bruce Wattendorf (SiteSentrix).
 
 ## What it is
 A place, like Thingiverse for 3D prints, where makers find, share and sell files for their
