@@ -3050,3 +3050,122 @@ async fn following_a_maker_shows_their_new_designs() {
             .contains("don't follow any makers")
     );
 }
+
+// ---------------------------------------------------------------- MF-14: comments
+
+/// A comment `text` (form-encoded) posted on design `id` by the person signed in with `cookie`.
+async fn say(s: &Site, id: i64, cookie: &str, text: &str) -> Answer {
+    s.post(&format!("/d/{id}/comments"), &format!("body={text}"), Some(cookie))
+        .await
+}
+
+#[tokio::test]
+async fn people_comment_on_designs_and_bad_comments_come_down() {
+    let Some(s) = site_with(vec![1003]).await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &ann, "anns", "Rose").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    let ada = s.sign_up("ada%40example.com").await;
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains("Sign in to comment")
+    );
+    // a maker profile first; then plain text, links and tags included
+    assert!(say(&s, rose, &bea, "Hello").await.body.contains("maker profile first"));
+    s.post("/account/maker", "name=Bea&handle=bea", Some(&bea)).await;
+    assert!(say(&s, rose, &bea, "+++").await.body.contains("Write something first"));
+    let r = say(
+        &s,
+        rose,
+        &bea,
+        "Which+stabilizer%3F+See+%3Ca+href%3D%22https%3A%2F%2Fspam.example%22%3Ehere%3C%2Fa%3E",
+    )
+    .await;
+    assert!(r.location().starts_with(&format!("/d/{rose}/rose#c")), "{}", r.body);
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_comments")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get(&format!("/d/{rose}"), None).await.body;
+    assert!(
+        page.contains("1 comment")
+            && page.contains("Which stabilizer? See &lt;a href=&quot;https://spam.example&quot;&gt;here&lt;/a&gt;"),
+        "{page}"
+    );
+    assert!(!page.contains(r#"<a href="https://spam.example""#));
+    // the maker answers, marked as the maker
+    s.post("/account/maker", "name=Ann&handle=anns", Some(&ann)).await;
+    say(&s, rose, &ann, "Tear-away+works+best").await;
+    assert!(
+        s.get(&format!("/d/{rose}"), None)
+            .await
+            .body
+            .contains(r#"<span class="badge">the maker</span>"#)
+    );
+    // Cal can't take Bea's down, but can report it
+    s.post(&format!("/comments/{cid}/delete"), "", Some(&cal)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_comments").await, 2);
+    assert!(
+        s.get(&format!("/d/{rose}"), Some(&cal))
+            .await
+            .body
+            .contains(&format!("/comments/{cid}/report"))
+    );
+    assert!(
+        s.post(&format!("/comments/{cid}/report"), "", Some(&cal))
+            .await
+            .body
+            .contains("Choose what the problem is")
+    );
+    assert!(
+        s.post(&format!("/comments/{cid}/report"), "reason=spam", Some(&cal))
+            .await
+            .body
+            .contains("Your report is in")
+    );
+    let queue = s.get("/admin", Some(&ada)).await.body;
+    let rid: i64 = sqlx::query_scalar("SELECT id FROM mf_reports")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert!(
+        queue.contains("Which stabilizer?") && queue.contains(&format!("/admin/reports/{rid}/remove-comment")),
+        "{queue}"
+    );
+    assert_eq!(
+        s.post(&format!("/admin/reports/{rid}/remove-comment"), "", Some(&cal))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    s.post(&format!("/admin/reports/{rid}/remove-comment"), "", Some(&ada))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_comments").await, 1);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_moderation_log WHERE action = 'remove-comment'")
+            .await,
+        1
+    );
+    // the design's maker takes down any comment on it; its author their own
+    s.post("/account/maker", "name=Cal&handle=cal", Some(&cal)).await;
+    say(&s, rose, &cal, "Nice").await;
+    let cals: i64 = sqlx::query_scalar("SELECT id FROM mf_comments WHERE account_id = 1002")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/comments/{cals}/delete"), "", Some(&ann)).await;
+    let anns: i64 = sqlx::query_scalar("SELECT id FROM mf_comments WHERE account_id = 1000")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/comments/{anns}/delete"), "", Some(&ann)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_comments").await, 0);
+    // twenty an hour
+    for _ in 0..makerfoundry::limits::COMMENT.max {
+        say(&s, rose, &bea, "again").await;
+    }
+    assert!(say(&s, rose, &bea, "again").await.body.contains("commented a lot"));
+}

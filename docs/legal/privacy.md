@@ -27,6 +27,7 @@ Policy (stitchfoundry.app/privacy) covers it. This policy covers what MakerFound
 | Your designs: the files, what reading them found (size, stitches, colours), the previews we draw, titles, descriptions, tags and licences | To list and deliver them. Public once you publish, private before | Until you delete them or close your account |
 | Photos of your work, saved again as new images | To show on your designs. Their hidden details (location, camera) are removed when you upload them | As your designs |
 | Makes you post (a photo of what you made from a design, saved again as a new image, and your note) | To show on the design's page, with your maker name. **Public** | Until you, the design's maker or an admin take it down, or the design is deleted |
+| Comments you post (the text, when) | To show under the design, with your maker name. **Public** | Until you, the design's maker or an admin take it down, or the design is deleted |
 | The makers you follow | To show you their new designs. Private: a maker sees only how many people follow them | Until you unfollow or close your account |
 | Your Saved list and collections (which designs, when) | To keep them for you. Saved is private; a collection is private unless you make it **public** | Until you remove them or close your account |
 | Download counts (a number for each design, not who downloaded it) | To show how popular a design is | As the design |

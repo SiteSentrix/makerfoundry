@@ -8,6 +8,7 @@ pub mod accounts;
 pub mod api;
 pub mod cloud;
 pub mod collections;
+pub mod comments;
 pub mod convert;
 pub mod db;
 pub mod designs;
@@ -133,6 +134,13 @@ pub fn app(state: AppState) -> Router {
             get(moderation::make_report_page).post(moderation::make_report),
         )
         .route("/admin/reports/{rid}/remove-make", post(moderation::remove_make))
+        .route("/d/{id}/comments", post(comments::post))
+        .route("/comments/{cid}/delete", post(comments::delete))
+        .route(
+            "/comments/{cid}/report",
+            get(moderation::comment_report_page).post(moderation::comment_report),
+        )
+        .route("/admin/reports/{rid}/remove-comment", post(moderation::remove_comment))
         .route("/makes/{mid}/{size}", get(makes::photo))
         .route("/collections", get(collections::list).post(collections::create))
         .route("/collections/{cid}", get(collections::show))

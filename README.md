@@ -22,7 +22,7 @@ approval of the legal wording ([`docs/launch.md`](docs/launch.md)). **MF-7** (ap
 publish to ([`docs/api.md`](docs/api.md)); the apps' own command is next. **MF-8** (the first version's missing pieces) done:
 free/paid, hoop and material browsing, and several formats per design. **MF-9** done: embroidery designs download converted
 to every format StitchFoundry writes. **MF-10** done: saved designs and collections. **MF-11** done: makes, photos of what
-people made from a design. **MF-12** (reporting a make) and **MF-13** (following makers) done. See [`docs/plan.md`](docs/plan.md).
+people made from a design. **MF-12** (reporting a make) and **MF-13** (following makers) done. **MF-14** done: comments on designs. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

@@ -502,6 +502,11 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         1 => " · 1 make".into(),
         n => format!(" · {n} makes"),
     };
+    let talk = match crate::comments::count(pool, id).await {
+        0 => String::new(),
+        1 => " · 1 comment".into(),
+        n => format!(" · {n} comments"),
+    };
     let saves = match crate::collections::saves(pool, id).await {
         0 => String::new(),
         1 => " · saved by 1 person".into(),
@@ -550,7 +555,7 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         String::new()
     };
-    let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{saves}</p>{buy}{save}"#);
+    let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{buy}{save}"#);
     let photos = designs::photos_html(pool, id).await;
     let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
     let first_format = d
@@ -575,13 +580,16 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         String::new()
     };
-    let makes = if d.status == "published" {
-        crate::makes::section(&state, pool, viewer.as_ref(), id, d.account_id).await
+    let (makes, comments) = if d.status == "published" {
+        (
+            crate::makes::section(&state, pool, viewer.as_ref(), id, d.account_id).await,
+            crate::comments::section(&state, pool, viewer.as_ref(), id, d.account_id).await,
+        )
     } else {
-        String::new()
+        (String::new(), String::new())
     };
     let footer = format!(
-        r#"{desc}{formats}{photos}{makes}{tags}{licence_html}{edit}"#,
+        r#"{desc}{formats}{photos}{makes}{tags}{licence_html}{comments}{edit}"#,
         desc = paragraphs(&d.description)
     );
     let title = if d.title.is_empty() {
