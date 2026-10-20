@@ -3425,3 +3425,41 @@ async fn hostile_text_in_every_field_never_reaches_a_page_as_html() {
             .any(|p| p.contains("&lt;script&gt;x()&lt;/script&gt;&quot;&#39;"))
     );
 }
+
+// ---------------------------------------------------------------- MF-16: the admins' overview
+
+#[tokio::test]
+async fn admins_see_the_sites_numbers_and_nobody_else_does() {
+    let Some((s, st, _sam, fox)) = selling_site(vec![1002]).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let ada = s.sign_up("ada%40example.com").await;
+    s.post(&format!("/d/{fox}/buy"), "", Some(&bea)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_o",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, true),
+    )
+    .await;
+    s.post(&format!("/d/{fox}/report"), "reason=spam", None).await;
+    assert_eq!(s.get("/admin/overview", Some(&bea)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get("/admin/overview", None).await.status, StatusCode::NOT_FOUND);
+    let page = s.get("/admin/overview", Some(&ada)).await.body;
+    for fact in [
+        "<dt>Accounts</dt><dd>3</dd>",
+        "<dt>Published</dt><dd>1</dd>",
+        "<dt>Paid</dt><dd>1</dd>",
+        "<dt>Sales</dt><dd>1</dd>",
+        "<dt>Paid by buyers</dt><dd>$5</dd>",
+        "<dt>To sellers</dt><dd>$4.05</dd>",
+        "<dt>MakerFoundry&#39;s fees</dt><dd>$0.50</dd>",
+        "<dt>Card fees</dt><dd>$0.45</dd>",
+        "<dt>Fees this month</dt><dd>$0.50</dd>",
+        "<dt>Reports</dt><dd>1</dd>",
+    ] {
+        assert!(page.contains(fact), "{fact} in {page}");
+    }
+}

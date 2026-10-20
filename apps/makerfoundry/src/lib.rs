@@ -25,6 +25,7 @@ pub mod makers;
 pub mod makes;
 pub mod moderation;
 pub mod money;
+pub mod overview;
 pub mod pages;
 pub mod photos;
 pub mod preview;
@@ -176,6 +177,7 @@ pub fn app(state: AppState) -> Router {
         .route("/dmca", get(moderation::policy))
         .route("/dmca/notice", get(moderation::notice_page).post(moderation::notice))
         .route("/admin", get(moderation::queue))
+        .route("/admin/overview", get(overview::overview))
         .route("/admin/reports/{rid}/takedown", post(moderation::takedown))
         .route("/admin/reports/{rid}/dismiss", post(moderation::dismiss))
         .route("/admin/reports/{rid}/restore", post(moderation::restore))
