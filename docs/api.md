@@ -55,9 +55,24 @@ Every `error.message` is a sentence to show the person as it is.
 `{"name": "MakerFoundry", "version": "0.1.0", "designs": "/api/v1/designs", "max_upload_bytes":
 67108864, "max_photos": 6}`: for an app to check it's talking to MakerFoundry and read the limits.
 
+## `GET https://makerfoundry.app/api/v1/designs/{id}/file/{name}` (Open in StitchFoundry)
+A free, published embroidery design's file, for StitchFoundry's web app, which opens it from
+`https://stitchwright.github.io/StitchFoundry/?open=<this address, URL-encoded>` (StitchFoundry's
+OPEN-01). Design pages of free, published embroidery designs show an **Open in StitchFoundry** button
+with that link; `{name}` (the design's title as a file name, with its extension, `rose.pes`) only
+ends the address, because the app reads the file by its extension.
+
+- The file itself is sent (`application/octet-stream`, `Content-Disposition: attachment;
+  filename="rose.pes"`, cached 5 minutes), not a link to the storage, which another site's page
+  couldn't follow; CORS for the web apps' sites, with `Content-Disposition` exposed.
+- Cookies aren't read: it's only what anyone may download. A draft, a removed or taken-down
+  design, a laser file or an unknown id is `404` ("That design isn't on MakerFoundry."); a design
+  for sale is `403` (bought designs are downloaded from the site). 120 an hour from one address
+  (`429`). Each counts as a download.
+
 ## From a web app (browsers)
 The web apps' sites may call the API from the browser: `MF_API_ORIGINS` (default
-`https://stitchfoundry.app`; add LightFoundry's when it has one) lists them. A browser's
+`https://stitchfoundry.app,https://stitchwright.github.io`, StitchFoundry's site and its web app's; add LightFoundry's when it has one) lists them. A browser's
 preflight (`OPTIONS`) is answered for those sites only, allowing `POST` with the `authorization`
 and `content-type` headers. No cookies are used or allowed. Desktop apps don't need any of this.
 

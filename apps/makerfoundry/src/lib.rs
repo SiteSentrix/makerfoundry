@@ -209,6 +209,7 @@ pub fn app(state: AppState) -> Router {
     let api = Router::new()
         .route("/api/v1", get(api::about))
         .route("/api/v1/designs", post(api::new_design).options(api::preflight))
+        .route("/api/v1/designs/{id}/file/{name}", get(api::design_file))
         .layer(DefaultBodyLimit::max(api::API_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(api::API_LIMIT_BYTES));
     pages
@@ -320,7 +321,7 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
 async fn robots(State(state): State<AppState>) -> Response {
     let text = if state.launched {
         format!(
-            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nSitemap: {}/sitemap.xml\n",
+            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nDisallow: /api/\nSitemap: {}/sitemap.xml\n",
             state.public_url
         )
     } else {

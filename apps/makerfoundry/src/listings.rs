@@ -555,7 +555,19 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         String::new()
     };
-    let intro = format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{buy}{save}"#);
+    // Open in StitchFoundry: a free, published embroidery design opens in the web app
+    let open = if d.kind == "embroidery" && d.price_cents == 0 && d.status == "published" {
+        let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+        let href = crate::api::open_in_stitchfoundry(&state.public_url, id, &format!("{}.{ext}", slug(&d.title)));
+        format!(
+            r#"<p class="actions"><a class="button secondary" href="{}" rel="noopener">Open in StitchFoundry</a> <span class="muted">Free, in your web browser</span></p>"#,
+            escape(&href)
+        )
+    } else {
+        String::new()
+    };
+    let intro =
+        format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{buy}{open}{save}"#);
     let photos = designs::photos_html(pool, id).await;
     let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
     let first_format = d
@@ -616,7 +628,13 @@ pub struct DownloadQuery {
 /// Whether `viewer` may see design `d` (`id`) and whether they may download it: a free published
 /// design anyone; a paid one the people who bought it (even unpublished, unless it was taken
 /// down); any its maker and the admins.
-async fn access(state: &AppState, pool: &PgPool, viewer: Option<&User>, d: &DesignRow, id: i64) -> (bool, bool) {
+pub(crate) async fn access(
+    state: &AppState,
+    pool: &PgPool,
+    viewer: Option<&User>,
+    d: &DesignRow,
+    id: i64,
+) -> (bool, bool) {
     let staff = viewer.is_some_and(|u| u.account_id == d.account_id || state.admins.contains(&u.account_id));
     let buyer = match viewer {
         Some(u) if d.status != "removed" && !staff && d.price_cents > 0 => {

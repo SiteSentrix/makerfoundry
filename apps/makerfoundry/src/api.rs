@@ -10,7 +10,7 @@
 //! Browsers may call it from the web apps' own sites (`MF_API_ORIGINS`), without cookies.
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
@@ -24,8 +24,23 @@ use crate::{db, limits};
 /// The most a request to the API may be: an upload's limit, as base64, and room for the rest.
 pub const API_LIMIT_BYTES: usize = designs::MAX_UPLOAD_BYTES / 3 * 4 + 64 * 1024;
 
-/// The web apps that may call the API from a browser, unless `MF_API_ORIGINS` says otherwise.
-pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app";
+/// The web apps that may call the API from a browser, unless `MF_API_ORIGINS` says otherwise:
+/// StitchFoundry's site, and its web app's (GitHub Pages).
+pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app,https://stitchwright.github.io";
+
+/// StitchFoundry's web app, which opens a design from `?open=<address>` (Open in StitchFoundry).
+pub const STITCHFOUNDRY_WEB: &str = "https://stitchwright.github.io/StitchFoundry/";
+
+/// The link that opens design `id` in StitchFoundry's web app: its file's address on this site
+/// (`public_url`), ending in `name` so the app knows how to read it.
+pub fn open_in_stitchfoundry(public_url: &str, id: i64, name: &str) -> String {
+    let file = format!(
+        "{}/api/v1/designs/{id}/file/{}",
+        public_url.trim_end_matches('/'),
+        crate::listings::url_word(name)
+    );
+    format!("{STITCHFOUNDRY_WEB}?open={}", crate::listings::url_word(&file))
+}
 
 /// An error as the apps get it: `{"error": {"message"}}` with the status.
 fn error(status: StatusCode, message: &str) -> Response {
@@ -54,6 +69,87 @@ fn with_cors(state: &AppState, headers: &HeaderMap, mut resp: Response) -> Respo
         resp.headers_mut().insert(k, v);
     }
     resp
+}
+
+/// `GET /api/v1/designs/{id}/file/{name}`: a free, published embroidery design's file, for
+/// StitchFoundry's web app (Open in StitchFoundry). The file itself is sent (not a link to the
+/// storage, which another site's page couldn't follow), with CORS for the web apps' sites; cookies
+/// aren't read, so it is only what anyone may download. `name` only ends the address, for the app.
+pub async fn design_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, _name)): Path<(i64, String)>,
+) -> Response {
+    let mut resp = design_file_answer(&state, &headers, id).await;
+    resp.headers_mut().insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("content-disposition"),
+    );
+    with_cors(&state, &headers, resp)
+}
+
+async fn design_file_answer(state: &AppState, headers: &HeaderMap, id: i64) -> Response {
+    let (Some(pool), Some(storage)) = (state.db.as_ref(), state.storage.as_ref()) else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "MakerFoundry can't send designs just now.",
+        );
+    };
+    let missing = || error(StatusCode::NOT_FOUND, "That design isn't on MakerFoundry.");
+    let Ok(Some(d)) = designs::design(pool, id).await else {
+        return missing();
+    };
+    // what anyone may see and download: published, not taken down, and free
+    let (seen, may) = crate::listings::access(state, pool, None, &d, id).await;
+    if !seen || d.kind != "embroidery" {
+        return missing();
+    }
+    if !may {
+        return error(
+            StatusCode::FORBIDDEN,
+            "This design is for sale: buy it on MakerFoundry, then download it there.",
+        );
+    }
+    if !state.limits.allow(limits::OPEN, &limits::client(headers)) {
+        return error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many designs opened lately. Please wait a while.",
+        );
+    }
+    let bytes = match storage.get(&d.file_key).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return missing(),
+        Err(e) => {
+            eprintln!("api: file {id}: {e}");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "The design can't be fetched just now. Please try again.",
+            );
+        }
+    };
+    let _ = sqlx::query("UPDATE mf_designs SET downloads = downloads + 1 WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await; // (a count; the file goes out anyway)
+    let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    let name: String = format!("{}.{ext}", crate::listings::slug(&d.title))
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c))
+        .collect();
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{name}\""))
+        .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/octet-stream"),
+            ),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=300")),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// A browser asking first whether a web app may send to the API.

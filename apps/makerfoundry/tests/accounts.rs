@@ -3511,3 +3511,95 @@ async fn admins_see_the_sites_numbers_and_nobody_else_does() {
         assert!(page.contains(fact), "{fact} in {page}");
     }
 }
+
+/// Open in StitchFoundry: a free, published embroidery design's page links to StitchFoundry's web
+/// app with its file's address, and the web app gets the file itself, with CORS; nothing that isn't
+/// free and public is sent, whoever asks.
+#[tokio::test]
+async fn a_free_design_opens_in_stitchfoundrys_web_app() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    let id = published(&s, &cookie, "anns-shop", "Rose").await;
+    let page = s.get(&format!("/d/{id}/rose"), None).await;
+    let file = format!("https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Frose.pes");
+    assert!(
+        page.body.contains(&format!(
+            r#"href="https://stitchwright.github.io/StitchFoundry/?open={file}""#
+        )),
+        "{}",
+        page.body
+    );
+    assert!(page.body.contains("Open in StitchFoundry"));
+    // the web app's fetch: the file, from the web app's site
+    let path = format!("/api/v1/designs/{id}/file/rose.pes");
+    let r = s
+        .api("GET", &path, None, Some("https://stitchfoundry.test"), &json!({}))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.starts_with("#PES"), "a PES file");
+    assert_eq!(
+        r.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "https://stitchfoundry.test"
+    );
+    assert_eq!(
+        r.headers[header::CONTENT_DISPOSITION],
+        r#"attachment; filename="rose.pes""#
+    );
+    assert_eq!(r.headers[header::ACCESS_CONTROL_EXPOSE_HEADERS], "content-disposition");
+    assert!(r.headers.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+    assert_eq!(
+        s.scalar(&format!("SELECT downloads::bigint FROM mf_designs WHERE id = {id}"))
+            .await,
+        1
+    );
+    // another site's page gets the file but may not read it
+    let evil = s
+        .api("GET", &path, None, Some("https://evil.example"), &json!({}))
+        .await;
+    assert!(evil.headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    // a draft isn't sent, even to its maker (cookies aren't read), nor a design that isn't there
+    let draft = add_design(&s, &cookie, sf_formats::Format::Pes, "tulip.pes").await;
+    let mut req = Request::get(format!("/api/v1/designs/{draft}/file/tulip.pes")).header(header::HOST, HOST);
+    req = req.header(header::COOKIE, &cookie);
+    let r = s.send(req.body(Body::empty()).unwrap()).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.body);
+    assert!(r.body.contains("isn't on MakerFoundry"), "{}", r.body);
+    assert_eq!(
+        s.api("GET", "/api/v1/designs/999999/file/x.pes", None, None, &json!({}))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // a draft's page has no button
+    assert!(
+        !s.get(&format!("/designs/{draft}"), Some(&cookie))
+            .await
+            .body
+            .contains("Open in StitchFoundry")
+    );
+}
+
+/// A design for sale isn't opened in StitchFoundry: it's bought on MakerFoundry first.
+#[tokio::test]
+async fn a_design_for_sale_isnt_sent_to_stitchfoundry() {
+    let Some((s, _st, seller, id)) = selling_site(vec![]).await else {
+        return;
+    };
+    let r = s
+        .api(
+            "GET",
+            &format!("/api/v1/designs/{id}/file/fox-patch.pes"),
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.body);
+    assert!(r.body.contains("for sale"), "{}", r.body);
+    assert_eq!(
+        r.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "https://stitchfoundry.test"
+    );
+    let page = s.get(&format!("/d/{id}/fox-patch"), Some(&seller)).await;
+    assert!(!page.body.contains("Open in StitchFoundry"), "{}", page.body);
+}
