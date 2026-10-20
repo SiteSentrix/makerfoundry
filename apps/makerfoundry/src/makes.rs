@@ -83,7 +83,7 @@ pub async fn section(state: &AppState, pool: &PgPool, viewer: Option<&User>, id:
                     k.id
                 )
             } else {
-                String::new()
+                format!(r#"<a href="/makes/{}/report" class="muted report-make">Report</a>"#, k.id)
             };
             let tw = photos::THUMB_SIDE.min(u32::try_from(k.width).unwrap_or(1)).max(1);
             let th = (f64::from(k.height) * f64::from(tw) / f64::from(k.width.max(1))).round();
@@ -316,25 +316,40 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(mid)
             .into_response();
     };
     let allowed = user.account_id == poster || user.account_id == owner || state.admins.contains(&user.account_id);
-    if allowed {
-        match sqlx::query("DELETE FROM mf_makes WHERE id = $1")
-            .bind(mid)
-            .execute(pool)
-            .await
-        {
-            Ok(_) => {
-                if let Some(storage) = &state.storage {
-                    for key in [photo_key, thumb_key] {
-                        if let Err(e) = storage.delete(&key).await {
-                            eprintln!("makes: delete {mid}: {e}");
-                        }
-                    }
-                }
-            }
-            Err(e) => eprintln!("makes: delete {mid}: {e}"),
-        }
+    if allowed && let Err(e) = remove_keys(&state, pool, mid, [photo_key, thumb_key]).await {
+        eprintln!("makes: delete {mid}: {e}");
     }
     Redirect::to(&format!("/d/{design}")).into_response()
+}
+
+/// Takes make `mid` down: gone from the page and from storage (an admin acting on a report).
+pub async fn remove(state: &AppState, pool: &PgPool, mid: i64) -> Result<(), String> {
+    let keys: Option<(String, String)> = sqlx::query_as("SELECT photo_key, thumb_key FROM mf_makes WHERE id = $1")
+        .bind(mid)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    match keys {
+        Some((photo, thumb)) => remove_keys(state, pool, mid, [photo, thumb]).await,
+        None => Ok(()),
+    }
+}
+
+async fn remove_keys(state: &AppState, pool: &PgPool, mid: i64, keys: [String; 2]) -> Result<(), String> {
+    sqlx::query("DELETE FROM mf_makes WHERE id = $1")
+        .bind(mid)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(storage) = &state.storage {
+        for key in keys {
+            // (the make is gone either way; a photo left behind costs a little storage)
+            if let Err(e) = storage.delete(&key).await {
+                eprintln!("makes: delete {mid}: {e}");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The keys of every make's photos on design `id`, for deleting the design.

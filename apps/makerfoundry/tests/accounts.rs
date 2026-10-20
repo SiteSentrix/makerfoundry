@@ -2883,3 +2883,109 @@ async fn people_post_photos_of_what_they_made_and_can_take_them_down() {
     // the file, its photo and thumbnail, and the make's photo and thumbnail
     assert_eq!(s.stored.lock().unwrap().len(), before - 5);
 }
+
+#[tokio::test]
+async fn a_reported_make_is_taken_down_from_the_admin_queue() {
+    let Some(s) = site_with(vec![1003]).await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &ann, "anns", "Rose").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    let ada = s.sign_up("ada%40example.com").await;
+    s.post("/account/maker", "name=Bea&handle=bea", Some(&bea)).await;
+    let post = || {
+        multipart(
+            &format!("/d/{rose}/makes"),
+            &[
+                ("photo", "a.jpg", photo_with_location()),
+                ("confirm", "", b"yes".to_vec()),
+            ],
+            &bea,
+        )
+    };
+    s.send(post()).await;
+    let mid: i64 = sqlx::query_scalar("SELECT id FROM mf_makes")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    // others see a Report link; its poster sees Take down instead
+    assert!(
+        s.get(&format!("/d/{rose}"), Some(&cal))
+            .await
+            .body
+            .contains(&format!("/makes/{mid}/report"))
+    );
+    assert!(
+        !s.get(&format!("/d/{rose}"), Some(&bea))
+            .await
+            .body
+            .contains(&format!("/makes/{mid}/report"))
+    );
+    assert!(
+        s.get(&format!("/makes/{mid}/report"), None)
+            .await
+            .body
+            .contains("Report a make")
+    );
+    let r = s.post(&format!("/makes/{mid}/report"), "details=x", None).await;
+    assert!(r.body.contains("Choose what the problem is"), "{}", r.body);
+    let r = s
+        .post(
+            &format!("/makes/{mid}/report"),
+            "reason=not-theirs&details=My+photo+from+my+blog",
+            None,
+        )
+        .await;
+    assert!(r.body.contains("Your report is in"), "{}", r.body);
+    // in the queue, with the photo and its own action
+    let queue = s.get("/admin", Some(&ada)).await.body;
+    assert!(
+        queue.contains("It isn&#39;t their photo") && queue.contains(&format!(r#"src="/makes/{mid}/thumb""#)),
+        "{queue}"
+    );
+    let rid: i64 = sqlx::query_scalar("SELECT id FROM mf_reports")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert!(queue.contains(&format!("/admin/reports/{rid}/remove-make")));
+    // only admins act on it
+    assert_eq!(
+        s.post(&format!("/admin/reports/{rid}/remove-make"), "", Some(&cal))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_makes").await, 1);
+    let stored = s.stored.lock().unwrap().len();
+    s.post(&format!("/admin/reports/{rid}/remove-make"), "", Some(&ada))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_makes").await, 0);
+    assert_eq!(s.stored.lock().unwrap().len(), stored - 2);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_reports WHERE status = 'actioned'")
+            .await,
+        1
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_moderation_log WHERE action = 'remove-make'")
+            .await,
+        1
+    );
+    // a report of a make its poster has since taken down: just closed
+    s.send(post()).await;
+    let mid: i64 = sqlx::query_scalar("SELECT id FROM mf_makes")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/makes/{mid}/report"), "reason=spam", Some(&cal)).await;
+    s.post(&format!("/makes/{mid}/delete"), "", Some(&bea)).await;
+    let queue = s.get("/admin", Some(&ada)).await.body;
+    assert!(
+        queue.contains("taken down already") && !queue.contains("remove-make"),
+        "{queue}"
+    );
+    assert_eq!(
+        s.get(&format!("/makes/{mid}/report"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+}

@@ -127,6 +127,11 @@ pub fn app(state: AppState) -> Router {
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
         .route("/makes/{mid}/delete", post(makes::delete))
+        .route(
+            "/makes/{mid}/report",
+            get(moderation::make_report_page).post(moderation::make_report),
+        )
+        .route("/admin/reports/{rid}/remove-make", post(moderation::remove_make))
         .route("/makes/{mid}/{size}", get(makes::photo))
         .route("/collections", get(collections::list).post(collections::create))
         .route("/collections/{cid}", get(collections::show))

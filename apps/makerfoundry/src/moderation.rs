@@ -32,12 +32,21 @@ pub const REASONS: &[(&str, &str)] = &[
     ("other", "Something else"),
 ];
 
+/// Why someone reports a make (MF-12): (id, what the form says).
+pub const MAKE_REASONS: &[(&str, &str)] = &[
+    ("not-theirs", "It isn't their photo, or not something they made"),
+    ("offensive", "It's offensive or harmful"),
+    ("spam", "It's spam or an advert"),
+    ("other", "Something else"),
+];
+
 fn reason_text(id: &str) -> &'static str {
     match id {
         "dmca" => "A copyright notice (DMCA)",
         "counter" => "A counter-notice from the maker",
         _ => REASONS
             .iter()
+            .chain(MAKE_REASONS)
             .find(|(r, _)| *r == id)
             .map_or("Something else", |(_, t)| *t),
     }
@@ -222,6 +231,168 @@ pub async fn report(
             )
         }
     }
+}
+
+// ---------------------------------------------------------------- reporting a make
+
+fn make_form(mid: i64, title: &str, reason: &str, details: &str, problem: &str) -> String {
+    let choices: String = MAKE_REASONS
+        .iter()
+        .map(|(r, t)| {
+            format!(
+                r#"<label class="choice"><input type="radio" name="reason" value="{r}"{c}> <span>{t}</span></label>"#,
+                c = if *r == reason { " checked" } else { "" },
+                t = escape(t)
+            )
+        })
+        .collect();
+    format!(
+        r#"<section class="form">
+<h1>Report a make</h1>
+<p class="lead">What's wrong with this photo on <strong>{title}</strong>? We read every report.</p>
+<p><img src="/makes/{mid}/thumb" alt="The make reported" class="reported"></p>
+{problem}
+<form method="post" action="/makes/{mid}/report">
+<fieldset><legend>The problem</legend>{choices}</fieldset>
+<label>Details <small>(optional)</small><textarea name="details" rows="4" maxlength="2000">{details}</textarea></label>
+<label>Your email <small>(optional: only if you'd like an answer)</small><input type="email" name="email" maxlength="254"></label>
+<button type="submit">Send the report</button>
+</form>
+</section>"#,
+        title = escape(title),
+        problem = problem_html(problem),
+        details = escape(details),
+    )
+}
+
+/// A make on a published design, for reporting: its design and the design's title.
+async fn reportable_make(pool: &PgPool, mid: i64) -> Option<(i64, String)> {
+    sqlx::query_as(
+        "SELECT d.id, CASE WHEN d.title = '' THEN d.file_name ELSE d.title END
+         FROM mf_makes k JOIN mf_designs d ON d.id = k.design_id WHERE k.id = $1 AND d.status = 'published'",
+    )
+    .bind(mid)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+pub async fn make_report_page(State(state): State<AppState>, headers: HeaderMap, Path(mid): Path<i64>) -> Response {
+    let signed_in = current_user(&state, &headers).await.is_some();
+    let Some(pool) = state.db.as_ref() else {
+        return not_found(signed_in);
+    };
+    let Some((_, title)) = reportable_make(pool, mid).await else {
+        return not_found(signed_in);
+    };
+    private(
+        "Report a make · MakerFoundry",
+        &make_form(mid, &title, "", "", ""),
+        signed_in,
+    )
+}
+
+pub async fn make_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(mid): Path<i64>,
+    Form(f): Form<ReportForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let user = current_user(&state, &headers).await;
+    let signed_in = user.is_some();
+    let Some(pool) = state.db.as_ref() else {
+        return not_found(signed_in);
+    };
+    let Some((design, title)) = reportable_make(pool, mid).await else {
+        return not_found(signed_in);
+    };
+    let details = text(&f.details, 2000);
+    if !MAKE_REASONS.iter().any(|(r, _)| *r == f.reason) {
+        return private(
+            "Report a make · MakerFoundry",
+            &make_form(mid, &title, "", &details, "Choose what the problem is."),
+            signed_in,
+        );
+    }
+    if !state.limits.allow(REPORT, &limits::client(&headers)) {
+        return too_many(signed_in);
+    }
+    let saved = sqlx::query("INSERT INTO mf_reports (design_id, make_id, kind, reason, details, reporter_account, contact_email) VALUES ($1, $2, 'make', $3, $4, $5, $6)")
+        .bind(design)
+        .bind(mid)
+        .bind(&f.reason)
+        .bind(&details)
+        .bind(user.map(|u| u.account_id))
+        .bind(line(&f.email, 254))
+        .execute(pool)
+        .await;
+    match saved {
+        Ok(_) => done(
+            "Thank you",
+            "Your report is in. We'll look at the photo and take it down if it breaks the rules.",
+            signed_in,
+        ),
+        Err(e) => {
+            eprintln!("moderation: make report {mid}: {e}");
+            private(
+                "Report a make · MakerFoundry",
+                &make_form(
+                    mid,
+                    &title,
+                    &f.reason,
+                    &details,
+                    "The report couldn't be sent just now. Please try again.",
+                ),
+                signed_in,
+            )
+        }
+    }
+}
+
+/// Takes down the make a report is about, and closes its reports.
+pub async fn remove_make(State(state): State<AppState>, headers: HeaderMap, Path(rid): Path<i64>) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (me, pool) = match admin(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let make: Option<(Option<i64>, Option<i64>)> =
+        sqlx::query_as("SELECT design_id, make_id FROM mf_reports WHERE id = $1 AND status = 'open' AND kind = 'make'")
+            .bind(rid)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+    if let Some((design, Some(mid))) = make {
+        if let Err(e) = crate::makes::remove(&state, &pool, mid).await {
+            eprintln!("moderation: remove make {mid}: {e}");
+            return Redirect::to("/admin").into_response();
+        }
+        // (its other open reports went with it: the make is gone)
+        let _ = sqlx::query(
+            "UPDATE mf_reports SET status = 'actioned', resolved_at = now(), resolved_by = $2 WHERE id = $1",
+        )
+        .bind(rid)
+        .bind(me.account_id)
+        .execute(&pool)
+        .await;
+        log(
+            &pool,
+            design,
+            Some(rid),
+            me.account_id,
+            "remove-make",
+            &format!("make {mid}"),
+        )
+        .await;
+    }
+    Redirect::to("/admin").into_response()
 }
 
 // ---------------------------------------------------------------- copyright
@@ -570,7 +741,7 @@ pub async fn queue(State(state): State<AppState>, headers: HeaderMap) -> Respons
         Err(r) => return r,
     };
     let rows = sqlx::query(
-        "SELECT r.id, r.design_id, r.kind, r.reason, r.details, r.contact_name, r.contact_email, r.contact_address, r.contact_phone,
+        "SELECT r.id, r.design_id, r.make_id, r.kind, r.reason, r.details, r.contact_name, r.contact_email, r.contact_address, r.contact_phone,
                 r.original_work, r.signature, to_char(r.created_at, 'YYYY-MM-DD HH24:MI') AS at,
                 d.title, d.file_name, d.status, d.account_id,
                 m.name AS maker, m.handle,
@@ -592,6 +763,7 @@ pub async fn queue(State(state): State<AppState>, headers: HeaderMap) -> Respons
             let get = |c: &str| r.try_get::<Option<String>, _>(c).ok().flatten().unwrap_or_default();
             let rid: i64 = r.try_get("id").unwrap_or(0);
             let design: Option<i64> = r.try_get("design_id").ok().flatten();
+            let make: Option<i64> = r.try_get("make_id").ok().flatten();
             let kind = get("kind");
             let status = get("status");
             let title = if get("title").is_empty() { get("file_name") } else { get("title") };
@@ -619,7 +791,16 @@ pub async fn queue(State(state): State<AppState>, headers: HeaderMap) -> Respons
                 ),
                 None => "<p class=\"muted\">The design has been deleted.</p>".to_string(),
             };
+            let make_html = match (kind.as_str(), make) {
+                ("make", Some(mid)) => format!(r#"<p><a href="/makes/{mid}/large"><img src="/makes/{mid}/thumb" alt="The make reported" class="reported"></a></p>"#),
+                ("make", None) => r#"<p class="muted">The make has been taken down already.</p>"#.to_string(),
+                _ => String::new(),
+            };
             let actions = match (design, kind.as_str(), status.as_str()) {
+                (_, "make", _) if make.is_some() => format!(
+                    r#"<form method="post" action="/admin/reports/{rid}/remove-make"><button type="submit">Take the make down</button></form><form method="post" action="/admin/reports/{rid}/dismiss"><button type="submit" class="secondary">Dismiss</button></form>"#
+                ),
+                (_, "make", _) => format!(r#"<form method="post" action="/admin/reports/{rid}/dismiss"><button type="submit" class="secondary">Close</button></form>"#),
                 (Some(_), "counter", "removed") => format!(
                     r#"<form method="post" action="/admin/reports/{rid}/restore"><button type="submit">Restore the design</button></form><form method="post" action="/admin/reports/{rid}/dismiss"><button type="submit" class="secondary">Keep it down</button></form>"#
                 ),
@@ -629,7 +810,7 @@ pub async fn queue(State(state): State<AppState>, headers: HeaderMap) -> Respons
                 _ => format!(r#"<form method="post" action="/admin/reports/{rid}/dismiss"><button type="submit" class="secondary">Close</button></form>"#),
             };
             format!(
-                r#"<li class="report"><p><strong>{what}</strong> <span class="muted">· #{rid} · {at}</span></p>{design_html}{details}{contact}<div class="actions">{actions}</div></li>"#,
+                r#"<li class="report"><p><strong>{what}</strong> <span class="muted">· #{rid} · {at}</span></p>{design_html}{make_html}{details}{contact}<div class="actions">{actions}</div></li>"#,
                 what = escape(reason_text(&get("reason"))),
                 at = escape(&get("at")),
                 details = if get("details").is_empty() { String::new() } else { format!("<p>{}</p>", escape(&get("details"))) },
