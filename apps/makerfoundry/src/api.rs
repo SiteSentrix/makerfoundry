@@ -30,22 +30,54 @@ pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app,https://stitchwrigh
 
 /// StitchFoundry's web app, which opens a design from `?open=<address>` (Open in StitchFoundry).
 pub const STITCHFOUNDRY_WEB: &str = "https://stitchwright.github.io/StitchFoundry/";
+/// LaserFoundry's web app, which opens laser designs the same way once it reads `?open=`.
+pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/";
+/// Whether LaserFoundry's web app opens a design from an address yet: until it does, laser designs
+/// show no button (their files are served all the same, for when it does).
+pub const LASERFOUNDRY_OPENS_LINKS: bool = false;
+
+/// The web app that opens design `d`, by its kind: (address, name). Embroidery opens in
+/// StitchFoundry; an SVG or DXF laser design in LaserFoundry (what it imports), once it opens links.
+pub fn web_app(d: &designs::DesignRow) -> Option<(&'static str, &'static str)> {
+    match d.kind.as_str() {
+        "embroidery" => Some((STITCHFOUNDRY_WEB, "StitchFoundry")),
+        "laser" if LASERFOUNDRY_OPENS_LINKS && opens_in_laserfoundry(d) => Some((LASERFOUNDRY_WEB, "LaserFoundry")),
+        _ => None,
+    }
+}
+
+/// Whether design `d`'s file is one a web app can open: any embroidery file; an SVG or DXF laser file.
+pub fn openable(d: &designs::DesignRow) -> bool {
+    d.kind == "embroidery" || (d.kind == "laser" && opens_in_laserfoundry(d))
+}
+
+fn opens_in_laserfoundry(d: &designs::DesignRow) -> bool {
+    matches!(
+        d.facts.get("format").and_then(serde_json::Value::as_str),
+        Some("SVG" | "DXF")
+    )
+}
 
 /// The link that opens design `id` in StitchFoundry's web app: its file's address on this site
 /// (`public_url`), ending in `name` so the app knows how to read it.
 pub fn open_in_stitchfoundry(public_url: &str, id: i64, name: &str) -> String {
-    open_link(public_url, id, name, None)
+    open_link(STITCHFOUNDRY_WEB, public_url, id, name, None)
+}
+
+/// The link that opens design `id`'s file (named `name`) in web app `app`.
+pub fn open_in(app: &str, public_url: &str, id: i64, name: &str) -> String {
+    open_link(app, public_url, id, name, None)
 }
 
 /// The same, for a paid design: the file address carries a buyer's link (`t`, see `open_paid`).
-fn open_link(public_url: &str, id: i64, name: &str, token: Option<&str>) -> String {
+fn open_link(app: &str, public_url: &str, id: i64, name: &str, token: Option<&str>) -> String {
     let file = format!(
         "{}/api/v1/designs/{id}/file/{}{}",
         public_url.trim_end_matches('/'),
         crate::listings::url_word(name),
         token.map(|t| format!("?t={t}")).unwrap_or_default()
     );
-    format!("{STITCHFOUNDRY_WEB}?open={}", crate::listings::url_word(&file))
+    format!("{app}?open={}", crate::listings::url_word(&file))
 }
 
 /// How long a buyer's link to a paid design's file lasts.
@@ -73,9 +105,9 @@ pub async fn open_paid(State(state): State<AppState>, headers: HeaderMap, Path(i
         return back;
     };
     let (_, may) = crate::listings::access(&state, pool, Some(&viewer), &d, id).await;
-    if !may || d.kind != "embroidery" {
+    let Some((app, _)) = web_app(&d).filter(|_| may) else {
         return back;
-    }
+    };
     let mut bytes = [0u8; 24];
     if getrandom::fill(&mut bytes).is_err() {
         return back;
@@ -95,7 +127,7 @@ pub async fn open_paid(State(state): State<AppState>, headers: HeaderMap, Path(i
     }
     let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
     let name = format!("{}.{ext}", crate::listings::slug(&d.title));
-    Redirect::to(&open_link(&state.public_url, id, &name, Some(&token))).into_response()
+    Redirect::to(&open_link(app, &state.public_url, id, &name, Some(&token))).into_response()
 }
 
 /// Whether `token` is a buyer's link to design `id` that hasn't run out.
@@ -190,7 +222,7 @@ async fn design_file_answer(state: &AppState, headers: &HeaderMap, id: i64, toke
     // with a buyer's link (made once their right to it was checked), unless it was taken down
     let (seen, may) = crate::listings::access(state, pool, None, &d, id).await;
     let bought = !may && d.status != "removed" && !token.is_empty() && link_good(pool, token, id).await;
-    if (!seen && !bought) || d.kind != "embroidery" {
+    if (!seen && !bought) || !openable(&d) {
         return missing();
     }
     if !may && !bought {

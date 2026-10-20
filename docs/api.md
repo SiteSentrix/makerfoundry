@@ -92,3 +92,32 @@ ci` green, its own task id):
   opens `url`; on an error it shows `error.message`.
 - A setting for MakerFoundry's address (default `https://makerfoundry.app`, a local address for
   testing, checked with `cloud::clean_server`).
+
+## For LaserFoundry (a note for its chat): Open in LaserFoundry
+MakerFoundry's side is built (MF-18): laser designs' SVG and DXF files (what LaserFoundry imports)
+are served at the same address as embroidery files, `GET
+https://makerfoundry.app/api/v1/designs/{id}/file/{name}` (free designs for anyone; a paid design
+with a buyer's `?t=` link), with CORS for `https://stitchwright.github.io` and `Content-Disposition`
+exposed. The **Open in LaserFoundry** button is off until LaserFoundry's web app opens links
+(`LASERFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`, then the button links to
+`https://stitchwright.github.io/laserfoundry/?open=<the file's address, URL-encoded>`).
+
+LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as StitchFoundry did
+(its OPEN-01, `apps/vectorcraft-web/src/open_link.rs`, a good model):
+
+- The web app reads `?open=<address>` once at start: only `https://` on `makerfoundry.app` or
+  `www.makerfoundry.app` (no user name, no port, no spaces or control characters, look-alike hosts
+  refused), fetched without cookies (`credentials: "omit"`), at most 32 MB, then opened as a dropped
+  file would be (SVG or DXF, by the name's extension).
+- The file's name: the end of the address's path (before `?`), or `Content-Disposition`'s
+  `filename` when the answer exposes it; never a path, never empty.
+- Its page's content security policy has to let the page fetch MakerFoundry:
+  `apps/laserfoundry-web/index.html`'s `connect-src` gains `https://makerfoundry.app
+  https://www.makerfoundry.app` (today it names only `'self'` and the account service).
+- The status bar says it's opening the design, or why it couldn't (MakerFoundry's answers carry
+  `{"error": {"message"}}` with a sentence to show as it is: `403` for a design for sale without a
+  buyer's link, `404` for one that isn't there or can't be opened, `429` for too many).
+- Tests: the address check (allowed hosts, refused look-alikes, encoded addresses), the file name.
+
+Once it ships, tell the MakerFoundry chat to switch the button on.
+

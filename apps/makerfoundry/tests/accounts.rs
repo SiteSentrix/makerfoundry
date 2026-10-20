@@ -3712,3 +3712,86 @@ async fn a_paid_design_opens_in_stitchfoundry_for_its_buyers() {
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     assert_eq!(makerfoundry::api::forget_old_links(&s.pool).await.unwrap(), 1);
 }
+
+/// A one-page PDF with a red square to cut.
+fn tiny_pdf() -> Vec<u8> {
+    use lopdf::{Document, Object, Stream, dictionary};
+    let mut doc = Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let content_id = doc.add_object(Stream::new(dictionary! {}, b"1 0 0 RG 72 72 72 72 re S".to_vec()));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id, "Contents" => content_id,
+        "MediaBox" => vec![0.into(), 0.into(), 300.into(), 300.into()],
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1 }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog_id);
+    let mut out = Vec::new();
+    doc.save_to(&mut out).unwrap();
+    out
+}
+
+/// MakerFoundry's side of Open in LaserFoundry: a laser design's SVG or DXF file is served to the
+/// web apps like an embroidery file; no button shows until LaserFoundry's web app opens links.
+#[tokio::test]
+async fn laser_files_are_ready_for_laserfoundrys_web_app() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("lou%40example.com").await;
+    s.post("/account/maker", "name=Lou&handle=lou", Some(&cookie)).await;
+    let mut ids = Vec::new();
+    for (name, bytes) in [
+        ("box.svg", br#"<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="40mm" viewBox="0 0 50 40"><rect x="1" y="1" width="48" height="38" fill="none" stroke="red"/></svg>"#.to_vec()),
+        ("lid.pdf", tiny_pdf()),
+    ] {
+        let r = s.send(multipart("/designs/new", &[("file", name, bytes)], &cookie)).await;
+        let id = design_id(r.location());
+        s.post(&format!("/designs/{id}/edit"), "title=Box&licence=personal&price=0", Some(&cookie)).await;
+        s.post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie)).await;
+        ids.push(id);
+    }
+    let svg = ids[0];
+    let r = s
+        .api(
+            "GET",
+            &format!("/api/v1/designs/{svg}/file/box.svg"),
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("<svg"));
+    assert_eq!(
+        r.headers[header::CONTENT_DISPOSITION],
+        r#"attachment; filename="box.svg""#
+    );
+    // the button follows the switch: off until LaserFoundry's web app opens links
+    let page = s.get(&format!("/d/{svg}"), None).await.body;
+    if makerfoundry::api::LASERFOUNDRY_OPENS_LINKS {
+        assert!(
+            page.contains("https://stitchwright.github.io/laserfoundry/?open="),
+            "{page}"
+        );
+    } else {
+        assert!(!page.contains("Open in"), "{page}");
+    }
+    let pdf = ids[1];
+    let r = s
+        .api(
+            "GET",
+            &format!("/api/v1/designs/{pdf}/file/box.pdf"),
+            None,
+            None,
+            &json!({}),
+        )
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::NOT_FOUND,
+        "LaserFoundry doesn't import PDF: {}",
+        r.body
+    );
+}

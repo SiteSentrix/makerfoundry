@@ -556,24 +556,25 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         String::new()
     };
     // Open in StitchFoundry: a free, published embroidery design opens in the web app
-    let open = if d.kind == "embroidery" && d.price_cents == 0 && d.status == "published" {
-        let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-        let href = crate::api::open_in_stitchfoundry(&state.public_url, id, &format!("{}.{ext}", slug(&d.title)));
-        format!(
-            r#"<p class="actions"><a class="button secondary" href="{}" rel="noopener">Open in StitchFoundry</a> <span class="muted">Free, in your web browser</span></p>"#,
-            escape(&href)
-        )
-    } else if d.kind == "embroidery"
-        && d.price_cents > 0
-        && d.status != "removed"
-        && access(&state, pool, viewer.as_ref(), &d, id).await.1
-    {
-        // a paid design, for its buyers (and its maker): through a link made for them
-        format!(
-            r#"<p class="actions"><a class="button secondary" href="/d/{id}/open" rel="noopener">Open in StitchFoundry</a> <span class="muted">In your web browser</span></p>"#
-        )
-    } else {
-        String::new()
+    // Open in StitchFoundry (embroidery) or LaserFoundry (laser): a free design's file is anyone's;
+    // a paid one opens through a link made for its buyers (and its maker)
+    let open = match crate::api::web_app(&d) {
+        Some((app, name)) if d.price_cents == 0 && d.status == "published" => {
+            let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+            let href = crate::api::open_in(app, &state.public_url, id, &format!("{}.{ext}", slug(&d.title)));
+            format!(
+                r#"<p class="actions"><a class="button secondary" href="{}" rel="noopener">Open in {name}</a> <span class="muted">Free, in your web browser</span></p>"#,
+                escape(&href)
+            )
+        }
+        Some((_, name))
+            if d.price_cents > 0 && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1 =>
+        {
+            format!(
+                r#"<p class="actions"><a class="button secondary" href="/d/{id}/open" rel="noopener">Open in {name}</a> <span class="muted">In your web browser</span></p>"#
+            )
+        }
+        _ => String::new(),
     };
     let intro =
         format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{buy}{open}{save}"#);
