@@ -444,6 +444,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <p><a href="/library">Your library</a>: the designs you've bought. <a href="/collections">Your collections</a>: the designs you've saved. <a href="/following">Following</a>: new designs from makers you follow.</p>
 <p><a href="/account/selling">Selling</a>: get paid for your designs, and <a href="/account/sales">your sales</a>.</p>
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>
+<p><a href="/account/data">Your data</a>: download a copy of it, or delete it.</p>
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
 </section>"#,
             email = escape(&user.email)

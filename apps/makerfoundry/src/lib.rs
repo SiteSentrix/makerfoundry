@@ -10,6 +10,7 @@ pub mod cloud;
 pub mod collections;
 pub mod comments;
 pub mod convert;
+pub mod data;
 pub mod db;
 pub mod designs;
 pub mod embroidery;
@@ -163,6 +164,9 @@ pub fn app(state: AppState) -> Router {
         .route("/makers/{handle}/follow", post(follows::follow))
         .route("/makers/{handle}/unfollow", post(follows::unfollow))
         .route("/following", get(follows::following))
+        .route("/account/data", get(data::page))
+        .route("/account/data.json", get(data::download))
+        .route("/account/data/delete", post(data::delete))
         .route("/account/maker", get(makers::edit_page).post(makers::save))
         .route("/d/{id}/report", get(moderation::report_page).post(moderation::report))
         .route(

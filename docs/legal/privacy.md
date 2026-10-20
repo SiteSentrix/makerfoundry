@@ -100,11 +100,14 @@ authorities as the law requires.
 Wherever you live, you can:
 
 - **See your data.** Your account page, your designs and your maker profile show what we keep.
-  Ask at [OWNER: support@makerfoundry.app] for a full copy.
+  **Account › Your data › Download a copy** gives you all of it in one file, at any time.
+  You can also ask at [OWNER: support@makerfoundry.app].
 - **Correct it.** Change your maker profile and your designs' details at any time.
-- **Delete it.** Delete your drafts, unpublish or delete published designs, and close your account
-  (as StitchFoundry's Terms describe). We delete everything except records the law asks us to
-  keep, and records of copyright notices and takedowns.
+- **Delete it.** Delete your drafts, unpublish or delete published designs, or delete all of your
+  MakerFoundry data at once (**Account › Your data**), and close your Foundry Account as
+  StitchFoundry's Terms describe. We delete everything except records the law asks us to keep
+  (purchases, sales, agreements to these terms), records of copyright notices and takedowns, and
+  designs people have bought, which are unpublished and kept so they keep their downloads.
 
 We answer requests within 30 days and never charge for them. We may need to confirm the request
 comes from your account's email.

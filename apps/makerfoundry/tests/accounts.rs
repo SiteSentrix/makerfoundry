@@ -3169,3 +3169,121 @@ async fn people_comment_on_designs_and_bad_comments_come_down() {
     }
     assert!(say(&s, rose, &bea, "again").await.body.contains("commented a lot"));
 }
+
+// ---------------------------------------------------------------- MF-15: your data
+
+#[tokio::test]
+async fn a_maker_downloads_their_data_and_deletes_it_and_buyers_keep_their_designs() {
+    let Some((s, st, sam, fox)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    // Bea buys the fox, and has a design of her own
+    let bea = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{fox}/buy"), "", Some(&bea)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_d",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, true),
+    )
+    .await;
+    let cat = published(&s, &bea, "bea", "Cat").await;
+    // Sam: a free design too, a collection, a follow, a comment and a make; Bea follows Sam
+    let owl = published(&s, &sam, "sams-shop", "Owl").await;
+    s.post("/collections", "name=Ideas&public=yes", Some(&sam)).await;
+    s.post(&format!("/d/{cat}/save"), "", Some(&sam)).await;
+    s.post("/makers/bea/follow", "", Some(&sam)).await;
+    s.post("/makers/sams-shop/follow", "", Some(&bea)).await;
+    say(&s, cat, &sam, "Lovely").await;
+    s.send(multipart(
+        &format!("/d/{cat}/makes"),
+        &[
+            ("photo", "a.jpg", photo_with_location()),
+            ("confirm", "", b"yes".to_vec()),
+        ],
+        &sam,
+    ))
+    .await;
+    // the copy
+    assert!(
+        s.get("/account/data", Some(&sam))
+            .await
+            .body
+            .contains("Download a copy")
+    );
+    let r = s.get("/account/data.json", Some(&sam)).await;
+    assert_eq!(
+        r.headers[header::CONTENT_DISPOSITION],
+        r#"attachment; filename="makerfoundry-data.json""#
+    );
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["account"]["email"], "sam@example.com");
+    assert_eq!(v["maker_profile"][0]["handle"], "sams-shop");
+    assert_eq!(v["designs"].as_array().unwrap().len(), 2);
+    assert_eq!(v["sales"][0]["seller_cents"], 405);
+    assert_eq!(v["comments"][0]["body"], "Lovely");
+    assert_eq!(v["makes"].as_array().unwrap().len(), 1);
+    assert_eq!(v["following"][0]["handle"], "bea");
+    assert_eq!(v["collections"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        s.get("/account/data.json", None).await.location(),
+        "/signin?next=/account/data"
+    );
+    // deleting needs the word
+    assert!(
+        s.post("/account/data/delete", "confirm=yes", Some(&sam))
+            .await
+            .body
+            .contains("Type delete")
+    );
+    let stored = s.stored.lock().unwrap().len();
+    let r = s.post("/account/data/delete", "confirm=DELETE", Some(&sam)).await;
+    assert!(r.body.contains("Your MakerFoundry data is deleted"), "{}", r.body);
+    assert!(r.headers[header::SET_COOKIE].to_str().unwrap().contains("Max-Age=0"));
+    assert_eq!(s.get("/account", Some(&sam)).await.location(), "/signin");
+    // gone: the owl and its file and photos, the make's photos, the rest of Sam's records
+    assert_eq!(s.stored.lock().unwrap().len(), stored - 5);
+    for (sql, n) in [
+        (format!("SELECT count(*) FROM mf_designs WHERE id = {owl}"), 0),
+        ("SELECT count(*) FROM mf_makes".to_string(), 0),
+        ("SELECT count(*) FROM mf_comments".to_string(), 0),
+        (
+            "SELECT count(*) FROM mf_collections WHERE account_id = 1000".to_string(),
+            0,
+        ),
+        ("SELECT count(*) FROM mf_follows".to_string(), 0),
+        ("SELECT count(*) FROM mf_makers WHERE account_id = 1000".to_string(), 0),
+        (
+            "SELECT count(*) FROM mf_sessions WHERE account_id = 1000".to_string(),
+            0,
+        ),
+        (
+            "SELECT count(*) FROM mf_accounts WHERE account_id = 1000 AND email = ''".to_string(),
+            1,
+        ),
+        // kept: the sale, its ledger, and the fox, unpublished, for its buyer
+        ("SELECT count(*) FROM mf_orders WHERE status = 'paid'".to_string(), 1),
+        ("SELECT count(*) FROM mf_ledger".to_string(), 3),
+        (
+            format!("SELECT count(*) FROM mf_designs WHERE id = {fox} AND status = 'draft'"),
+            1,
+        ),
+    ] {
+        assert_eq!(s.scalar(&sql).await, n, "{sql}");
+    }
+    assert!(
+        s.get(&format!("/d/{fox}/download"), Some(&bea))
+            .await
+            .location()
+            .contains("/files/")
+    );
+    assert!(
+        s.get("/library", Some(&bea))
+            .await
+            .body
+            .contains(&format!("/d/{fox}/download"))
+    );
+    // Bea's own things are untouched
+    assert!(s.get(&format!("/d/{cat}"), None).await.status == StatusCode::OK);
+}
