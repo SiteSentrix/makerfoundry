@@ -10,6 +10,8 @@ use sf_core::{Cmd, DesignSettings, Pattern, Rgb};
 
 /// The largest embroidery file accepted. Real designs are well under a megabyte.
 pub const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
+/// The fewest stitches a design may have.
+pub const MIN_STITCHES: usize = 10;
 /// The most stitches a design may have: more than any hoop sews in one go, and the most the
 /// preview draws.
 pub const MAX_STITCHES: usize = 300_000;
@@ -67,6 +69,13 @@ pub fn read(bytes: &[u8], file_name: &str) -> Result<Embroidery, String> {
     let stats = pattern_stats(&pattern, &DesignSettings::default());
     if stats.stitches == 0 {
         return Err("the file has no stitches".into());
+    }
+    // (formats without a header, such as EXP, read any few bytes as a few stitches)
+    if stats.stitches < MIN_STITCHES {
+        return Err(format!(
+            "the file has only {} stitches: too few to be a design",
+            stats.stitches
+        ));
     }
     if !(stats.width_mm.is_finite() && stats.height_mm.is_finite())
         || stats.width_mm > MAX_SIZE_MM
@@ -160,6 +169,17 @@ fn preview_svg(pattern: &Pattern) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_few_bytes_are_not_a_design() {
+        // a headerless format reads anything; four bytes make two EXP stitches
+        let r = read(b"junk", "x.jef");
+        assert!(
+            r.as_ref().is_err_and(|e| e.contains("too few")),
+            "{:?}",
+            r.map(|e| e.stitches)
+        );
+    }
+
     use super::*;
     use sf_core::{Point, Thread};
     use sf_formats::{Format, WriteOptions};
