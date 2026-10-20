@@ -139,6 +139,7 @@ pub fn app(state: AppState) -> Router {
         .route("/designs/{id}/unpublish", post(listings::unpublish))
         .route("/d/{id}", get(listings::public_page))
         .route("/d/{id}/download", get(listings::download))
+        .route("/d/{id}/open", get(api::open_paid))
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))

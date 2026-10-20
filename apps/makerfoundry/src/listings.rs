@@ -563,6 +563,15 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
             r#"<p class="actions"><a class="button secondary" href="{}" rel="noopener">Open in StitchFoundry</a> <span class="muted">Free, in your web browser</span></p>"#,
             escape(&href)
         )
+    } else if d.kind == "embroidery"
+        && d.price_cents > 0
+        && d.status != "removed"
+        && access(&state, pool, viewer.as_ref(), &d, id).await.1
+    {
+        // a paid design, for its buyers (and its maker): through a link made for them
+        format!(
+            r#"<p class="actions"><a class="button secondary" href="/d/{id}/open" rel="noopener">Open in StitchFoundry</a> <span class="muted">In your web browser</span></p>"#
+        )
     } else {
         String::new()
     };

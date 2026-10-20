@@ -12,7 +12,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
@@ -34,12 +34,98 @@ pub const STITCHFOUNDRY_WEB: &str = "https://stitchwright.github.io/StitchFoundr
 /// The link that opens design `id` in StitchFoundry's web app: its file's address on this site
 /// (`public_url`), ending in `name` so the app knows how to read it.
 pub fn open_in_stitchfoundry(public_url: &str, id: i64, name: &str) -> String {
+    open_link(public_url, id, name, None)
+}
+
+/// The same, for a paid design: the file address carries a buyer's link (`t`, see `open_paid`).
+fn open_link(public_url: &str, id: i64, name: &str, token: Option<&str>) -> String {
     let file = format!(
-        "{}/api/v1/designs/{id}/file/{}",
+        "{}/api/v1/designs/{id}/file/{}{}",
         public_url.trim_end_matches('/'),
-        crate::listings::url_word(name)
+        crate::listings::url_word(name),
+        token.map(|t| format!("?t={t}")).unwrap_or_default()
     );
     format!("{STITCHFOUNDRY_WEB}?open={}", crate::listings::url_word(&file))
+}
+
+/// How long a buyer's link to a paid design's file lasts.
+const OPEN_LINK_MINUTES: i32 = 10;
+
+fn token_hash(token: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `GET /d/{id}/open`: Open in StitchFoundry for a paid design. The web app fetches without
+/// anyone's sign-in, so this checks here that the person may download it (a buyer, its maker or an
+/// admin), makes a link good for this design for ten minutes (kept only as its hash), and sends
+/// them to the web app with it.
+pub async fn open_paid(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+    let back = Redirect::to(&format!("/d/{id}")).into_response();
+    let Some(viewer) = crate::accounts::current_user(&state, &headers).await else {
+        return Redirect::to(&format!("/signin?next=/d/{id}")).into_response();
+    };
+    let Some(pool) = state.db.as_ref() else { return back };
+    let Ok(Some(d)) = designs::design(pool, id).await else {
+        return back;
+    };
+    let (_, may) = crate::listings::access(&state, pool, Some(&viewer), &d, id).await;
+    if !may || d.kind != "embroidery" {
+        return back;
+    }
+    let mut bytes = [0u8; 24];
+    if getrandom::fill(&mut bytes).is_err() {
+        return back;
+    }
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let made = sqlx::query(
+        "INSERT INTO mf_open_links (token_hash, design_id, expires_at) VALUES ($1, $2, now() + make_interval(mins => $3))",
+    )
+    .bind(token_hash(&token))
+    .bind(id)
+    .bind(OPEN_LINK_MINUTES)
+    .execute(pool)
+    .await;
+    if let Err(e) = made {
+        eprintln!("api: open link {id}: {e}");
+        return back;
+    }
+    let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    let name = format!("{}.{ext}", crate::listings::slug(&d.title));
+    Redirect::to(&open_link(&state.public_url, id, &name, Some(&token))).into_response()
+}
+
+/// Whether `token` is a buyer's link to design `id` that hasn't run out.
+async fn link_good(pool: &sqlx::PgPool, token: &str, id: i64) -> bool {
+    if token.len() != 48 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM mf_open_links WHERE token_hash = $1 AND design_id = $2 AND expires_at > now()",
+    )
+    .bind(token_hash(token))
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .is_ok_and(|n| n > 0)
+}
+
+/// Forgets buyers' links that have run out. Run every few minutes.
+pub async fn forget_old_links(pool: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
+    sqlx::query("DELETE FROM mf_open_links WHERE expires_at < now()")
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct FileQuery {
+    /// A buyer's link to a paid design's file (`open_paid`).
+    t: String,
 }
 
 /// An error as the apps get it: `{"error": {"message"}}` with the status.
@@ -79,8 +165,9 @@ pub async fn design_file(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((id, _name)): Path<(i64, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
 ) -> Response {
-    let mut resp = design_file_answer(&state, &headers, id).await;
+    let mut resp = design_file_answer(&state, &headers, id, &q.t).await;
     resp.headers_mut().insert(
         header::ACCESS_CONTROL_EXPOSE_HEADERS,
         HeaderValue::from_static("content-disposition"),
@@ -88,7 +175,7 @@ pub async fn design_file(
     with_cors(&state, &headers, resp)
 }
 
-async fn design_file_answer(state: &AppState, headers: &HeaderMap, id: i64) -> Response {
+async fn design_file_answer(state: &AppState, headers: &HeaderMap, id: i64, token: &str) -> Response {
     let (Some(pool), Some(storage)) = (state.db.as_ref(), state.storage.as_ref()) else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -99,12 +186,14 @@ async fn design_file_answer(state: &AppState, headers: &HeaderMap, id: i64) -> R
     let Ok(Some(d)) = designs::design(pool, id).await else {
         return missing();
     };
-    // what anyone may see and download: published, not taken down, and free
+    // what anyone may see and download: published, not taken down, and free; or a paid design
+    // with a buyer's link (made once their right to it was checked), unless it was taken down
     let (seen, may) = crate::listings::access(state, pool, None, &d, id).await;
-    if !seen || d.kind != "embroidery" {
+    let bought = !may && d.status != "removed" && !token.is_empty() && link_good(pool, token, id).await;
+    if (!seen && !bought) || d.kind != "embroidery" {
         return missing();
     }
-    if !may {
+    if !may && !bought {
         return error(
             StatusCode::FORBIDDEN,
             "This design is for sale: buy it on MakerFoundry, then download it there.",

@@ -151,6 +151,11 @@ async fn main() -> ExitCode {
             {
                 eprintln!("orders: {e}");
             }
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::api::forget_old_links(pool).await
+            {
+                eprintln!("open links: {e}");
+            }
         }
     });
     match axum::serve(listener, makerfoundry::app(state))

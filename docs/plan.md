@@ -1,6 +1,6 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-20. MF-0 to MF-16 built and live at https://makerfoundry.app (the table below);
+**Status:** 2026-10-20. MF-0 to MF-17 built and live at https://makerfoundry.app (the table below);
 the site is closed until the owner's launch (`docs/launch.md`: legal wording, the DMCA agent,
 Stripe keys and sales tax, then `MF_LAUNCHED=yes`). MF-7's app side is StitchFoundry's
 (`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
@@ -122,6 +122,7 @@ Nobody may resell or share the files themselves.
 | MF-14 | Comments on designs | buyers ask makers questions and share tips under a design. **Done 2026-10-20**: comments under a published design, oldest first, the maker's marked; a maker profile needed (and, until the launch, being allowed to publish); plain text only, nothing becomes a link; 20 an hour; the author, the design's maker and the admins take one down; Report on each, with Take the comment down in `/admin` (`comments.rs`) |
 | MF-15 | Your data: a copy and deleting it | what the Privacy Policy promises, done by the person. **Done 2026-10-20**: `/account/data` downloads everything kept about the account as JSON, and deletes it (typing delete to confirm): profile, designs, files and photos, makes, comments, collections, follows and sign-ins, in one transaction, then the files; kept: purchases, sales, ledger, agreements, reports and notices, and bought designs (unpublished, for their buyers) (`data.rs`) |
 | MF-16 | The admins' overview | the owner sees the site's numbers at a glance. **Done 2026-10-20**: `/admin/overview` (admins only): accounts, maker profiles, sellers ready, follows; published designs by kind, paid, drafts, taken down, downloads, makes, comments; sales, refunds, and money from the ledger (paid by buyers, to sellers, MakerFoundry's fees, card fees, fees this month); what's waiting in the report queue (`overview.rs`) |
+| MF-17 | Open in StitchFoundry for buyers of paid designs | buyers open what they bought in the web app too. **Done 2026-10-20**: a paid embroidery design's page shows Open in StitchFoundry to its buyers, maker and admins; `/d/<id>/open` checks that, makes a link to that design's file good for ten minutes (kept as its hash, `mf_open_links`), and sends them to the web app with it; the file address takes the link for paid designs and refuses them without one (`api.rs`) |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

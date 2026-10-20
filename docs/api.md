@@ -67,7 +67,9 @@ ends the address, because the app reads the file by its extension.
   couldn't follow; CORS for the web apps' sites, with `Content-Disposition` exposed.
 - Cookies aren't read: it's only what anyone may download. A draft, a removed or taken-down
   design, a laser file or an unknown id is `404` ("That design isn't on MakerFoundry."); a design
-  for sale is `403` (bought designs are downloaded from the site). 120 an hour from one address
+  for sale is `403` unless the address carries a buyer's link: `?t=<link>`, made by `/d/<id>/open`
+  once the person's right to the design is checked (its buyers, its maker, the admins), good for that
+  design for ten minutes. 120 an hour from one address
   (`429`). Each counts as a download.
 
 ## From a web app (browsers)

@@ -3600,6 +3600,115 @@ async fn a_design_for_sale_isnt_sent_to_stitchfoundry() {
         r.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
         "https://stitchfoundry.test"
     );
+    // its maker opens it through a link made for them (see the buyers' test)
     let page = s.get(&format!("/d/{id}/fox-patch"), Some(&seller)).await;
-    assert!(!page.body.contains("Open in StitchFoundry"), "{}", page.body);
+    assert!(page.body.contains(&format!(r#"href="/d/{id}/open""#)), "{}", page.body);
+    assert!(
+        !s.get(&format!("/d/{id}/fox-patch"), None)
+            .await
+            .body
+            .contains("Open in StitchFoundry")
+    );
+}
+
+/// Open in StitchFoundry for a paid design: only its buyers (and maker) get the button, which
+/// makes a ten-minute link to that design's file; the web app's fetch with it gets the file.
+#[tokio::test]
+async fn a_paid_design_opens_in_stitchfoundry_for_its_buyers() {
+    let Some((s, st, _seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    // not bought: no button, and the open route sends them back to the page
+    assert!(
+        !s.get(&format!("/d/{id}"), Some(&bea))
+            .await
+            .body
+            .contains("Open in StitchFoundry")
+    );
+    assert_eq!(
+        s.get(&format!("/d/{id}/open"), Some(&bea)).await.location(),
+        format!("/d/{id}")
+    );
+    assert_eq!(
+        s.get(&format!("/d/{id}/open"), None).await.location(),
+        format!("/signin?next=/d/{id}")
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_open_links").await, 0);
+    // bought
+    s.post(&format!("/d/{id}/buy"), "", Some(&bea)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_op",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, true),
+    )
+    .await;
+    assert!(
+        s.get(&format!("/d/{id}"), Some(&bea))
+            .await
+            .body
+            .contains(&format!(r#"href="/d/{id}/open""#))
+    );
+    let r = s.get(&format!("/d/{id}/open"), Some(&bea)).await;
+    let prefix = format!(
+        "https://stitchwright.github.io/StitchFoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Ffox-patch.pes%3Ft%3D"
+    );
+    assert!(r.location().starts_with(&prefix), "{}", r.location());
+    let token = r.location().trim_start_matches(&prefix).to_string();
+    assert_eq!(token.len(), 48);
+    // the web app's fetch with the link: the file
+    let path = format!("/api/v1/designs/{id}/file/fox-patch.pes");
+    let ok = s
+        .api(
+            "GET",
+            &format!("{path}?t={token}"),
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    assert!(ok.body.starts_with("#PES"));
+    // without it, with a wrong one, or for another design: refused
+    for bad in [String::new(), "0".repeat(48), "nothex".into()] {
+        let r = s.api("GET", &format!("{path}?t={bad}"), None, None, &json!({})).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{bad}: {}", r.body);
+    }
+    let other = published(&s, &cal, "cals", "Owl").await;
+    let r = s
+        .api(
+            "GET",
+            &format!("/api/v1/designs/{other}/file/owl.pes?t={token}"),
+            None,
+            None,
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "a free design is anyone's anyway");
+    sqlx::query("UPDATE mf_designs SET price_cents = 300 WHERE id = $1")
+        .bind(other)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let r = s
+        .api(
+            "GET",
+            &format!("/api/v1/designs/{other}/file/owl.pes?t={token}"),
+            None,
+            None,
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "the link is only for its design");
+    // ten minutes on, it's gone
+    sqlx::query("UPDATE mf_open_links SET expires_at = now() - interval '1 second'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let r = s.api("GET", &format!("{path}?t={token}"), None, None, &json!({})).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(makerfoundry::api::forget_old_links(&s.pool).await.unwrap(), 1);
 }
