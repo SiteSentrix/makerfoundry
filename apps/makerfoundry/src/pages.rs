@@ -28,6 +28,56 @@ pub fn escape(text: &str) -> String {
 /// goes through [`escape`] before it gets here. `signed_in` says whether the header offers the
 /// account or a way to sign in.
 pub fn page(title: &str, body: &str, signed_in: bool) -> String {
+    page_with(title, body, signed_in, None)
+}
+
+/// What a link to a public page shows where it's shared (a chat, a social site): the standard
+/// Open Graph tags. Plain text; escaped here.
+pub struct Preview<'a> {
+    pub title: &'a str,
+    pub description: &'a str,
+    /// The page's address, in full.
+    pub url: &'a str,
+    /// A picture's address, in full.
+    pub image: Option<&'a str>,
+}
+
+/// `text` on one line, at most `max` characters.
+pub fn summary(text: &str, max: usize) -> String {
+    let one: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() <= max {
+        one
+    } else {
+        format!(
+            "{}…",
+            one.chars().take(max.saturating_sub(1)).collect::<String>().trim_end()
+        )
+    }
+}
+
+/// [`page`], with a shared link's preview.
+pub fn page_with(title: &str, body: &str, signed_in: bool, preview: Option<&Preview>) -> String {
+    let head = match preview {
+        None => r#"<meta name="description" content="Machine-embroidery designs and laser-cut files, shared and sold by makers.">"#.to_string(),
+        Some(p) => {
+            let image = match p.image {
+                Some(i) => format!(
+                    r#"<meta property="og:image" content="{}"><meta name="twitter:card" content="summary_large_image">"#,
+                    escape(i)
+                ),
+                None => r#"<meta name="twitter:card" content="summary">"#.to_string(),
+            };
+            format!(
+                r#"<meta name="description" content="{d}">
+<link rel="canonical" href="{u}">
+<meta property="og:site_name" content="MakerFoundry"><meta property="og:type" content="website">
+<meta property="og:title" content="{t}"><meta property="og:description" content="{d}"><meta property="og:url" content="{u}">{image}"#,
+                t = escape(p.title),
+                d = escape(p.description),
+                u = escape(p.url),
+            )
+        }
+    };
     let nav = if signed_in {
         r#"<a href="/browse">Browse</a><a href="/account">Account</a>"#
     } else {
@@ -40,7 +90,7 @@ pub fn page(title: &str, body: &str, signed_in: bool) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<meta name="description" content="Machine-embroidery designs and laser-cut files, shared and sold by makers.">
+{head}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/site.css">
 </head>

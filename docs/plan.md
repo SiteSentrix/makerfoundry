@@ -1,6 +1,6 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-20. MF-0 to MF-18 built and live at https://makerfoundry.app (the table below);
+**Status:** 2026-10-20. MF-0 to MF-19 built and live at https://makerfoundry.app (the table below);
 the site is closed until the owner's launch (`docs/launch.md`: legal wording, the DMCA agent,
 Stripe keys and sales tax, then `MF_LAUNCHED=yes`). MF-7's app side is StitchFoundry's
 (`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
@@ -124,6 +124,7 @@ Nobody may resell or share the files themselves.
 | MF-16 | The admins' overview | the owner sees the site's numbers at a glance. **Done 2026-10-20**: `/admin/overview` (admins only): accounts, maker profiles, sellers ready, follows; published designs by kind, paid, drafts, taken down, downloads, makes, comments; sales, refunds, and money from the ledger (paid by buyers, to sellers, MakerFoundry's fees, card fees, fees this month); what's waiting in the report queue (`overview.rs`) |
 | MF-17 | Open in StitchFoundry for buyers of paid designs | buyers open what they bought in the web app too. **Done 2026-10-20**: a paid embroidery design's page shows Open in StitchFoundry to its buyers, maker and admins; `/d/<id>/open` checks that, makes a link to that design's file good for ten minutes (kept as its hash, `mf_open_links`), and sends them to the web app with it; the file address takes the link for paid designs and refuses them without one (`api.rs`) |
 | MF-18 | Open in LaserFoundry: MakerFoundry's side | laser designs open in LaserFoundry's web app. **MakerFoundry's side built 2026-10-20**: SVG and DXF laser files are served at the same file address as embroidery (free for anyone, paid with a buyer's link), and the button (\"Open in LaserFoundry\") is ready but off (`LASERFOUNDRY_OPENS_LINKS`) until LaserFoundry's web app opens `?open=` links and allows makerfoundry.app in its content security policy: the note for its chat is in `docs/api.md` |
+| MF-19 | Link previews | a shared design shows its title, words and photo in chats and on social sites. **Done 2026-10-21**: published designs' and makers' pages carry the standard Open Graph tags (title, a line of the description, the page's address, the first photo) and a canonical address; drafts carry none (`pages::page_with`) |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

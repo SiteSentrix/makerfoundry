@@ -3795,3 +3795,46 @@ async fn laser_files_are_ready_for_laserfoundrys_web_app() {
         r.body
     );
 }
+
+// ---------------------------------------------------------------- link previews
+
+#[tokio::test]
+async fn a_shared_link_to_a_design_shows_its_title_words_and_photo() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let id = published(&s, &ann, "anns", "Rose+%26+%22Fern%22").await;
+    s.post(
+        &format!("/designs/{id}/edit"),
+        "title=Rose+%26+%22Fern%22&licence=personal&price=0&description=A+bright+rose+for+a+4x4+hoop.%0A%0AStitch+on+cotton.",
+        Some(&ann),
+    )
+    .await;
+    let photo: i64 = sqlx::query_scalar("SELECT id FROM mf_design_photos")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get(&format!("/d/{id}"), None).await.body;
+    for tag in [
+        r#"<meta property="og:title" content="Rose &amp; &quot;Fern&quot;">"#.to_string(),
+        r#"<meta property="og:description" content="A bright rose for a 4x4 hoop. Stitch on cotton.">"#.to_string(),
+        format!(r#"<meta property="og:url" content="https://makerfoundry.test/d/{id}/rose-fern">"#),
+        format!(r#"<link rel="canonical" href="https://makerfoundry.test/d/{id}/rose-fern">"#),
+        format!(r#"<meta property="og:image" content="https://makerfoundry.test/designs/{id}/photos/{photo}/large">"#),
+        r#"<meta name="twitter:card" content="summary_large_image">"#.to_string(),
+    ] {
+        assert!(page.contains(&tag), "{tag} in {page}");
+    }
+    // and the picture it names is there for anyone
+    let img = s.get(&format!("/designs/{id}/photos/{photo}/large"), None).await;
+    assert_eq!(img.status, StatusCode::OK);
+    // a maker's page too; a draft shows its maker no preview
+    let maker = s.get("/makers/anns", None).await.body;
+    assert!(
+        maker.contains(r#"<meta property="og:url" content="https://makerfoundry.test/makers/anns">"#),
+        "{maker}"
+    );
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&ann)).await;
+    assert!(!s.get(&format!("/d/{id}"), Some(&ann)).await.body.contains("og:title"));
+    // other pages keep the site's own description
+    assert!(s.get("/browse", None).await.body.contains("shared and sold by makers"));
+}

@@ -620,7 +620,48 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         d.title.clone()
     };
     match designs::facts_section(&d, &title, &intro, &footer) {
-        Some(html) => Html(page(&format!("{} · MakerFoundry", escape(&title)), &html, signed_in)).into_response(),
+        Some(html) => {
+            // a published design's link shows its title, a line of its description and a photo
+            let url = format!("{}/d/{id}/{}", state.public_url, slug(&title));
+            let photo: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM mf_design_photos WHERE design_id = $1 ORDER BY position LIMIT 1")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+                    .ok()
+                    .flatten();
+            let image = photo.map(|p| format!("{}/designs/{id}/photos/{p}/large", state.public_url));
+            let by = maker
+                .as_ref()
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| "a maker".into());
+            let description = if d.description.trim().is_empty() {
+                format!(
+                    "{} design by {by} on MakerFoundry",
+                    if d.kind == "laser" {
+                        "A laser-cut"
+                    } else {
+                        "An embroidery"
+                    }
+                )
+            } else {
+                crate::pages::summary(&d.description, 200)
+            };
+            let preview = crate::pages::Preview {
+                title: &title,
+                description: &description,
+                url: &url,
+                image: image.as_deref(),
+            };
+            let shared = (d.status == "published").then_some(&preview);
+            Html(crate::pages::page_with(
+                &format!("{} · MakerFoundry", escape(&title)),
+                &html,
+                signed_in,
+                shared,
+            ))
+            .into_response()
+        }
         None => not_found(signed_in),
     }
 }

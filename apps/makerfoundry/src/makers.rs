@@ -175,7 +175,19 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     } else {
         designs
     };
-    Html(page(
+    let url = format!("{}/makers/{handle}", state.public_url);
+    let description = if bio.trim().is_empty() {
+        format!("Embroidery and laser designs by {name} on MakerFoundry")
+    } else {
+        crate::pages::summary(&bio, 200)
+    };
+    let preview = crate::pages::Preview {
+        title: &name,
+        description: &description,
+        url: &url,
+        image: None,
+    };
+    Html(crate::pages::page_with(
         &format!("{} · MakerFoundry", escape(&name)),
         &format!(
             r#"<section class="design"><h1>{}</h1>{follow}{}<h2>Designs</h2>{list}{collections}</section>"#,
@@ -183,6 +195,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
             paragraphs(&bio)
         ),
         signed_in,
+        Some(&preview),
     ))
     .into_response()
 }
