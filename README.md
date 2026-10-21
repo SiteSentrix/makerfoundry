@@ -23,7 +23,10 @@ publish to ([`docs/api.md`](docs/api.md)); the apps' own command is next. **MF-8
 free/paid, hoop and material browsing, and several formats per design. **MF-9** done: embroidery designs download converted
 to every format StitchFoundry writes. **MF-10** done: saved designs and collections. **MF-11** done: makes, photos of what
 people made from a design. **MF-12** (reporting a make) and **MF-13** (following makers) done. **MF-14** done: comments on designs. **MF-15** done: download or delete your
-data. See [`docs/plan.md`](docs/plan.md).
+data. **MF-16** (the admins' overview), **MF-17** and **MF-18** (Open in StitchFoundry for bought designs,
+and MakerFoundry's side of Open in LaserFoundry) and **MF-19** (link previews) done. **MF-20** done: every
+reader of uploads and typed input is property-tested with random and damaged files
+(`apps/makerfoundry/tests/untrusted_input.rs`). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

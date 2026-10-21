@@ -136,7 +136,7 @@ impl Stripe {
             }
         }
         let Some(t) = t else { return false };
-        if (now - t).abs() > TOLERANCE_SECS || signatures.len() > 8 {
+        if now.abs_diff(t) > TOLERANCE_SECS.unsigned_abs() || signatures.len() > 8 {
             return false;
         }
         self.webhook_secrets.iter().any(|secret| {

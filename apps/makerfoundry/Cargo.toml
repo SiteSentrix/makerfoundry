@@ -40,3 +40,5 @@ base64 = { workspace = true }
 axum = { workspace = true, features = ["json"] }
 tower = { workspace = true }
 http-body-util = { workspace = true }
+# Property tests of everything that reads untrusted input (tests/untrusted_input.rs). MIT OR Apache-2.0.
+proptest = "1"
