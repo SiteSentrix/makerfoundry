@@ -79,13 +79,12 @@ that matter most:
 - For a hard bug keep a log in `docs/debug-logs/YYYY-MM-DD-<topic>.md` and link it from the fix.
 
 ## Commit authorship
-Commits are authored by **Bruce Wattendorf**, so the work shows on his GitHub profile. AI
-assistance is credited with a trailer, not as the author.
-- Before the first commit: `git config user.name "Bruce Wattendorf"` and
-  `git config user.email "bwattendorf@gmail.com"` (or pass
-  `--author="Bruce Wattendorf <bwattendorf@gmail.com>"` on every commit).
-- Never author or commit as `Claude <noreply@anthropic.com>`.
-- End every commit message with: `Co-Authored-By: Claude <noreply@anthropic.com>`
+Commits are made by **Claude**, with Bruce Wattendorf credited as co-author (owner's decision,
+2026-10-21; it replaces the earlier rule that commits were authored as Bruce).
+- Before the first commit: `git config user.name "Claude"` and
+  `git config user.email "noreply@anthropic.com"`.
+- End every commit message with: `Co-Authored-By: Bruce Wattendorf <bwattendorf@gmail.com>`
+- Never rewrite pushed commits to change their author.
 - No model names in commits, code or docs.
 
 ## Licence
