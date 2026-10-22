@@ -1492,6 +1492,44 @@ async fn sessions_past_their_days_are_forgotten() {
     assert_eq!(s.sessions().await, 1, "the recent one stays");
 }
 
+/// After a breach: sessions made before the time end, later ones go on.
+#[tokio::test]
+async fn sessions_made_before_a_time_end() {
+    assert_eq!(
+        makerfoundry::db::parse_time("2026-10-22T09:00:00Z"),
+        Some(1_792_659_600)
+    );
+    assert_eq!(makerfoundry::db::parse_time("2026-10-22"), Some(1_792_627_200));
+    assert_eq!(makerfoundry::db::parse_time("soon"), None);
+    let Some(s) = site().await else { return };
+    s.post(
+        "/signup",
+        "email=a%40b.c&password=fire+truck+1&again=fire+truck+1",
+        None,
+    )
+    .await;
+    s.post(
+        "/signup",
+        "email=d%40e.f&password=fire+truck+1&again=fire+truck+1",
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE mf_sessions SET created_at = now() - interval '2 days' WHERE account_id = 1000")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let yesterday = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        - 86_400;
+    assert_eq!(
+        makerfoundry::db::end_sessions_before(&s.pool, yesterday).await.unwrap(),
+        1
+    );
+    assert_eq!(s.sessions().await, 1, "the newer one stays");
+}
+
 // ---------------------------------------------------------------- MF-4: selling
 
 const STRIPE_KEY: &str = "sk_test_fake";

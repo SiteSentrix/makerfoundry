@@ -120,6 +120,25 @@ books and one name on card statements for both. What keeps the two apart:
 | `STRIPE_API_URL` | no | a stand-in for Stripe's API (local tests) |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |
 | `STITCHFOUNDRY_CLOUD_URL` | no (default `https://cloud.stitchfoundry.app`) | StitchFoundry's account service, which MakerFoundry's accounts are |
+| `MF_END_SESSIONS_BEFORE` | after a breach | sessions made before this UTC time (`2026-10-22T09:00:00Z`, a date, or Unix seconds) end when the service starts: everyone signs in again (see below) |
+
+## After a breach
+
+If Railway, a key or the database may have been exposed, give every secret a new value and sign
+everyone out. For each: make the new one, put it in the Railway variable, let the service
+redeploy, then revoke the old one.
+
+1. `STRIPE_SECRET_KEY`: the restricted key rolled in Stripe (Developers › API keys).
+2. `STRIPE_WEBHOOK_SECRET` and `STRIPE_CONNECT_WEBHOOK_SECRET`: each endpoint's signing secret
+   rolled (Developers › Webhooks): two endpoints, two secrets.
+3. `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: a new R2 API token (Object Read & Write on the
+   bucket only), the old one deleted (Cloudflare › R2 › Manage API tokens).
+4. `DATABASE_URL`: the Postgres credentials regenerated in Railway.
+5. `MF_END_SESSIONS_BEFORE` set to the time of the change: sessions made before it end on the
+   next start. The sessions hold StitchFoundry account tokens too, so end StitchFoundry's sessions
+   the same way (`SF_CLOUD_END_SESSIONS_BEFORE`, StitchFoundry's `docs/cloud.md`).
+6. Railway itself: a new password, two-factor sign-in, its API tokens revoked, the project's
+   members and deploys checked.
 
 ## Building the image yourself
 From the repository root: `docker build -t makerfoundry .` then

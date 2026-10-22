@@ -63,6 +63,22 @@ async fn main() -> ExitCode {
             None
         }
     };
+    // after a breach: everyone signs in again
+    if let Some(v) = std::env::var("MF_END_SESSIONS_BEFORE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        let Some(t) = makerfoundry::db::parse_time(&v) else {
+            eprintln!("MF_END_SESSIONS_BEFORE is a UTC time like 2026-10-22T09:00:00Z");
+            return ExitCode::FAILURE;
+        };
+        if let Some(pool) = &db {
+            match makerfoundry::db::end_sessions_before(pool, t).await {
+                Ok(n) => eprintln!("ended {n} sessions made before MF_END_SESSIONS_BEFORE"),
+                Err(e) => eprintln!("sessions: {e}"),
+            }
+        }
+    }
     eprintln!(
         "makerfoundry {} listening on {addr}; accounts at {cloud_url}",
         makerfoundry::VERSION
