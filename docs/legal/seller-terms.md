@@ -2,7 +2,7 @@
 
 > **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
 
-Effective date: [OWNER: date]
+Effective date: October 22, 2026
 
 These Seller Terms add to MakerFoundry's Terms of Service for makers who **publish** designs, and
 for those who **sell** them. If they differ, these Seller Terms apply to publishing and selling.
@@ -28,15 +28,14 @@ repeatedly infringe others' rights (Terms § 7).
 
 ## 2. Who may sell
 
-[OWNER: Anyone with a verified Stripe account / approved sellers first.] To sell, you connect a
-**Stripe Express** account. Stripe checks who you are and pays you; MakerFoundry never sees or keeps
-your bank details. You must be 18 or older and able to accept Stripe's terms
-(stripe.com/connect-account/legal), which apply between you and Stripe.
+Anyone with a MakerFoundry account may sell. To sell, you connect a **Stripe Express** account.
+Stripe checks who you are and pays you; MakerFoundry never sees or keeps your bank details. You must
+be 18 or older and able to accept Stripe's terms (stripe.com/connect-account/legal), which apply
+between you and Stripe.
 
 ## 3. Prices
 
-You set each paid design's price in US dollars, from $1.00 to $200 [OWNER: confirm the range; it's
-what the site allows now].
+You set each paid design's price in US dollars, from $1.00 to $200.
 You can change it at any time; a change doesn't affect sales already made.
 
 ## 4. Our fee
@@ -61,16 +60,17 @@ Form 1099-K where the law requires.
 
 ## 6. Getting paid
 
-Stripe pays your earnings **once a month** (on the 1st, for the sales that have cleared by then)
-to the bank account you gave Stripe. [OWNER: whether new sellers' first payouts wait, e.g. 7 days.] We may ask Stripe to hold
-payouts while a refund, dispute or suspected fraud is being resolved.
+Stripe pays your earnings **once a month** (on the 1st, for the sales that have cleared by then) to
+the bank account you gave Stripe. We may ask Stripe to hold payouts while a refund, dispute or
+suspected fraud is being resolved.
 
 ## 7. Refunds and disputes
 
 Because designs are delivered at once, sales are final, except: if a file is broken, or isn't what
-your listing described, the buyer may ask for a refund within [OWNER: 30] days. We'll ask you
-first, and you may fix the file instead. If we refund the buyer, the price comes back from your
-earnings, and [OWNER: our fee is / isn't] refunded to you.
+your listing described, the buyer may ask for a refund within 30 days. We'll ask you
+first, and you may fix the file instead. If we refund the buyer, our fee is refunded to you, but
+the card fee isn't, because Stripe keeps it: for a $5.00 design, $4.50 comes out of your earnings
+(the $4.05 you received plus the $0.45 card fee).
 
 If a buyer disputes a payment with their bank (a chargeback), Stripe takes the amount and its
 dispute fee from your earnings. We'll help you answer it with the sale's records.
@@ -87,17 +87,17 @@ You keep ownership of your designs, files and photos. You give us the permission
 Service (§ 4) to store them, make previews, show them and deliver them to buyers and downloaders.
 Unless you turn it off for a design, that includes delivering an embroidery design converted to
 the other embroidery formats MakerFoundry writes, made from your file when someone downloads it,
-under the same licence and price. [OWNER: confirm conversion is on by default.]
+under the same licence and price.
 For designs already sold, that permission continues so that buyers keep their files.
 
 ## 10. Leaving
 
 You can unpublish designs and stop selling at any time. Money already earned is paid out as usual,
 less any refunds or disputes still open. If we close your account for breaking these terms, we
-may hold payouts for up to [OWNER: e.g. 90] days to cover refunds and disputes, then pay what's
+may hold payouts for up to 90 days to cover refunds and disputes, then pay what's
 left.
 
 ## 11. The rest
 
 Everything else (disclaimers, limits of liability, indemnity, changes, Rhode Island law, contact)
-is as in the Terms of Service. Contact: [OWNER: support@makerfoundry.app].
+is as in the Terms of Service. Contact: support@makerfoundry.app.

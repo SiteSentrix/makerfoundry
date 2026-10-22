@@ -2,7 +2,7 @@
 
 > **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
 
-Effective date: [OWNER: date]
+Effective date: October 22, 2026
 
 **The short version.** You can browse and download free designs without telling us anything. With
 a Foundry Account, we keep what the site needs: your account's number and email, your sign-ins,
@@ -31,7 +31,7 @@ Policy (stitchfoundry.app/privacy) covers it. This policy covers what MakerFound
 | The makers you follow | To show you their new designs. Private: a maker sees only how many people follow them | Until you unfollow or close your account |
 | Your Saved list and collections (which designs, when) | To keep them for you. Saved is private; a collection is private unless you make it **public** | Until you remove them or close your account |
 | Download counts (a number for each design, not who downloaded it) | To show how popular a design is | As the design |
-| Reports, copyright notices and counter-notices you send (what you wrote, and for notices the name, address, phone, email and signature the law asks for) | To review them and act on them. A notice may be passed to the maker concerned, and a counter-notice to whoever sent the notice, as the law expects | [OWNER: e.g. 3 years], for our records of what we did |
+| Reports, copyright notices and counter-notices you send (what you wrote, and for notices the name, address, phone, email and signature the law asks for) | To review them and act on them. A notice may be passed to the maker concerned, and a counter-notice to whoever sent the notice, as the law expects | 3 years, for our records of what we did |
 | What admins did about reports (who, when, what) | To keep a record of takedowns, including for repeat infringers | As reports |
 | Your network address, for a short time | To limit how often things can be tried (sign-ins, sign-ups, reports). Kept in memory only, never stored | Up to 24 hours |
 | Error logs | To find and fix problems. They don't contain passwords, files or photos | Up to 30 days |
@@ -101,7 +101,7 @@ Wherever you live, you can:
 
 - **See your data.** Your account page, your designs and your maker profile show what we keep.
   **Account › Your data › Download a copy** gives you all of it in one file, at any time.
-  You can also ask at [OWNER: support@makerfoundry.app].
+  You can also ask at support@makerfoundry.app.
 - **Correct it.** Change your maker profile and your designs' details at any time.
 - **Delete it.** Delete your drafts, unpublish or delete published designs, or delete all of your
   MakerFoundry data at once (**Account › Your data**), and close your Foundry Account as
@@ -133,4 +133,4 @@ at least 14 days before it applies. We'll never start using data you already gav
 without asking you first.
 
 **Contact.** Bruce Wattendorf, doing business as SiteSentrix, 8 Maplewood Dr., Mapleville, RI
-02839, [OWNER: support@makerfoundry.app].
+02839, support@makerfoundry.app.

@@ -6,11 +6,19 @@
 for the owner" is left; to everyone once none is and the site has launched (`docs/launch.md`).
 To approve a document, edit it here: decide each marker, delete the DRAFT line, set the date.
 
-Already decided since the drafts: the fee (10%, the card fee from the seller's share, monthly
-payouts: Seller Terms § 4, § 6), and selling is built (MF-4), so the drafts describe it. As built,
-a refund gives the buyer the whole price back, and the seller loses only their share (our fee and
-the card fee are refunded from MakerFoundry's part), which answers Seller Terms § 7's marker
-unless the owner decides otherwise; Stripe keeps its card fee on a refund, a cost to MakerFoundry.
+**Decided by the owner, 2026-10-22**, and written into the drafts: effective date October 22,
+2026; contact support@makerfoundry.app; accounts at 18 or older; the small-business licence at
+200 items; refunds within 30 days for a broken or misdescribed file; anyone with an account may
+sell; prices $1 to $200; no wait on a new seller's first payout; on a refund the seller gets our
+fee back but bears the card fee Stripe keeps (Seller Terms § 7; the code still refunds the card
+fee too, to be changed before selling goes live); conversion on unless the maker turns it off;
+payouts held up to 90 days after an account is closed for breaking the terms; reports and notices
+kept 3 years; makes in Terms § 4. Earlier: the fee (10%, the card fee from the seller's share,
+monthly payouts: Seller Terms § 4, § 6).
+
+**Still open:** the DMCA designated agent (Terms § 7, once registered), sales tax (Seller Terms
+§ 5, with an accountant), and the DRAFT lines, deleted once a lawyer has read the documents or the
+owner approves them without one.
 
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.

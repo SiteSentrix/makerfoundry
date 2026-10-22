@@ -132,10 +132,12 @@ Nobody may resell or share the files themselves.
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
   also from the seller's share, payouts monthly** (research: `docs/research/marketplace-fees.md`).
-- **The price range**: the site allows $1 to $200 now.
-- **Refunds and the card fee**: Stripe keeps its card fee when a sale is refunded, so a refund
-  costs MakerFoundry about 2.9% + 30¢; the Seller Terms (§ 7) should say who bears it.
-- **Who may sell**: anyone, or approved sellers first.
+- ~~**The price range**~~: **decided 2026-10-22: $1 to $200.**
+- ~~**Refunds and the card fee**~~: **decided 2026-10-22: the seller gets the 10% fee back and
+  bears the card fee Stripe keeps** (Seller Terms § 7). The code still refunds the whole
+  application fee (MakerFoundry bears the card fee) and its ledger reverses the card fee as if
+  Stripe returned it: to change before selling goes live.
+- ~~**Who may sell**~~: **decided 2026-10-22: anyone with an account (Stripe checks identity).**
 - **Sales tax on digital goods**: some US states tax them and treat marketplaces as the seller
   ("marketplace facilitator" laws). Likely answer: Stripe Tax on checkout. Needs the owner's
   decision (and ideally an accountant's word) before paid sales go live.

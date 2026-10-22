@@ -2,7 +2,7 @@
 
 > **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
 
-Effective date: [OWNER: date]
+Effective date: October 22, 2026
 
 ## 1. Who we are and what these terms cover
 
@@ -19,7 +19,6 @@ account or publishing a design, you agree to them.
 - **Selling designs** also needs you to accept the **Seller Terms** (makerfoundry.app/seller-terms).
 
 You must be at least 18 (or the age of majority where you live, if older) to make an account.
-[OWNER: confirm; browsing and free downloads have no age gate.]
 
 ## 2. Your account on MakerFoundry
 
@@ -36,7 +35,7 @@ Each design has a **licence** chosen by its maker, shown on its page. When you d
 you agree to use it only as that licence allows. In plain words:
 
 - **Personal use**: make things for yourself and as gifts; don't sell what you make.
-- **Small business**: you may sell up to 200 items made from the design. [OWNER: the number]
+- **Small business**: you may sell up to 200 items made from the design.
 - **Commercial**: you may sell as many items as you like.
 - For those three: **never share, sell or give away the design file itself**.
 - **Creative Commons** designs (CC BY, CC BY-NC, CC0) follow the Creative Commons licence named on
@@ -67,6 +66,11 @@ downloaded or bought. You can unpublish or delete your designs at any time.
 **Files are checked.** We read every uploaded design to check it and to draw its preview. Files we
 can't read are refused. Photos are saved again as new images, which removes their hidden details
 (such as where they were taken).
+
+**Makes.** When you post a photo of something you made from a design (a "make"), you confirm
+it's your own photo of your own work. It stays yours, and you give us the same permission to
+store it, make smaller copies and show it on the design's page and in links to it. You can take
+your make down at any time; the design's maker and our admins may also take it down.
 
 ## 5. Rules for everyone
 
@@ -105,7 +109,7 @@ can download it again any time while your account is open.
 
 **Refunds.** Because designs are digital files delivered at once, sales are final, except: if a
 file is broken, or isn't what the listing described, tell us within 30 days and we'll refund you
-or the maker will fix it. [OWNER: confirm the policy and the window.] Where the law gives you more
+or the maker will fix it. Where the law gives you more
 rights, they apply.
 
 ## 9. Disclaimers
@@ -156,4 +160,4 @@ StitchFoundry's Terms (for your Foundry Account) are the whole agreement about M
 part is found unenforceable, the rest still applies.
 
 **Contact.** Bruce Wattendorf, doing business as SiteSentrix, 8 Maplewood Dr., Mapleville, RI
-02839, [OWNER: support@makerfoundry.app].
+02839, support@makerfoundry.app.
