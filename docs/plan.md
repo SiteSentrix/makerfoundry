@@ -1,6 +1,6 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-21. MF-0 to MF-20 built and live at https://makerfoundry.app (the table below);
+**Status:** 2026-10-21. MF-0 to MF-21 built at https://makerfoundry.app (the table below);
 the site is closed until the owner's launch (`docs/launch.md`: legal wording, the DMCA agent,
 Stripe keys and sales tax, then `MF_LAUNCHED=yes`). MF-7's app side is StitchFoundry's
 (`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
@@ -126,6 +126,7 @@ Nobody may resell or share the files themselves.
 | MF-18 | Open in LaserFoundry: MakerFoundry's side | laser designs open in LaserFoundry's web app. **MakerFoundry's side built 2026-10-20**: SVG and DXF laser files are served at the same file address as embroidery (free for anyone, paid with a buyer's link), and the button (\"Open in LaserFoundry\") is ready but off (`LASERFOUNDRY_OPENS_LINKS`) until LaserFoundry's web app opens `?open=` links and allows makerfoundry.app in its content security policy: the note for its chat is in `docs/api.md` |
 | MF-19 | Link previews | a shared design shows its title, words and photo in chats and on social sites. **Done 2026-10-21**: published designs' and makers' pages carry the standard Open Graph tags (title, a line of the description, the page's address, the first photo) and a canonical address; drafts carry none (`pages::page_with`) |
 | MF-20 | Property tests of untrusted input | every reader of what people send is tested against random and damaged input, as StitchFoundry's are. **Done 2026-10-21**: `tests/untrusted_input.rs` (proptest) gives the embroidery, SVG, DXF and PDF readers, photos, typed prices and thicknesses, and Stripe's signature header random bytes, damaged copies of good files and generated content (SVG elements, DXF group codes, PDF drawing operators with extreme numbers); each must answer without panicking, and what it accepts must be within the limits (sizes, stitch and shape counts, a preview of numbers and colours only); accepted embroidery converts to every format. It found one bug, fixed: a signature header with a time far in the past overflowed the check of its age (`stripe.rs`). 128 cases a test in CI; more with `PROPTEST_CASES` |
+| MF-21 | Signing everyone out after a breach | a session copied from the database stops working. **Done 2026-10-22**: `MF_END_SESSIONS_BEFORE` (a UTC time, a date or Unix seconds) deletes the sessions made before it when the service starts; `docs/deploy.md` › After a breach lists every secret the service holds and where each is renewed |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
