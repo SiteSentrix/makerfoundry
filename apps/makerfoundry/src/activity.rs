@@ -36,7 +36,9 @@ const EVENTS: &str = "
     SELECT 'sale', o.paid_at, o.design_id, o.title, NULL, NULL, '', o.seller_cents
       FROM mf_orders o WHERE o.seller_account = $1 AND o.paid_at IS NOT NULL
     UNION ALL
-    SELECT 'refund', o.refunded_at, o.design_id, o.title, NULL, NULL, '', o.seller_cents
+    SELECT 'refund', o.refunded_at, o.design_id, o.title, NULL, NULL, '',
+           (SELECT -sum(l.cents)::bigint FROM mf_ledger l
+             WHERE l.order_id = o.id AND l.kind = 'seller' AND l.reason <> 'sale')
       FROM mf_orders o WHERE o.seller_account = $1 AND o.refunded_at IS NOT NULL
     UNION ALL
     SELECT 'follow', f.at, NULL, '', NULL, NULL, '', NULL

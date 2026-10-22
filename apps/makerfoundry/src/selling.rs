@@ -533,24 +533,39 @@ async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> R
     Ok(true)
 }
 
-/// A paid order refunded: its sale reversed in the ledger, once.
+/// A paid order refunded, once: the whole price taken back from the seller (Stripe reverses the
+/// whole transfer; MakerFoundry still holds the application fee until `record_fee_return`).
 async fn record_refund(conn: &mut PgConnection, order: i64) -> Result<bool, sqlx::Error> {
     let row = sqlx::query(
         "UPDATE mf_orders SET status = 'refunded', refunded_at = now() WHERE id = $1 AND status = 'paid'
-         RETURNING seller_account, fee_cents, processing_cents, seller_cents",
+         RETURNING seller_account, price_cents",
     )
     .bind(order)
     .fetch_optional(&mut *conn)
     .await?;
     let Some(row) = row else { return Ok(false) };
     let seller: i64 = row.try_get("seller_account")?;
-    for (account, kind, cents) in [
-        (seller, "seller", row.try_get::<i64, _>("seller_cents")?),
-        (MAKERFOUNDRY, "fee", row.try_get("fee_cents")?),
-        (MAKERFOUNDRY, "processing", row.try_get("processing_cents")?),
-    ] {
-        ledger(conn, order, account, kind, -cents, "refund").await?;
-    }
+    let price: i64 = row.try_get("price_cents")?;
+    ledger(conn, order, seller, "seller", -price, "refund").await?;
+    Ok(true)
+}
+
+/// A refunded order's 10% given back to its seller, once: the seller is then out only the card
+/// fee, which Stripe keeps (the owner's decision, 2026-10-22; Seller Terms § 7).
+async fn record_fee_return(conn: &mut PgConnection, order: i64) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query(
+        "UPDATE mf_orders SET fee_returned_at = now()
+         WHERE id = $1 AND status = 'refunded' AND fee_returned_at IS NULL
+         RETURNING seller_account, fee_cents",
+    )
+    .bind(order)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(row) = row else { return Ok(false) };
+    let seller: i64 = row.try_get("seller_account")?;
+    let fee: i64 = row.try_get("fee_cents")?;
+    ledger(conn, order, seller, "seller", fee, "fee_return").await?;
+    ledger(conn, order, MAKERFOUNDRY, "fee", -fee, "fee_return").await?;
     Ok(true)
 }
 
@@ -791,7 +806,7 @@ pub async fn sales(State(state): State<AppState>, headers: HeaderMap) -> Respons
                 r#"<li class="report"><p><strong>{title}</strong> <span class="muted">· {at}{refunded}</span></p><p>{price} − fee {fee} − card fee {card} = <strong>{you}</strong></p></li>"#,
                 title = escape(&title),
                 at = escape(&r.try_get::<Option<String>, _>("at").ok().flatten().unwrap_or_default()),
-                refunded = if status == "refunded" { " · refunded" } else { "" },
+                refunded = if status == "refunded" { " · refunded: the card fee stays with Stripe" } else { "" },
                 price = cents("price_cents"),
                 fee = cents("fee_cents"),
                 card = cents("processing_cents"),
@@ -829,7 +844,8 @@ pub async fn orders(State(state): State<AppState>, headers: HeaderMap) -> Respon
 
 async fn order_list(pool: &PgPool, note: &str) -> Response {
     let rows = sqlx::query(
-        "SELECT id, title, price_cents, status, buyer_account, seller_account, to_char(created_at, 'YYYY-MM-DD HH24:MI') AS at
+        "SELECT id, title, price_cents, status, fee_returned_at IS NULL AS fee_waiting, buyer_account, seller_account,
+                to_char(created_at, 'YYYY-MM-DD HH24:MI') AS at
          FROM mf_orders WHERE status IN ('paid', 'refunded') ORDER BY created_at DESC LIMIT 200",
     )
     .fetch_all(pool)
@@ -842,6 +858,8 @@ async fn order_list(pool: &PgPool, note: &str) -> Response {
             let status: String = r.try_get("status").unwrap_or_default();
             let refund = if status == "paid" {
                 format!(r#"<form method="post" action="/admin/orders/{id}/refund"><button type="submit" class="secondary">Refund in full</button></form>"#)
+            } else if r.try_get("fee_waiting").unwrap_or(false) {
+                format!(r#"<form method="post" action="/admin/orders/{id}/fee-back"><button type="submit" class="secondary">Give the fee back</button></form>"#)
             } else {
                 String::new()
             };
@@ -864,12 +882,16 @@ async fn order_list(pool: &PgPool, note: &str) -> Response {
     private(
         "Orders · MakerFoundry",
         &format!(
-            r#"<section class="design"><h1>Orders</h1>{note}<p class="muted">A refund gives the buyer back the whole price; the seller's share and MakerFoundry's fee are taken back. <a href="/admin">Reports</a></p><ul class="reports">{items}</ul></section>"#
+            r#"<section class="design"><h1>Orders</h1>{note}<p class="muted">A refund gives the buyer back the whole price, taken back from the seller, and then MakerFoundry's 10% goes back to the seller: the seller bears the card fee Stripe keeps (Seller Terms § 7). <a href="/admin">Reports</a></p><ul class="reports">{items}</ul></section>"#
         ),
         true,
     )
 }
 
+/// An admin's full refund of a paid order (Seller Terms § 7): the buyer gets the whole price back
+/// and the seller's transfer is reversed (https://docs.stripe.com/connect/destination-charges,
+/// "Issue refunds"); MakerFoundry keeps the application fee at first, then gives its 10% back to
+/// the seller (`return_fee`), so the seller bears only the card fee Stripe keeps.
 pub async fn refund(State(state): State<AppState>, headers: HeaderMap, Path(order): Path<i64>) -> Response {
     if !same_origin(&headers) {
         return forbidden();
@@ -897,7 +919,8 @@ pub async fn refund(State(state): State<AppState>, headers: HeaderMap, Path(orde
             &[
                 ("payment_intent", intent),
                 ("reverse_transfer", "true".into()),
-                ("refund_application_fee", "true".into()),
+                // the 10% goes back separately, without the card fee (`return_fee`)
+                ("refund_application_fee", "false".into()),
                 ("metadata[order]", order.to_string()),
                 ("metadata[admin]", admin.account_id.to_string()),
             ],
@@ -915,7 +938,11 @@ pub async fn refund(State(state): State<AppState>, headers: HeaderMap, Path(orde
                 // (Stripe's charge.refunded event records it when it comes)
                 eprintln!("selling: refund {order}: {e}");
             }
-            order_list(&pool, &format!("Order {order} refunded.")).await
+            let note = match return_fee(stripe, &pool, order).await {
+                Ok(()) => format!("Order {order} refunded, and MakerFoundry's fee given back to the seller."),
+                Err(why) => format!("Order {order} refunded, but {why}"),
+            };
+            order_list(&pool, &note).await
         }
         Ok(_) => order_list(&pool, &format!("Stripe couldn't refund order {order}.")).await,
         Err(e) => {
@@ -923,6 +950,84 @@ pub async fn refund(State(state): State<AppState>, headers: HeaderMap, Path(orde
             order_list(&pool, &format!("Order {order} couldn't be refunded: {e}")).await
         }
     }
+}
+
+/// Trying again to give a refunded order's 10% back to its seller (after Stripe couldn't the
+/// first time).
+pub async fn fee_back(State(state): State<AppState>, headers: HeaderMap, Path(order): Path<i64>) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (_, pool) = match crate::moderation::admin(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let Some(stripe) = state.stripe.as_ref() else {
+        return order_list(&pool, "Selling isn't switched on.").await;
+    };
+    let note = match return_fee(stripe, &pool, order).await {
+        Ok(()) => format!("MakerFoundry's fee for order {order} given back to the seller."),
+        Err(why) => format!("Order {order}: {why}"),
+    };
+    order_list(&pool, &note).await
+}
+
+/// A refunded order's 10% back to its seller, as a partial refund of the sale's application fee
+/// (https://docs.stripe.com/api/fee_refunds/create), once; `Err` says why not, for the admin.
+async fn return_fee(stripe: &Stripe, pool: &PgPool, order: i64) -> Result<(), String> {
+    let row = sqlx::query(
+        "SELECT stripe_payment_intent, fee_cents FROM mf_orders
+         WHERE id = $1 AND status = 'refunded' AND fee_returned_at IS NULL",
+    )
+    .bind(order)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        eprintln!("selling: fee back {order}: {e}");
+        "the fee couldn't be given back just now.".to_string()
+    })?
+    .ok_or_else(|| "there's no fee waiting to go back to the seller.".to_string())?;
+    let intent: Option<String> = row.try_get("stripe_payment_intent").unwrap_or(None);
+    let fee: i64 = row.try_get("fee_cents").unwrap_or(0);
+    let not_now =
+        "Stripe couldn't give MakerFoundry's fee back to the seller just now: try again with Give the fee back.";
+    if fee > 0 {
+        let intent = intent
+            .filter(|i| is_stripe_id(i, "pi_"))
+            .ok_or_else(|| "the order has no Stripe payment.".to_string())?;
+        let payment = stripe
+            .get(&format!("/v1/payment_intents/{intent}?expand[]=latest_charge"))
+            .await
+            .map_err(|e| {
+                eprintln!("selling: fee back {order}: {e}");
+                not_now.to_string()
+            })?;
+        let application_fee = payment
+            .pointer("/latest_charge/application_fee")
+            .and_then(Value::as_str)
+            .filter(|f| is_stripe_id(f, "fee_"))
+            .ok_or_else(|| "Stripe shows no application fee for this sale.".to_string())?;
+        stripe
+            .post(
+                &format!("/v1/application_fees/{application_fee}/refunds"),
+                &[("amount", fee.to_string()), ("metadata[order]", order.to_string())],
+                Some(&format!("mf-fee-back-{order}")),
+            )
+            .await
+            .map_err(|e| {
+                eprintln!("selling: fee back {order}: {e}");
+                not_now.to_string()
+            })?;
+    }
+    let done = async {
+        let mut tx = pool.begin().await?;
+        record_fee_return(&mut tx, order).await?;
+        tx.commit().await
+    };
+    done.await.map_err(|e| {
+        eprintln!("selling: fee back {order}: {e}");
+        "Stripe gave the fee back, but it couldn't be recorded: try again with Give the fee back.".to_string()
+    })
 }
 
 /// The price part of a design's public page: the button to download or to buy.

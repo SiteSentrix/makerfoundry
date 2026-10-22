@@ -87,6 +87,8 @@ books and one name on card statements for both. What keeps the two apart:
   permissions, everything else **None**:
   - **Checkout Sessions:** Write (makes and reads a buyer's checkout page)
   - **Refunds:** Write (an admin's full refund)
+  - **PaymentIntents:** Read and **Charges:** Read (a refunded sale's application fee)
+  - **Connect › Application Fees:** Write (MakerFoundry's 10% given back to the seller on a refund)
   - **Connect › Accounts:** Write (sellers' Express accounts, their set-up and dashboard links)
 
   It goes in `STRIPE_SECRET_KEY` (`rk_test_…`, later `rk_live_…`). If it ever leaked, it couldn't

@@ -1,6 +1,6 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-22. MF-0 to MF-22 built at https://makerfoundry.app (the table below);
+**Status:** 2026-10-22. MF-0 to MF-23 built at https://makerfoundry.app (the table below);
 the site is closed until the owner's launch (`docs/launch.md`: legal wording, the DMCA agent,
 Stripe keys and sales tax, then `MF_LAUNCHED=yes`). MF-7's app side is StitchFoundry's
 (`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
@@ -128,15 +128,14 @@ Nobody may resell or share the files themselves.
 | MF-20 | Property tests of untrusted input | every reader of what people send is tested against random and damaged input, as StitchFoundry's are. **Done 2026-10-21**: `tests/untrusted_input.rs` (proptest) gives the embroidery, SVG, DXF and PDF readers, photos, typed prices and thicknesses, and Stripe's signature header random bytes, damaged copies of good files and generated content (SVG elements, DXF group codes, PDF drawing operators with extreme numbers); each must answer without panicking, and what it accepts must be within the limits (sizes, stitch and shape counts, a preview of numbers and colours only); accepted embroidery converts to every format. It found one bug, fixed: a signature header with a time far in the past overflowed the check of its age (`stripe.rs`). 128 cases a test in CI; more with `PROPTEST_CASES` |
 | MF-21 | Signing everyone out after a breach | a session copied from the database stops working. **Done 2026-10-22**: `MF_END_SESSIONS_BEFORE` (a UTC time, a date or Unix seconds) deletes the sessions made before it when the service starts; `docs/deploy.md` › After a breach lists every secret the service holds and where each is renewed |
 | MF-22 | Activity | makers learn what people did with their designs without email. **Done 2026-10-22**: `/activity` lists, newest first, the comments and makes on a maker's designs by other people (who, the design, a line of what they wrote), their sales and refunds (what they got or gave back) and new followers (not named); what came since they last looked is marked new, and the account page counts it. Drawn from those tables; only when they last looked is kept (`mf_activity_seen`, in the data download and deleted with the data) (`activity.rs`) |
+| MF-23 | Refunds: the seller bears the card fee | a refunded seller is out only the card fee Stripe keeps (the owner's decision, Seller Terms § 7). **Done 2026-10-22**: an admin's refund gives the buyer the whole price back and reverses the seller's transfer, without the application fee; MakerFoundry then gives its 10% back to the seller as a partial refund of that fee (`/v1/application_fees/{id}/refunds`). In the ledger the refund takes the price from the seller (`refund`) and the 10% goes back (`fee_return`); the card fee row stays. If Stripe can't give the fee back at once, `/admin/orders` offers Give the fee back (`fee_returned_at`). Activity and the sales page show what the seller lost. The restricted key needs three more permissions (`docs/deploy.md`) |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
   also from the seller's share, payouts monthly** (research: `docs/research/marketplace-fees.md`).
 - ~~**The price range**~~: **decided 2026-10-22: $1 to $200.**
 - ~~**Refunds and the card fee**~~: **decided 2026-10-22: the seller gets the 10% fee back and
-  bears the card fee Stripe keeps** (Seller Terms § 7). The code still refunds the whole
-  application fee (MakerFoundry bears the card fee) and its ledger reverses the card fee as if
-  Stripe returned it: to change before selling goes live.
+  bears the card fee Stripe keeps** (Seller Terms § 7; built as MF-23).
 - ~~**Who may sell**~~: **decided 2026-10-22: anyone with an account (Stripe checks identity).**
 - **Sales tax on digital goods**: some US states tax them and treat marketplaces as the seller
   ("marketplace facilitator" laws). Likely answer: Stripe Tax on checkout. Needs the owner's

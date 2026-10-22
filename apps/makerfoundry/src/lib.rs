@@ -193,6 +193,7 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/buy", post(selling::buy))
         .route("/admin/orders", get(selling::orders))
         .route("/admin/orders/{order}/refund", post(selling::refund))
+        .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
         .fallback(not_found)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
     let uploads = Router::new()

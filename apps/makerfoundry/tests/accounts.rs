@@ -1547,6 +1547,10 @@ struct StripeFake {
     /// Every form posted, by path.
     posts: Vec<(String, HashMap<String, String>)>,
     refunds: Vec<HashMap<String, String>>,
+    /// Application fee refunds: (the fee, the form).
+    fee_refunds: Vec<(String, HashMap<String, String>)>,
+    /// Whether Stripe answers application fee refunds with an error.
+    fee_refunds_fail: bool,
 }
 
 type StripeShared = Arc<Mutex<StripeFake>>;
@@ -1556,6 +1560,7 @@ type StripeShared = Arc<Mutex<StripeFake>>;
 async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
     use axum::Form;
     use axum::extract::Path;
+    use axum::extract::Query;
     use axum::routing::get;
     let shared: StripeShared = Arc::default();
     let authorised = |h: &HeaderMap| token_of(h) == STRIPE_KEY;
@@ -1618,6 +1623,25 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
             post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
                 s.lock().unwrap().refunds.push(f);
                 Json(json!({"id": "re_test_1", "object": "refund", "status": "succeeded"}))
+            }),
+        )
+        .route(
+            "/v1/payment_intents/{id}",
+            get(|Path(id): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
+                assert_eq!(q.get("expand[]").map(String::as_str), Some("latest_charge"));
+                let charge = json!({"id": format!("ch_{id}"), "object": "charge", "application_fee": format!("fee_{id}")});
+                Json(json!({"id": id, "object": "payment_intent", "latest_charge": charge}))
+            }),
+        )
+        .route(
+            "/v1/application_fees/{id}/refunds",
+            post(|State(s): State<StripeShared>, Path(id): Path<String>, Form(f): Form<HashMap<String, String>>| async move {
+                let mut st = s.lock().unwrap();
+                if st.fee_refunds_fail {
+                    return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": {"message": "try again"}})));
+                }
+                st.fee_refunds.push((id.clone(), f));
+                (StatusCode::OK, Json(json!({"id": "fr_test_1", "object": "fee_refund", "fee": id})))
             }),
         )
         .with_state(shared.clone());
@@ -1931,10 +1955,43 @@ async fn a_design_is_sold_paid_for_delivered_and_refunded() {
         let f = st.lock().unwrap();
         assert_eq!(f.refunds[0]["payment_intent"], "pi_cs_test_1");
         assert_eq!(f.refunds[0]["reverse_transfer"], "true");
-        assert_eq!(f.refunds[0]["refund_application_fee"], "true");
+        // MakerFoundry keeps the application fee at first, then gives the 10% back, not the card fee
+        assert_eq!(f.refunds[0]["refund_application_fee"], "false");
+        assert_eq!(f.fee_refunds.len(), 1);
+        assert_eq!(f.fee_refunds[0].0, "fee_pi_cs_test_1");
+        assert_eq!(f.fee_refunds[0].1["amount"], "50");
     }
-    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 6);
+    let ledger: Vec<(i64, String, i64, String)> =
+        sqlx::query_as("SELECT account_id, kind, cents, reason FROM mf_ledger WHERE reason <> 'sale' ORDER BY id")
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        ledger,
+        [
+            (1000, "seller".to_string(), -500, "refund".to_string()),
+            (1000, "seller".to_string(), 50, "fee_return".to_string()),
+            (0, "fee".to_string(), -50, "fee_return".to_string()),
+        ]
+    );
+    // the buyer has everything back; the seller is out the card fee, which went to Stripe
     assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 0);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'processing'")
+            .await,
+        45
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -45
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'fee'")
+            .await,
+        0
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 6);
     // Stripe's own word of the refund afterwards changes nothing more
     let charge = json!({"id": "ch_1", "object": "charge", "payment_intent": "pi_cs_test_1", "refunded": true});
     assert_eq!(
@@ -1955,8 +2012,60 @@ async fn a_design_is_sold_paid_for_delivered_and_refunded() {
         s.get("/account/sales", Some(&seller))
             .await
             .body
-            .contains("<dd>$0</dd>")
+            .contains("<dd>-$0.45</dd>")
     );
+}
+
+#[tokio::test]
+async fn a_fee_stripe_couldnt_give_back_is_given_back_later() {
+    let Some((s, st, seller, id)) = selling_site(vec![1002]).await else {
+        return;
+    };
+    let buyer = s.sign_up("bea%40example.com").await;
+    let admin = s.sign_up("ada%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    let order = st.lock().unwrap().sessions["cs_test_1"].0["metadata[order]"].clone();
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = true;
+    s.get(&format!("/library?order={order}"), Some(&buyer)).await;
+    // the buyer is refunded, but Stripe can't give the fee back just then
+    st.lock().unwrap().fee_refunds_fail = true;
+    let r = s.post(&format!("/admin/orders/{order}/refund"), "", Some(&admin)).await;
+    assert!(r.body.contains("refunded, but Stripe couldn"), "{}", r.body);
+    assert!(
+        r.body.contains(&format!("/admin/orders/{order}/fee-back")),
+        "{}",
+        r.body
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -95
+    );
+    // nobody else can press it; an admin tries again once Stripe answers
+    assert_eq!(
+        s.post(&format!("/admin/orders/{order}/fee-back"), "", Some(&seller))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    st.lock().unwrap().fee_refunds_fail = false;
+    let r = s
+        .post(&format!("/admin/orders/{order}/fee-back"), "", Some(&admin))
+        .await;
+    assert!(r.body.contains("given back to the seller"), "{}", r.body);
+    assert!(!r.body.contains("/fee-back"), "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -45
+    );
+    // pressed again: nothing more
+    let r = s
+        .post(&format!("/admin/orders/{order}/fee-back"), "", Some(&admin))
+        .await;
+    assert!(r.body.contains("no fee waiting"), "{}", r.body);
+    assert_eq!(st.lock().unwrap().fee_refunds.len(), 1);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 6);
 }
 
 #[tokio::test]
@@ -3941,12 +4050,22 @@ async fn a_maker_sees_what_people_did_with_their_designs() {
         .execute(&s.pool)
         .await
         .unwrap();
+    // as a refund leaves the ledger: the price back from the seller, then the 10% given back
+    sqlx::query(
+        "INSERT INTO mf_ledger (order_id, account_id, kind, cents, reason)
+         SELECT id, 1000, 'seller', -500, 'refund' FROM mf_orders
+         UNION ALL SELECT id, 1000, 'seller', 50, 'fee_return' FROM mf_orders",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
     assert!(s.get("/account", Some(&ann)).await.body.contains("1 new"));
+    // what they got ($4.05) and the card fee Stripe keeps ($0.45)
     assert!(
         s.get("/activity", Some(&ann))
             .await
             .body
-            .contains("was refunded: $4.05 less for you")
+            .contains("was refunded: $4.50 less for you")
     );
     assert!(s.get("/activity", Some(&bea)).await.body.contains("Nothing yet"));
     // only when someone looked is kept, and only once there was something to see
