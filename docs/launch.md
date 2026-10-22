@@ -28,7 +28,8 @@ pages; published designs stay up.
    the effective dates.~~ **Done 2026-10-22** (approved by the owner; a lawyer's read later).
 2. **Contact email.** Cloudflare Email Routing for makerfoundry.app (the bwattendorf@gmail.com
    Cloudflare account): `support@makerfoundry.app` forwarding to your Gmail. The legal pages and
-   `/dmca` name it.
+   `/dmca` name it. **Done 2026-10-22** (MX at route1-3.mx.cloudflare.net, SPF includes
+   Cloudflare's).
 3. **DMCA agent.** Register SiteSentrix at copyright.gov/dmca-directory ($6, valid three years;
    makerfoundry.app as an alternate name), then set `MF_DMCA_AGENT` (lines apart by `|`: name,
    address, email, phone): `/dmca` shows it, and Terms § 7 points there. The owner chose a soft
