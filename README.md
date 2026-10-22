@@ -26,7 +26,8 @@ people made from a design. **MF-12** (reporting a make) and **MF-13** (following
 data. **MF-16** (the admins' overview), **MF-17** and **MF-18** (Open in StitchFoundry for bought designs,
 and MakerFoundry's side of Open in LaserFoundry) and **MF-19** (link previews) done. **MF-20** done: every
 reader of uploads and typed input is property-tested with random and damaged files
-(`apps/makerfoundry/tests/untrusted_input.rs`). See [`docs/plan.md`](docs/plan.md).
+(`apps/makerfoundry/tests/untrusted_input.rs`). **MF-21** done: signing everyone out after a breach. **MF-22** done: a maker's
+Activity page (comments, makes, sales and new followers). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

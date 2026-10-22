@@ -3876,3 +3876,78 @@ async fn a_shared_link_to_a_design_shows_its_title_words_and_photo() {
     // other pages keep the site's own description
     assert!(s.get("/browse", None).await.body.contains("shared and sold by makers"));
 }
+
+// ---------------------------------------------------------------- MF-22: activity
+
+#[tokio::test]
+async fn a_maker_sees_what_people_did_with_their_designs() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let rose = published(&s, &ann, "anns", "Rose").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    s.post("/account/maker", "name=Bea+%3Cb%3EB%3C%2Fb%3E&handle=bea", Some(&bea))
+        .await;
+    assert!(s.get("/activity", None).await.location().starts_with("/signin"));
+    let empty = s.get("/activity", Some(&ann)).await.body;
+    assert!(empty.contains("Nothing yet"), "{empty}");
+    assert!(!s.get("/account", Some(&ann)).await.body.contains(" new</strong>"));
+
+    // a comment, a make, a follow and a sale, and ann's own comment, which isn't news to her
+    say(&s, rose, &bea, "Lovely+%3Cscript%3Ex%3C%2Fscript%3E").await;
+    say(&s, rose, &ann, "Thanks").await;
+    sqlx::query(
+        "INSERT INTO mf_makes (design_id, account_id, photo_key, thumb_key, width, height, note)
+         VALUES ($1, 1001, 'k', 't', 10, 10, 'On a tote bag')",
+    )
+    .bind(rose)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    s.post("/makers/anns/follow", "", Some(&bea)).await;
+    sqlx::query(
+        "INSERT INTO mf_orders (buyer_account, design_id, seller_account, price_cents, fee_cents,
+             processing_cents, seller_cents, title, status, paid_at)
+         VALUES (1001, $1, 1000, 500, 50, 45, 405, 'Rose', 'paid', now())",
+    )
+    .bind(rose)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+
+    let account = s.get("/account", Some(&ann)).await.body;
+    assert!(account.contains("4 new"), "{account}");
+    let page = s.get("/activity", Some(&ann)).await.body;
+    for want in [
+        "commented on",
+        "Lovely &lt;script&gt;",
+        "posted a make of",
+        "On a tote bag",
+        "Someone started following you",
+        "sold: $4.05 to you",
+        r#"<a href="/makers/bea">Bea &lt;b&gt;B&lt;/b&gt;</a>"#,
+        &format!(r#"<a href="/d/{rose}">Rose</a>"#),
+    ] {
+        assert!(page.contains(want), "{want} missing: {page}");
+    }
+    assert!(!page.contains("Thanks") && !page.contains("<script>x"), "{page}");
+    assert_eq!(page.matches(r#"<strong class="new">new</strong>"#).count(), 4);
+    // looked at: no longer new, still listed
+    assert!(!s.get("/account", Some(&ann)).await.body.contains(" new</strong>"));
+    let again = s.get("/activity", Some(&ann)).await.body;
+    assert!(again.contains("commented on") && !again.contains(r#"class="new">new"#));
+    // a refund is news too; bea's activity is her own (nobody did anything with her designs)
+    sqlx::query("UPDATE mf_orders SET status = 'refunded', refunded_at = now() + interval '1 second'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert!(s.get("/account", Some(&ann)).await.body.contains("1 new"));
+    assert!(
+        s.get("/activity", Some(&ann))
+            .await
+            .body
+            .contains("was refunded: $4.05 less for you")
+    );
+    assert!(s.get("/activity", Some(&bea)).await.body.contains("Nothing yet"));
+    // only when someone looked is kept, and only once there was something to see
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_activity_seen").await, 1);
+}

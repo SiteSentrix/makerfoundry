@@ -92,6 +92,7 @@ pub async fn export(pool: &PgPool, user: &User) -> Result<Value, sqlx::Error> {
              FROM mf_orders WHERE seller_account = $1 AND status IN ('paid', 'refunded') ORDER BY id", a).await?,
         "selling": rows(pool, "SELECT stripe_account, charges_enabled, payouts_enabled, created_at FROM mf_sellers WHERE account_id = $1", a).await?,
         "agreements": rows(pool, "SELECT document, version, at FROM mf_agreements WHERE account_id = $1 ORDER BY at", a).await?,
+        "activity_seen": rows(pool, "SELECT seen_at FROM mf_activity_seen WHERE account_id = $1", a).await?,
         "reports_sent": rows(pool, "SELECT kind, reason, details, created_at, status FROM mf_reports WHERE reporter_account = $1 ORDER BY id", a).await?,
     }))
 }
@@ -211,6 +212,7 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         "DELETE FROM mf_follows WHERE follower_account = $1 OR maker_account = $1",
         "DELETE FROM mf_makers WHERE account_id = $1",
         "DELETE FROM mf_sessions WHERE account_id = $1",
+        "DELETE FROM mf_activity_seen WHERE account_id = $1",
         "UPDATE mf_accounts SET email = '' WHERE account_id = $1",
     ] {
         sqlx::query(sql).bind(account).execute(&mut *tx).await?;

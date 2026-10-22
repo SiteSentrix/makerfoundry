@@ -432,6 +432,10 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
     let Some(user) = current_user(&state, &headers).await else {
         return Redirect::to("/signin").into_response();
     };
+    let activity = match state.db.as_ref() {
+        Some(pool) => crate::activity::link_html(pool, user.account_id).await,
+        None => String::new(),
+    };
     private(
         "Your account · MakerFoundry",
         &format!(
@@ -439,6 +443,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <h1>Your account</h1>
 <p class="lead">You're signed in as <strong>{email}</strong>, with your Foundry Account.</p>
 <p><a href="/designs">Your designs</a>: add a design file and photos of what it makes.</p>
+{activity}
 <p><a href="/account/maker">Your maker profile</a>: the name people see on your designs.</p>
 <p><a href="/preview">See your design</a>: upload an embroidery or laser file and see it drawn.</p>
 <p><a href="/library">Your library</a>: the designs you've bought. <a href="/collections">Your collections</a>: the designs you've saved. <a href="/following">Following</a>: new designs from makers you follow.</p>

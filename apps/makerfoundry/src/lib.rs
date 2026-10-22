@@ -5,6 +5,7 @@
 //! (`cloud`), with MakerFoundry's own sessions in Postgres (`db`) and the pages in `accounts`.
 
 pub mod accounts;
+pub mod activity;
 pub mod api;
 pub mod cloud;
 pub mod collections;
@@ -166,6 +167,7 @@ pub fn app(state: AppState) -> Router {
         .route("/makers/{handle}/follow", post(follows::follow))
         .route("/makers/{handle}/unfollow", post(follows::unfollow))
         .route("/following", get(follows::following))
+        .route("/activity", get(activity::page))
         .route("/account/data", get(data::page))
         .route("/account/data.json", get(data::download))
         .route("/account/data/delete", post(data::delete))

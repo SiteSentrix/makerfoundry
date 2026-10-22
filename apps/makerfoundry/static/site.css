@@ -233,3 +233,9 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
   border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .7rem; resize: vertical;
 }
 .add-file small { font-weight: 400; color: var(--muted); }
+/* MF-22: a maker's activity */
+.activity { list-style: none; padding: 0; margin: 0; max-width: 46rem; }
+.activity li { padding: .7rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.activity .muted { margin-right: .4rem; font-size: .9rem; }
+.activity q { display: block; margin-top: .3rem; color: var(--muted); }
+.new { color: var(--accent); font-size: .85rem; }
