@@ -2037,10 +2037,11 @@ async fn before_the_launch_the_legal_drafts_are_for_admins_only() {
         assert!(!public.body.contains("OWNER"));
         assert!(!s.get(path, Some(&other)).await.body.contains("OWNER"));
         let draft = s.get(path, Some(&admin)).await.body;
-        assert!(
-            draft.contains("A draft for the owner") && draft.contains("<mark>[OWNER"),
-            "{draft}"
-        );
+        assert!(draft.contains("A draft for the owner"), "{draft}");
+        // the Privacy Policy's decisions are all made (2026-10-22): only its DRAFT line is left
+        if path != "/privacy" {
+            assert!(draft.contains("<mark>[OWNER"), "{draft}");
+        }
     }
     // no agreement asked for, search engines kept out, and still "coming soon"
     assert!(!s.get("/signup", None).await.body.contains("name=\"agree\""));
