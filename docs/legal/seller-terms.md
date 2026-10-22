@@ -50,10 +50,9 @@ already made.
 
 ## 5. Taxes
 
-**Sales tax.** [OWNER, ideally with an accountant: e.g. "Where the law makes MakerFoundry the
-marketplace facilitator, we work out, collect and pay sales tax on your sales, added to the
-buyer's price at checkout (Stripe Tax). You don't need to collect it yourself on MakerFoundry
-sales."]
+**Sales tax.** Paid sales aren't open on MakerFoundry yet: for now every design is shared free.
+Before they open, we'll add here how sales tax is handled, and these terms will ask for your
+agreement again before you can sell.
 
 **Income tax.** You are responsible for tax on what you earn. Stripe may send you, and the IRS, a
 Form 1099-K where the law requires.

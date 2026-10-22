@@ -15,9 +15,11 @@ it off; payouts held up to 90 days after an account is closed for breaking the t
 notices kept 3 years; makes in Terms § 4. Earlier: the fee (10%, the card fee from the seller's
 share, monthly payouts: Seller Terms § 4, § 6).
 
-**Still open:** the DMCA designated agent (Terms § 7, once registered), sales tax (Seller Terms
-§ 5, with an accountant), and the DRAFT lines, deleted once a lawyer has read the documents or the
-owner approves them without one.
+**Still open:** the DMCA designated agent (Terms § 7, once registered), and the DRAFT lines, deleted
+once a lawyer has read the documents or the owner approves them without one. **Sales tax** waits
+until paid sales open: for the free-only launch (owner's decision, 2026-10-22), Seller Terms § 5
+says paid sales aren't open yet; the decision, ideally with an accountant, goes there before the
+Stripe keys do (`docs/launch.md`).
 
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.

@@ -139,7 +139,8 @@ Nobody may resell or share the files themselves.
 - ~~**Who may sell**~~: **decided 2026-10-22: anyone with an account (Stripe checks identity).**
 - **Sales tax on digital goods**: some US states tax them and treat marketplaces as the seller
   ("marketplace facilitator" laws). Likely answer: Stripe Tax on checkout. Needs the owner's
-  decision (and ideally an accountant's word) before paid sales go live.
+  decision (and ideally an accountant's word) before paid sales go live. **The launch is free-only
+  (owner, 2026-10-22)**: Seller Terms § 5 says paid sales aren't open yet until this is decided.
 - **DMCA designated agent**: register SiteSentrix with the US Copyright Office (a small online
   fee) before the public launch, for safe-harbour protection.
 - ~~**Accounts**~~: **decided 2026-10-19: the StitchFoundry cloud accounts** (see "Accounts (MF-1)").

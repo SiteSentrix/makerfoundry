@@ -35,7 +35,10 @@ pages; published designs stay up.
    - In StitchFoundry's Stripe account, test mode first (`docs/deploy.md` › Stripe): turn on
      Connect (Express), make MakerFoundry's restricted key and its two webhooks, put them in
      Railway, and one test-mode sale end to end.
-   - Sales tax: decide (Stripe Tax, marketplace-facilitator states), ideally with an accountant.
+   - Sales tax: decide (Stripe Tax, marketplace-facilitator states), ideally with an accountant,
+     and put it in Seller Terms § 5 in place of "Paid sales aren't open yet" (the free-only launch
+     wording, 2026-10-22) **before** the Stripe keys go in: the new version asks sellers to agree
+     again.
    - Then the live keys and live webhooks in place of the test ones.
 5. **Admins.** Sign in on makerfoundry.app once; I read your account number from the database for
    `MF_ADMINS` (and anyone else who reviews reports).
