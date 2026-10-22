@@ -1,8 +1,9 @@
 # MakerFoundry: the plan
 
 **Status:** 2026-10-22. MF-0 to MF-23 built at https://makerfoundry.app (the table below);
-the site is closed until the owner's launch (`docs/launch.md`: legal wording, the DMCA agent,
-Stripe keys and sales tax, then `MF_LAUNCHED=yes`). MF-7's app side is StitchFoundry's
+the legal pages are approved (2026-10-22) for a free-only soft open (`docs/launch.md`: the contact
+email, admins, then `MF_LAUNCHED=yes`; the DMCA agent the week after; Stripe keys and sales tax
+before paid sales). MF-7's app side is StitchFoundry's
 (`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
 pay-what-you-want. Owner: Bruce Wattendorf (SiteSentrix).
 

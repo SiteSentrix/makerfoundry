@@ -1,7 +1,5 @@
 # Terms of Service: MakerFoundry
 
-> **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
-
 Effective date: October 22, 2026
 
 ## 1. Who we are and what these terms cover
@@ -94,8 +92,8 @@ terms. Where reasonable, we tell the maker why.
 
 We respond to notices of copyright infringement under the US Digital Millennium Copyright Act
 (17 U.S.C. § 512). How to send a notice, and a maker's right to send a counter-notice, are
-described at makerfoundry.app/dmca. Our designated agent is: [OWNER: as registered at
-copyright.gov/dmca-directory]. **We close the accounts of makers who repeatedly infringe.**
+described at makerfoundry.app/dmca, which also gives our designated agent's contact details.
+**We close the accounts of makers who repeatedly infringe.**
 
 Knowingly misrepresenting that something infringes, or that it was removed by mistake, can make
 you liable for damages (17 U.S.C. § 512(f)).

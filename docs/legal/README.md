@@ -1,10 +1,11 @@
-# MakerFoundry's legal pages: drafts for the owner
+# MakerFoundry's legal pages
 
-**Status:** 2026-10-19. Drafts, not reviewed by a lawyer. Legal wording is the owner's
-(docs/start-here.md). The site shows these files as `/terms`, `/privacy` and `/seller-terms`
-(`src/legal.rs`): to admins only, marked as drafts, while any `[OWNER: …]`, "[When …]" or "DRAFT
-for the owner" is left; to everyone once none is and the site has launched (`docs/launch.md`).
-To approve a document, edit it here: decide each marker, delete the DRAFT line, set the date.
+**Status:** 2026-10-22. **Approved by the owner** for the soft open, without a lawyer's read yet (a
+lawyer's changes later become a new version; each agreement keeps the version agreed to). Legal
+wording is the owner's (docs/start-here.md). The site shows these files as `/terms`, `/privacy` and
+`/seller-terms` (`src/legal.rs`): to admins only, marked as drafts, while any `[OWNER: …]`, "[When
+…]" or "DRAFT for the owner" is left; to everyone once none is and the site has launched
+(`docs/launch.md`).
 
 **Decided by the owner, 2026-10-22**, and written into the drafts: effective date October 22, 2026;
 contact support@makerfoundry.app; accounts at 18 or older; the small-business licence at 200 items;
@@ -15,11 +16,11 @@ it off; payouts held up to 90 days after an account is closed for breaking the t
 notices kept 3 years; makes in Terms § 4. Earlier: the fee (10%, the card fee from the seller's
 share, monthly payouts: Seller Terms § 4, § 6).
 
-**Still open:** the DMCA designated agent (Terms § 7, once registered), and the DRAFT lines, deleted
-once a lawyer has read the documents or the owner approves them without one. **Sales tax** waits
-until paid sales open: for the free-only launch (owner's decision, 2026-10-22), Seller Terms § 5
-says paid sales aren't open yet; the decision, ideally with an accountant, goes there before the
-Stripe keys do (`docs/launch.md`).
+**Still open:** a lawyer's read. Terms § 7 points to makerfoundry.app/dmca for the designated agent,
+which shows `MF_DMCA_AGENT` once the owner has registered one (planned for the week after the soft
+open), so the Terms needn't change then. **Sales tax** waits until paid sales open: for the
+free-only launch (owner's decision, 2026-10-22), Seller Terms § 5 says paid sales aren't open yet;
+the decision, ideally with an accountant, goes there before the Stripe keys do (`docs/launch.md`).
 
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.

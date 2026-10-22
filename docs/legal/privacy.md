@@ -1,7 +1,5 @@
 # Privacy Policy: MakerFoundry
 
-> **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
-
 Effective date: October 22, 2026
 
 **The short version.** You can browse and download free designs without telling us anything. With

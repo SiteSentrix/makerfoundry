@@ -2135,7 +2135,7 @@ async fn without_stripe_every_design_is_free() {
 // ---------------------------------------------------------------- MF-6: the launch
 
 #[tokio::test]
-async fn before_the_launch_the_legal_drafts_are_for_admins_only() {
+async fn before_the_launch_the_legal_pages_are_for_admins_only() {
     let Some(s) = site_with(vec![1000]).await else { return };
     let admin = s.sign_up("ada%40example.com").await;
     let other = s.sign_up("bea%40example.com").await;
@@ -2145,15 +2145,19 @@ async fn before_the_launch_the_legal_drafts_are_for_admins_only() {
         assert!(public.body.contains("hasn't opened yet"), "{}", public.body);
         assert!(!public.body.contains("OWNER"));
         assert!(!s.get(path, Some(&other)).await.body.contains("OWNER"));
+        // admins see the document itself, marked as a draft while the owner has decisions left
         let draft = s.get(path, Some(&admin)).await.body;
-        assert!(draft.contains("A draft for the owner"), "{draft}");
-        // the markers still in the document are shown to admins
+        assert!(!draft.contains("hasn't opened yet"), "{draft}");
         let source = std::fs::read_to_string(format!(
             "{}/../../docs/legal/{}.md",
             env!("CARGO_MANIFEST_DIR"),
             path.trim_start_matches('/')
         ))
         .unwrap();
+        let unfinished = ["[OWNER", "[When", "DRAFT for the owner"]
+            .iter()
+            .any(|m| source.contains(m));
+        assert_eq!(draft.contains("A draft for the owner"), unfinished, "{draft}");
         assert_eq!(draft.contains("<mark>[OWNER"), source.contains("[OWNER"), "{draft}");
     }
     // no agreement asked for, search engines kept out, and still "coming soon"

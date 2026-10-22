@@ -1,7 +1,5 @@
 # Seller Terms: MakerFoundry
 
-> **DRAFT for the owner, 2026-10-19. Not reviewed by a lawyer. Not published.**
-
 Effective date: October 22, 2026
 
 These Seller Terms add to MakerFoundry's Terms of Service for makers who **publish** designs, and

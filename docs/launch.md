@@ -1,6 +1,7 @@
 # Launching MakerFoundry (MF-6)
 
-**Status:** 2026-10-19. Everything the site needs to launch is built. The launch itself, and every
+**Status:** 2026-10-22. The legal pages are approved and the launch switch can open (free designs
+only; the DMCA agent the week after). Everything the site needs to launch is built. The launch itself, and every
 step below, is the owner's (docs/start-here.md: legal wording, money, anything public).
 
 ## What the launch switch does
@@ -23,14 +24,16 @@ Turning it off again (`MF_LAUNCHED` removed) closes publishing to new makers and
 pages; published designs stay up.
 
 ## The owner's steps, in order
-1. **The legal pages.** Decide each `[OWNER: …]` in `docs/legal/` (the list is in
-   `docs/legal/README.md`), ideally with a lawyer's read; delete the DRAFT lines; set the
-   effective dates. Ask me to make the edits if easier: I'll change only what you decide.
+1. **The legal pages.** ~~Decide each `[OWNER: …]` in `docs/legal/`, delete the DRAFT lines, set
+   the effective dates.~~ **Done 2026-10-22** (approved by the owner; a lawyer's read later).
 2. **Contact email.** Cloudflare Email Routing for makerfoundry.app (the bwattendorf@gmail.com
    Cloudflare account): `support@makerfoundry.app` forwarding to your Gmail. The legal pages and
    `/dmca` name it.
-3. **DMCA agent.** Register SiteSentrix at copyright.gov/dmca-directory (a small fee), then set
-   `MF_DMCA_AGENT` (lines apart by `|`: name, address, email, phone) and put the same in Terms § 7.
+3. **DMCA agent.** Register SiteSentrix at copyright.gov/dmca-directory ($6, valid three years;
+   makerfoundry.app as an alternate name), then set `MF_DMCA_AGENT` (lines apart by `|`: name,
+   address, email, phone): `/dmca` shows it, and Terms § 7 points there. The owner chose a soft
+   open first (2026-10-22), registering the week after: until then `/dmca` asks for the form, and
+   the DMCA's safe harbour (17 U.S.C. § 512(c)(2)) isn't in place, so act on reports promptly.
 4. **Selling** (or launch with free designs only and open selling later):
    - In StitchFoundry's Stripe account, test mode first (`docs/deploy.md` › Stripe): turn on
      Connect (Express), make MakerFoundry's restricted key and its two webhooks, put them in
