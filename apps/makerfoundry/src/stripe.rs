@@ -20,6 +20,10 @@ use sha2::Sha256;
 pub const DEFAULT_API: &str = "https://api.stripe.com";
 /// How old a webhook's signature may be: Stripe's own libraries' default.
 pub const TOLERANCE_SECS: i64 = 300;
+/// The tax code designs are sold under with Stripe Tax (MF-24): "Digital Finished Artwork -
+/// downloaded - non subscription - with permanent rights" (https://docs.stripe.com/tax/tax-codes);
+/// `MF_TAX_CODE` gives another.
+pub const DEFAULT_TAX_CODE: &str = "txcd_10505001";
 
 #[derive(Clone)]
 pub struct Stripe {
@@ -29,6 +33,9 @@ pub struct Stripe {
     webhook_secrets: Vec<String>,
     /// MakerFoundry's address, for the links Stripe sends people back to.
     pub public_url: String,
+    /// With Stripe Tax on (`MF_STRIPE_TAX`), the tax code designs are sold under; `None`: no tax
+    /// is charged.
+    pub tax_code: Option<String>,
     http: reqwest::Client,
 }
 
@@ -60,12 +67,26 @@ impl Stripe {
             key: key.to_string(),
             webhook_secrets,
             public_url: public_url.trim_end_matches('/').to_string(),
+            tax_code: None,
             http,
         })
     }
 
+    /// The same, charging sales tax with Stripe Tax under `code` (`txcd_` and digits).
+    pub fn with_tax(mut self, code: &str) -> Result<Stripe, String> {
+        let digits = code.strip_prefix("txcd_").unwrap_or("");
+        if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!(
+                "MF_TAX_CODE isn't a Stripe tax code (txcd_ and 8 digits): {code}"
+            ));
+        }
+        self.tax_code = Some(code.to_string());
+        Ok(self)
+    }
+
     /// From `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (and `STRIPE_CONNECT_WEBHOOK_SECRET`),
-    /// `STRIPE_API_URL` and `MF_PUBLIC_URL`: `None` without a key (nothing can be sold).
+    /// `STRIPE_API_URL`, `MF_PUBLIC_URL`, and `MF_STRIPE_TAX` (`yes` charges sales tax, under
+    /// `MF_TAX_CODE`): `None` without a key (nothing can be sold).
     pub fn from_env(var: impl Fn(&str) -> Option<String>) -> Result<Option<Stripe>, String> {
         let Some(key) = var("STRIPE_SECRET_KEY").filter(|k| !k.trim().is_empty()) else {
             return Ok(None);
@@ -81,7 +102,16 @@ impl Stripe {
         }
         let api = var("STRIPE_API_URL").unwrap_or_else(|| DEFAULT_API.to_string());
         let public = var("MF_PUBLIC_URL").unwrap_or_else(|| "https://makerfoundry.app".to_string());
-        Stripe::new(&api, key.trim(), secrets, &public).map(Some)
+        let stripe = Stripe::new(&api, key.trim(), secrets, &public)?;
+        let tax = var("MF_STRIPE_TAX").is_some_and(|v| matches!(v.trim(), "yes" | "on" | "true" | "1"));
+        if !tax {
+            return Ok(Some(stripe));
+        }
+        let code = var("MF_TAX_CODE")
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| DEFAULT_TAX_CODE.to_string());
+        stripe.with_tax(&code).map(Some)
     }
 
     /// Whether the key is a test-mode key (`sk_test_…`).

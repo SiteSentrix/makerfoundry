@@ -1,6 +1,6 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-22. MF-0 to MF-23 built at https://makerfoundry.app (the table below);
+**Status:** 2026-10-27. MF-0 to MF-24 built at https://makerfoundry.app (the table below);
 the legal pages are approved (2026-10-22) for a free-only soft open (`docs/launch.md`: the contact
 email, admins, then `MF_LAUNCHED=yes`; the DMCA agent the week after; Stripe keys and sales tax
 before paid sales). MF-7's app side is StitchFoundry's
@@ -130,6 +130,7 @@ Nobody may resell or share the files themselves.
 | MF-21 | Signing everyone out after a breach | a session copied from the database stops working. **Done 2026-10-22**: `MF_END_SESSIONS_BEFORE` (a UTC time, a date or Unix seconds) deletes the sessions made before it when the service starts; `docs/deploy.md` › After a breach lists every secret the service holds and where each is renewed |
 | MF-22 | Activity | makers learn what people did with their designs without email. **Done 2026-10-22**: `/activity` lists, newest first, the comments and makes on a maker's designs by other people (who, the design, a line of what they wrote), their sales and refunds (what they got or gave back) and new followers (not named); what came since they last looked is marked new, and the account page counts it. Drawn from those tables; only when they last looked is kept (`mf_activity_seen`, in the data download and deleted with the data) (`activity.rs`) |
 | MF-23 | Refunds: the seller bears the card fee | a refunded seller is out only the card fee Stripe keeps (the owner's decision, Seller Terms § 7). **Done 2026-10-22**: an admin's refund gives the buyer the whole price back and reverses the seller's transfer, without the application fee; MakerFoundry then gives its 10% back to the seller as a partial refund of that fee (`/v1/application_fees/{id}/refunds`). In the ledger the refund takes the price from the seller (`refund`) and the 10% goes back (`fee_return`); the card fee row stays. If Stripe can't give the fee back at once, `/admin/orders` offers Give the fee back (`fee_returned_at`). Activity and the sales page show what the seller lost. The restricted key needs three more permissions (`docs/deploy.md`) |
+| MF-24 | Sales tax with Stripe Tax | the buyer pays the price plus the tax, which is MakerFoundry's, not the seller's. **Built 2026-10-27, off until `MF_STRIPE_TAX=yes`**: checkouts ask Stripe Tax for it (`automatic_tax`, MakerFoundry liable, billing address required, prices exclusive, tax code `txcd_10505001` or `MF_TAX_CODE`); a paid session is believed only if its subtotal is the price and its total the price plus the tax; the tax is taken back from the seller's transfer by a reversal once paid (webhook, return page, sweep; checked with Stripe so it's never taken twice); `tax` ledger rows; a taxed refund takes the price back from the seller first, then refunds the buyer everything; the buyer's library shows the tax, the admins' overview the tax collected (`selling.rs`, `docs/deploy.md` › Sales tax) |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
@@ -142,6 +143,8 @@ Nobody may resell or share the files themselves.
   ("marketplace facilitator" laws). Likely answer: Stripe Tax on checkout. Needs the owner's
   decision (and ideally an accountant's word) before paid sales go live. **The launch is free-only
   (owner, 2026-10-22)**: Seller Terms § 5 says paid sales aren't open yet until this is decided.
+  **The code is ready (MF-24, 2026-10-27)**: Stripe Tax on checkout, switched on with
+  `MF_STRIPE_TAX=yes` once the owner has registered and updated Seller Terms § 5.
 - **DMCA designated agent**: register SiteSentrix with the US Copyright Office (a small online
   fee) before the public launch, for safe-harbour protection.
 - ~~**Accounts**~~: **decided 2026-10-19: the StitchFoundry cloud accounts** (see "Accounts (MF-1)").

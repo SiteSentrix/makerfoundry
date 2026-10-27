@@ -90,6 +90,8 @@ books and one name on card statements for both. What keeps the two apart:
   - **PaymentIntents:** Read and **Charges:** Read (a refunded sale's application fee)
   - **Connect › Application Fees:** Write (MakerFoundry's 10% given back to the seller on a refund)
   - **Connect › Accounts:** Write (sellers' Express accounts, their set-up and dashboard links)
+  - **Connect › Transfers:** Write (only with sales tax on, MF-24: the tax taken back from the
+    seller's transfer, and a taxed sale's price before its refund)
 
   It goes in `STRIPE_SECRET_KEY` (`rk_test_…`, later `rk_live_…`). If it ever leaked, it couldn't
   touch StitchFoundry's products, prices or payouts settings, and it can be rolled on its own.
@@ -103,6 +105,28 @@ books and one name on card statements for both. What keeps the two apart:
 - **Connect** must be on in the account: Marketplace, **Express** accounts, US; the platform's
   name and icon are what sellers see while setting up.
 - Everything travels over HTTPS; the keys and secrets live only in Railway's variables.
+
+## Sales tax (MF-24)
+Off until `MF_STRIPE_TAX=yes`. MakerFoundry is the marketplace, so it collects and pays the tax
+(https://docs.stripe.com/tax/tax-for-marketplaces), never the seller:
+1. **Stripe Tax on** in the Stripe Dashboard (**Tax › Get started**): the business address (the
+   origin), the default product tax code, and prices **exclusive** of tax.
+2. **Registrations** (**Tax › Registrations**): add each state MakerFoundry is registered in with
+   the state itself (Rhode Island first). Stripe only collects where a registration is active, and
+   its monitoring says when sales in another state come near that state's threshold.
+3. **Seller Terms § 5** says how tax works, in place of "Paid sales aren't open yet" (the owner's
+   wording, ideally with an accountant's word), before `MF_STRIPE_TAX=yes`.
+4. **The restricted key** gets **Connect › Transfers: Write** (above).
+
+What it does: the checkout asks Stripe Tax for the tax (`automatic_tax`, MakerFoundry liable,
+the buyer's billing address required, prices exclusive of tax); the buyer pays the price plus the
+tax, and the seller's share is worked out from the price alone. A destination charge moves the
+whole payment to the seller's account, so once the sale is paid the tax is taken back with a
+transfer reversal (from the webhook, the buyer's return, and the 10-minute sweep until it's done;
+checked with Stripe first, so never twice). The ledger keeps the tax as MakerFoundry's (`tax`
+rows); a refund gives the buyer everything back, the tax too, taking the price back from the
+seller first. Stripe records the tax for its reports; filing it with the states is the owner's
+(or Stripe's filing add-on).
 
 ## Settings the service reads
 | Variable | Needed | What |
@@ -118,6 +142,8 @@ books and one name on card statements for both. What keeps the two apart:
 | `STRIPE_SECRET_KEY` | to sell | MakerFoundry's restricted key in StitchFoundry's Stripe account (`rk_test_…` until launch; see "Stripe" above). Without it every design is free |
 | `STRIPE_WEBHOOK_SECRET` | with the key | the signing secret (`whsec_…`) of the webhook endpoint `https://makerfoundry.app/stripe/webhook` listening to **your account's** events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded` |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
+| `MF_STRIPE_TAX` | no (off) | `yes` charges sales tax with Stripe Tax (MF-24, "Sales tax" below) |
+| `MF_TAX_CODE` | no (`txcd_10505001`) | the Stripe tax code designs are sold under: Digital Finished Artwork, downloaded, with permanent rights |
 | `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |
 | `STRIPE_API_URL` | no | a stand-in for Stripe's API (local tests) |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |

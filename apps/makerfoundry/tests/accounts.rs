@@ -1551,6 +1551,10 @@ struct StripeFake {
     fee_refunds: Vec<(String, HashMap<String, String>)>,
     /// Whether Stripe answers application fee refunds with an error.
     fee_refunds_fail: bool,
+    /// Transfer reversals: (the transfer, the form).
+    reversals: Vec<(String, HashMap<String, String>)>,
+    /// Whether Stripe answers transfer reversals with an error.
+    reversals_fail: bool,
 }
 
 type StripeShared = Arc<Mutex<StripeFake>>;
@@ -1629,7 +1633,7 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
             "/v1/payment_intents/{id}",
             get(|Path(id): Path<String>, Query(q): Query<HashMap<String, String>>| async move {
                 assert_eq!(q.get("expand[]").map(String::as_str), Some("latest_charge"));
-                let charge = json!({"id": format!("ch_{id}"), "object": "charge", "application_fee": format!("fee_{id}")});
+                let charge = json!({"id": format!("ch_{id}"), "object": "charge", "application_fee": format!("fee_{id}"), "transfer": format!("tr_{id}")});
                 Json(json!({"id": id, "object": "payment_intent", "latest_charge": charge}))
             }),
         )
@@ -1642,6 +1646,30 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
                 }
                 st.fee_refunds.push((id.clone(), f));
                 (StatusCode::OK, Json(json!({"id": "fr_test_1", "object": "fee_refund", "fee": id})))
+            }),
+        )
+        .route(
+            "/v1/transfers/{id}",
+            get(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
+                let st = s.lock().unwrap();
+                let data: Vec<Value> = st
+                    .reversals
+                    .iter()
+                    .filter(|(t, _)| *t == id)
+                    .map(|(_, f)| json!({"object": "transfer_reversal", "amount": f["amount"].parse::<i64>().unwrap(), "metadata": {"order": f["metadata[order]"], "reason": f["metadata[reason]"]}}))
+                    .collect();
+                Json(json!({"id": id, "object": "transfer", "reversals": {"object": "list", "data": data}}))
+            }),
+        )
+        .route(
+            "/v1/transfers/{id}/reversals",
+            post(|State(s): State<StripeShared>, Path(id): Path<String>, Form(f): Form<HashMap<String, String>>| async move {
+                let mut st = s.lock().unwrap();
+                if st.reversals_fail {
+                    return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": {"message": "try again"}})));
+                }
+                st.reversals.push((id.clone(), f));
+                (StatusCode::OK, Json(json!({"id": "trr_test_1", "object": "transfer_reversal", "transfer": id})))
             }),
         )
         .with_state(shared.clone());
@@ -1658,13 +1686,22 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
     (stripe, shared)
 }
 
-/// A Checkout Session as Stripe describes it, made from the form that made it.
+/// A Checkout Session as Stripe describes it, made from the form that made it: with automatic tax,
+/// Stripe Tax adds 7% (rounded down).
 fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
+    let price = f["line_items[0][price_data][unit_amount]"].parse::<i64>().unwrap();
+    let tax = if f.contains_key("automatic_tax[enabled]") {
+        price * 7 / 100
+    } else {
+        0
+    };
     json!({
         "id": id,
         "object": "checkout.session",
         "payment_status": if paid { "paid" } else { "unpaid" },
-        "amount_total": f["line_items[0][price_data][unit_amount]"].parse::<i64>().unwrap(),
+        "amount_subtotal": price,
+        "amount_total": price + tax,
+        "total_details": {"amount_tax": tax, "amount_discount": 0, "amount_shipping": 0},
         "currency": "usd",
         "payment_intent": format!("pi_{id}"),
         "metadata": {"order": f["metadata[order]"], "app": f["metadata[app]"]},
@@ -1758,6 +1795,24 @@ impl Site {
 /// priced $5 → the site, the stand-in Stripe, the seller's cookie and the design.
 async fn selling_site(admins: Vec<i64>) -> Option<(Site, StripeShared, String, i64)> {
     let (stripe, st) = fake_stripe().await;
+    selling_site_with(admins, stripe, st).await
+}
+
+/// The same, charging sales tax with Stripe Tax (MF-24) → also the Stripe client, for the sweep.
+async fn taxed_selling_site(
+    admins: Vec<i64>,
+) -> Option<(Site, StripeShared, String, i64, makerfoundry::stripe::Stripe)> {
+    let (stripe, st) = fake_stripe().await;
+    let stripe = stripe.with_tax(makerfoundry::stripe::DEFAULT_TAX_CODE).unwrap();
+    let (s, st, seller, id) = selling_site_with(admins, stripe.clone(), st).await?;
+    Some((s, st, seller, id, stripe))
+}
+
+async fn selling_site_with(
+    admins: Vec<i64>,
+    stripe: makerfoundry::stripe::Stripe,
+    st: StripeShared,
+) -> Option<(Site, StripeShared, String, i64)> {
     let s = site_full(admins, Some(stripe)).await?;
     let seller = s.sign_up("sam%40example.com").await;
     let id = published(&s, &seller, "sams-shop", "Fox+Patch").await;
@@ -2013,6 +2068,181 @@ async fn a_design_is_sold_paid_for_delivered_and_refunded() {
             .await
             .body
             .contains("<dd>-$0.45</dd>")
+    );
+}
+
+#[tokio::test]
+async fn sales_tax_is_charged_kept_by_makerfoundry_and_refunded() {
+    let Some((s, st, seller, id, stripe)) = taxed_selling_site(vec![1002]).await else {
+        return;
+    };
+    let buyer = s.sign_up("bea%40example.com").await;
+    let admin = s.sign_up("ada%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    // the checkout asks Stripe Tax for the tax, on top of the price, MakerFoundry liable
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(form["automatic_tax[enabled]"], "true");
+    assert_eq!(form["automatic_tax[liability][type]"], "self");
+    assert_eq!(form["billing_address_collection"], "required");
+    assert_eq!(form["line_items[0][price_data][tax_behavior]"], "exclusive");
+    assert_eq!(
+        form["line_items[0][price_data][product_data][tax_code]"],
+        "txcd_10505001"
+    );
+    // the seller's share is worked out from the price alone
+    assert_eq!(form["line_items[0][price_data][unit_amount]"], "500");
+    assert_eq!(form["payment_intent_data[application_fee_amount]"], "95");
+    let order = form["metadata[order]"].clone();
+    // a total that isn't the price and the tax changes nothing
+    let paid = session_json("cs_test_1", &form, true);
+    assert_eq!(paid["amount_total"], 535);
+    let mut wrong = paid.clone();
+    wrong["amount_total"] = json!(500);
+    s.stripe_event(WEBHOOK_SECRET, "evt_wrong", "checkout.session.completed", wrong)
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 0);
+    // paid: the tax is MakerFoundry's, and taken back from the seller's transfer at once
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_1", "checkout.session.completed", paid.clone())
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let ledger: Vec<(i64, String, i64)> = sqlx::query_as("SELECT account_id, kind, cents FROM mf_ledger ORDER BY kind")
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ledger,
+        [
+            (0, "fee".to_string(), 50),
+            (0, "processing".to_string(), 45),
+            (1000, "seller".to_string(), 405),
+            (0, "tax".to_string(), 35)
+        ]
+    );
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 1);
+        assert_eq!(f.reversals[0].0, "tr_pi_cs_test_1");
+        assert_eq!(f.reversals[0].1["amount"], "35");
+        assert_eq!(f.reversals[0].1["metadata[reason]"], "sales_tax");
+    }
+    // told again, or swept: the tax isn't taken twice
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_2",
+        "checkout.session.async_payment_succeeded",
+        paid.clone(),
+    )
+    .await;
+    makerfoundry::selling::withhold_taxes(&stripe, &s.pool).await.unwrap();
+    assert_eq!(st.lock().unwrap().reversals.len(), 1);
+    // the buyer sees what they paid; the seller's sales don't show the tax
+    assert!(s.get("/library", Some(&buyer)).await.body.contains("$5 + $0.35 tax"));
+    assert!(
+        s.get("/account/sales", Some(&seller))
+            .await
+            .body
+            .contains("$5 − fee $0.50 − card fee $0.45 = <strong>$4.05</strong>")
+    );
+    assert!(s.get("/admin/overview", Some(&admin)).await.body.contains("$0.35"));
+    // refunded: the price taken back from the seller by MakerFoundry, the buyer refunded all of it
+    let r = s.post(&format!("/admin/orders/{order}/refund"), "", Some(&admin)).await;
+    assert!(r.body.contains("refunded"), "{}", r.body);
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 2);
+        assert_eq!(f.reversals[1].1["amount"], "500");
+        assert_eq!(f.reversals[1].1["metadata[reason]"], "refund");
+        assert_eq!(f.refunds[0]["reverse_transfer"], "false");
+        assert_eq!(f.refunds[0]["refund_application_fee"], "false");
+        assert_eq!(f.fee_refunds[0].1["amount"], "50");
+    }
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 0);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'tax'")
+            .await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -45
+    );
+}
+
+#[tokio::test]
+async fn tax_stripe_couldnt_take_back_is_taken_by_the_sweep_or_the_refund() {
+    let Some((s, st, _seller, id, stripe)) = taxed_selling_site(vec![1002]).await else {
+        return;
+    };
+    let buyer = s.sign_up("bea%40example.com").await;
+    let admin = s.sign_up("ada%40example.com").await;
+    // two sales while Stripe can't reverse transfers
+    st.lock().unwrap().reversals_fail = true;
+    s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    let paid = session_json("cs_test_1", &form, true);
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_1", "checkout.session.completed", paid)
+        .await;
+    // the sale itself is recorded (the payment happened)
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'paid' AND tax_withheld_at IS NULL")
+            .await,
+        1
+    );
+    let other = s.sign_up("cy%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&other)).await;
+    let form2 = st.lock().unwrap().sessions["cs_test_2"].0.clone();
+    let order2 = form2["metadata[order]"].clone();
+    st.lock().unwrap().sessions.get_mut("cs_test_2").unwrap().1 = true;
+    s.get(&format!("/library?order={order2}"), Some(&other)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'paid' AND tax_withheld_at IS NULL")
+            .await,
+        2
+    );
+    // a refund can't go ahead while the money can't be taken back from the seller
+    let r = s
+        .post(&format!("/admin/orders/{order2}/refund"), "", Some(&admin))
+        .await;
+    assert!(r.body.contains("Nothing was refunded"), "{}", r.body);
+    assert!(st.lock().unwrap().refunds.is_empty());
+    // Stripe answers again: the sweep takes the first sale's tax; the refund takes the second's
+    // tax, then its price
+    st.lock().unwrap().reversals_fail = false;
+    let order1: i64 = form["metadata[order]"].parse().unwrap();
+    sqlx::query("UPDATE mf_orders SET tax_withheld_at = NULL WHERE id = $1")
+        .bind(order1)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let r = s
+        .post(&format!("/admin/orders/{order2}/refund"), "", Some(&admin))
+        .await;
+    assert!(r.body.contains("refunded"), "{}", r.body);
+    makerfoundry::selling::withhold_taxes(&stripe, &s.pool).await.unwrap();
+    let mut got: Vec<(String, String, String)> = st
+        .lock()
+        .unwrap()
+        .reversals
+        .iter()
+        .map(|(t, r)| (t.clone(), r["amount"].clone(), r["metadata[reason]"].clone()))
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            ("tr_pi_cs_test_1".to_string(), "35".to_string(), "sales_tax".to_string()),
+            ("tr_pi_cs_test_2".to_string(), "35".to_string(), "sales_tax".to_string()),
+            ("tr_pi_cs_test_2".to_string(), "500".to_string(), "refund".to_string()),
+        ]
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE tax_withheld_at IS NULL AND tax_cents > 0")
+            .await,
+        0
     );
 }
 

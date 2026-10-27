@@ -156,6 +156,10 @@ pub async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Resp
                 dollars(n(p, "SELECT coalesce(sum(cents), 0)::bigint FROM mf_ledger WHERE kind = 'processing'").await),
             ),
             (
+                "Sales tax collected",
+                dollars(n(p, "SELECT coalesce(sum(cents), 0)::bigint FROM mf_ledger WHERE kind = 'tax'").await),
+            ),
+            (
                 "Fees this month",
                 dollars(
                     n(

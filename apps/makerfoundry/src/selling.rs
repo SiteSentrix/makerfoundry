@@ -4,6 +4,14 @@
 //! the buyer comes back. Every sale and refund is written to the ledger (`mf_ledger`) in cents:
 //! the seller's share, MakerFoundry's 10% fee and the card fee (`money::split`).
 //!
+//! Sales tax (MF-24, on with `MF_STRIPE_TAX`): Stripe Tax adds it at checkout, from the buyer's
+//! address; MakerFoundry is the marketplace and liable for it
+//! (https://docs.stripe.com/tax/tax-for-marketplaces), so it's MakerFoundry's (`tax` rows), never
+//! the seller's. A destination charge moves the whole payment, tax included, to the seller's Stripe
+//! account, so the tax is taken back with a transfer reversal once the sale is paid
+//! (`withhold_tax`), and a taxed sale's refund takes the price back from the seller before
+//! refunding the buyer everything they paid.
+//!
 //! Pages: `/account/selling` (setting up), `/account/sales` (a seller's sales), `/library` (a
 //! buyer's purchases), `/admin/orders` (refunds). Stripe's webhook: `/stripe/webhook`.
 
@@ -429,35 +437,43 @@ pub async fn buy(State(state): State<AppState>, headers: HeaderMap, Path(id): Pa
         }
     };
     let name: String = d.title.chars().take(200).collect();
+    let mut form: Vec<(&str, String)> = vec![
+        ("mode", "payment".into()),
+        // the page lasts 2 hours; the order expires a day later (`expire_orders`)
+        ("expires_at", (now_secs() + CHECKOUT_SECS).to_string()),
+        ("client_reference_id", order.to_string()),
+        ("success_url", format!("{}/library?order={order}", stripe.public_url)),
+        ("cancel_url", format!("{}/d/{id}/{}", stripe.public_url, slug(&d.title))),
+        ("line_items[0][quantity]", "1".into()),
+        ("line_items[0][price_data][currency]", "usd".into()),
+        ("line_items[0][price_data][unit_amount]", parts.price.to_string()),
+        ("line_items[0][price_data][product_data][name]", name),
+        (
+            "payment_intent_data[application_fee_amount]",
+            parts.application_fee().to_string(),
+        ),
+        (
+            "payment_intent_data[transfer_data][destination]",
+            s.stripe_account.clone(),
+        ),
+        ("payment_intent_data[metadata][order]", order.to_string()),
+        ("payment_intent_data[metadata][app]", APP.into()),
+        ("metadata[order]", order.to_string()),
+        ("metadata[app]", APP.into()),
+    ];
+    if let Some(code) = &stripe.tax_code {
+        // tax on top of the price, worked out by Stripe Tax from the buyer's address, with
+        // MakerFoundry liable (https://docs.stripe.com/tax/checkout)
+        form.extend([
+            ("automatic_tax[enabled]", "true".to_string()),
+            ("automatic_tax[liability][type]", "self".into()),
+            ("billing_address_collection", "required".into()),
+            ("line_items[0][price_data][tax_behavior]", "exclusive".into()),
+            ("line_items[0][price_data][product_data][tax_code]", code.clone()),
+        ]);
+    }
     let session = stripe
-        .post(
-            "/v1/checkout/sessions",
-            &[
-                ("mode", "payment".into()),
-                // the page lasts 2 hours; the order expires a day later (`expire_orders`)
-                ("expires_at", (now_secs() + CHECKOUT_SECS).to_string()),
-                ("client_reference_id", order.to_string()),
-                ("success_url", format!("{}/library?order={order}", stripe.public_url)),
-                ("cancel_url", format!("{}/d/{id}/{}", stripe.public_url, slug(&d.title))),
-                ("line_items[0][quantity]", "1".into()),
-                ("line_items[0][price_data][currency]", "usd".into()),
-                ("line_items[0][price_data][unit_amount]", parts.price.to_string()),
-                ("line_items[0][price_data][product_data][name]", name),
-                (
-                    "payment_intent_data[application_fee_amount]",
-                    parts.application_fee().to_string(),
-                ),
-                (
-                    "payment_intent_data[transfer_data][destination]",
-                    s.stripe_account.clone(),
-                ),
-                ("payment_intent_data[metadata][order]", order.to_string()),
-                ("payment_intent_data[metadata][app]", APP.into()),
-                ("metadata[order]", order.to_string()),
-                ("metadata[app]", APP.into()),
-            ],
-            Some(&format!("mf-order-{order}")),
-        )
+        .post("/v1/checkout/sessions", &form, Some(&format!("mf-order-{order}")))
         .await;
     let (sid, url) = match &session {
         Ok(v) => (
@@ -491,17 +507,28 @@ pub async fn buy(State(state): State<AppState>, headers: HeaderMap, Path(id): Pa
 }
 
 /// A Checkout Session Stripe says is paid → order `order` paid and its sale in the ledger, once.
-/// `false` (and nothing changes) unless the session is paid and is this order's, for its amount.
+/// `false` (and nothing changes) unless the session is paid and is this order's, for its price
+/// (plus the tax Stripe added, at most the price itself).
 async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> Result<bool, sqlx::Error> {
     if session.get("payment_status").and_then(Value::as_str) != Some("paid") {
         return Ok(false);
     }
     let sid = session.get("id").and_then(Value::as_str).unwrap_or("");
-    let amount = session.get("amount_total").and_then(Value::as_i64).unwrap_or(-1);
+    let total = session.get("amount_total").and_then(Value::as_i64).unwrap_or(-1);
+    let tax = session
+        .pointer("/total_details/amount_tax")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    // what the price was, before the tax (a session without tax says only its total)
+    let amount = session.get("amount_subtotal").and_then(Value::as_i64).unwrap_or(total);
+    if !(0..=amount).contains(&tax) || amount.checked_add(tax) != Some(total) {
+        eprintln!("selling: order {order}: a paid session whose amounts don't add up ({sid})");
+        return Ok(false);
+    }
     let currency = session.get("currency").and_then(Value::as_str).unwrap_or("");
     let intent = session.get("payment_intent").and_then(Value::as_str);
     let row = sqlx::query(
-        "UPDATE mf_orders SET status = 'paid', paid_at = now(), stripe_payment_intent = $3
+        "UPDATE mf_orders SET status = 'paid', paid_at = now(), stripe_payment_intent = $3, tax_cents = $6
          WHERE id = $1 AND stripe_session = $2 AND status = 'pending' AND price_cents = $4 AND currency = $5
          RETURNING seller_account, fee_cents, processing_cents, seller_cents",
     )
@@ -510,6 +537,7 @@ async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> R
     .bind(intent)
     .bind(amount)
     .bind(currency)
+    .bind(tax)
     .fetch_optional(&mut *conn)
     .await?;
     let Some(row) = row else {
@@ -530,6 +558,9 @@ async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> R
     ] {
         ledger(conn, order, account, kind, cents, "sale").await?;
     }
+    if tax > 0 {
+        ledger(conn, order, MAKERFOUNDRY, "tax", tax, "sale").await?;
+    }
     Ok(true)
 }
 
@@ -538,7 +569,7 @@ async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> R
 async fn record_refund(conn: &mut PgConnection, order: i64) -> Result<bool, sqlx::Error> {
     let row = sqlx::query(
         "UPDATE mf_orders SET status = 'refunded', refunded_at = now() WHERE id = $1 AND status = 'paid'
-         RETURNING seller_account, price_cents",
+         RETURNING seller_account, price_cents, tax_cents",
     )
     .bind(order)
     .fetch_optional(&mut *conn)
@@ -546,7 +577,12 @@ async fn record_refund(conn: &mut PgConnection, order: i64) -> Result<bool, sqlx
     let Some(row) = row else { return Ok(false) };
     let seller: i64 = row.try_get("seller_account")?;
     let price: i64 = row.try_get("price_cents")?;
+    let tax: i64 = row.try_get("tax_cents")?;
     ledger(conn, order, seller, "seller", -price, "refund").await?;
+    if tax > 0 {
+        // the buyer gets the tax back too
+        ledger(conn, order, MAKERFOUNDRY, "tax", -tax, "refund").await?;
+    }
     Ok(true)
 }
 
@@ -567,6 +603,103 @@ async fn record_fee_return(conn: &mut PgConnection, order: i64) -> Result<bool, 
     ledger(conn, order, seller, "seller", fee, "fee_return").await?;
     ledger(conn, order, MAKERFOUNDRY, "fee", -fee, "fee_return").await?;
     Ok(true)
+}
+
+/// The transfer that moved a sale's payment to its seller's Stripe account.
+async fn transfer_of(stripe: &Stripe, intent: Option<&str>) -> Result<String, String> {
+    let intent = intent
+        .filter(|i| is_stripe_id(i, "pi_"))
+        .ok_or_else(|| "the order has no Stripe payment.".to_string())?;
+    let payment = stripe
+        .get(&format!("/v1/payment_intents/{intent}?expand[]=latest_charge"))
+        .await
+        .map_err(|e| e.to_string())?;
+    payment
+        .pointer("/latest_charge/transfer")
+        .and_then(Value::as_str)
+        .filter(|t| is_stripe_id(t, "tr_"))
+        .map(str::to_string)
+        .ok_or_else(|| "Stripe shows no transfer to the seller for this sale.".to_string())
+}
+
+/// Whether `transfer` already has MakerFoundry's reversal for `order` and `reason`: a reversal
+/// isn't made twice, even when recording the first one failed.
+async fn reversed(stripe: &Stripe, transfer: &str, order: i64, reason: &str) -> Result<bool, String> {
+    let t = stripe
+        .get(&format!("/v1/transfers/{transfer}"))
+        .await
+        .map_err(|e| e.to_string())?;
+    let order = order.to_string();
+    Ok(t.pointer("/reversals/data")
+        .and_then(Value::as_array)
+        .is_some_and(|rs| {
+            rs.iter().any(|r| {
+                r.pointer("/metadata/order").and_then(Value::as_str) == Some(order.as_str())
+                    && r.pointer("/metadata/reason").and_then(Value::as_str) == Some(reason)
+            })
+        }))
+}
+
+/// Takes `cents` back from the seller's share of `order`'s payment, once for `reason`.
+async fn reverse(stripe: &Stripe, intent: Option<&str>, order: i64, cents: i64, reason: &str) -> Result<(), String> {
+    let transfer = transfer_of(stripe, intent).await?;
+    if reversed(stripe, &transfer, order, reason).await? {
+        return Ok(());
+    }
+    stripe
+        .post(
+            &format!("/v1/transfers/{transfer}/reversals"),
+            &[
+                ("amount", cents.to_string()),
+                ("metadata[order]", order.to_string()),
+                ("metadata[reason]", reason.to_string()),
+            ],
+            Some(&format!("mf-reverse-{reason}-{order}")),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// A paid, taxed sale's tax taken back from the seller's Stripe account to MakerFoundry's, once
+/// (https://docs.stripe.com/tax/tax-for-marketplaces#withhold-collected-tax-amount): after the
+/// payment's confirmed, and again from the sweep until it's done.
+pub async fn withhold_tax(stripe: &Stripe, pool: &PgPool, order: i64) -> Result<(), String> {
+    let row = sqlx::query(
+        "SELECT stripe_payment_intent, tax_cents FROM mf_orders
+         WHERE id = $1 AND status = 'paid' AND tax_cents > 0 AND tax_withheld_at IS NULL",
+    )
+    .bind(order)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(row) = row else { return Ok(()) };
+    let intent: Option<String> = row.try_get("stripe_payment_intent").unwrap_or(None);
+    let tax: i64 = row.try_get("tax_cents").unwrap_or(0);
+    reverse(stripe, intent.as_deref(), order, tax, "sales_tax").await?;
+    sqlx::query("UPDATE mf_orders SET tax_withheld_at = now() WHERE id = $1 AND tax_withheld_at IS NULL")
+        .bind(order)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// The sweep: taxed sales whose tax is still with the seller (Stripe couldn't be reached when they
+/// were paid), up to 50 at a time.
+pub async fn withhold_taxes(stripe: &Stripe, pool: &PgPool) -> Result<(), sqlx::Error> {
+    let orders: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM mf_orders WHERE status = 'paid' AND tax_cents > 0 AND tax_withheld_at IS NULL
+         ORDER BY id LIMIT 50",
+    )
+    .fetch_all(pool)
+    .await?;
+    for order in orders {
+        if let Err(e) = withhold_tax(stripe, pool, order).await {
+            eprintln!("selling: tax of order {order}: {e}");
+        }
+    }
+    Ok(())
 }
 
 async fn ledger(
@@ -613,7 +746,15 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     match handle_event(pool, &event).await {
-        Ok(()) => (StatusCode::OK, "ok").into_response(),
+        Ok(()) => {
+            if let Some(order) = paid_order(&event)
+                && let Err(e) = withhold_tax(stripe, pool, order).await
+            {
+                // (the sweep tries again)
+                eprintln!("selling: tax of order {order}: {e}");
+            }
+            (StatusCode::OK, "ok").into_response()
+        }
         Err(e) => {
             eprintln!(
                 "selling: event {}: {e}",
@@ -622,6 +763,19 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// The order of a MakerFoundry checkout that an event says is paid.
+fn paid_order(event: &Value) -> Option<i64> {
+    let kind = event.get("type").and_then(Value::as_str)?;
+    if kind != "checkout.session.completed" && kind != "checkout.session.async_payment_succeeded" {
+        return None;
+    }
+    let object = event.pointer("/data/object")?;
+    if object.pointer("/metadata/app").and_then(Value::as_str) != Some(APP) {
+        return None;
+    }
+    object.pointer("/metadata/order")?.as_str()?.parse().ok()
 }
 
 async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
@@ -716,6 +870,8 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
                     };
                     if let Err(e) = done.await {
                         eprintln!("selling: order {order}: {e}");
+                    } else if let Err(e) = withhold_tax(stripe, pool, order).await {
+                        eprintln!("selling: tax of order {order}: {e}");
                     }
                 }
                 Err(e) => eprintln!("selling: order {order}: {e}"),
@@ -723,7 +879,7 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
         }
     }
     let rows = sqlx::query(
-        "SELECT o.id, o.design_id, o.title, o.price_cents, o.status, to_char(o.created_at, 'YYYY-MM-DD') AS at
+        "SELECT o.id, o.design_id, o.title, o.price_cents, o.tax_cents, o.status, to_char(o.created_at, 'YYYY-MM-DD') AS at
          FROM mf_orders o WHERE o.buyer_account = $1 AND (o.status IN ('paid', 'refunded') OR o.id = $2)
          ORDER BY o.created_at DESC LIMIT 500",
     )
@@ -740,6 +896,12 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
             let status: String = r.try_get("status").unwrap_or_default();
             let at: String = r.try_get("at").unwrap_or_default();
             let price: i64 = r.try_get("price_cents").unwrap_or(0);
+            let tax: i64 = r.try_get("tax_cents").unwrap_or(0);
+            let price = if tax > 0 {
+                format!("{} + {} tax", dollars(price), dollars(tax))
+            } else {
+                dollars(price)
+            };
             let name = match design {
                 Some(d) => format!(r#"<a href="/d/{d}/{}">{}</a>"#, slug(&title), escape(&title)),
                 None => escape(&title),
@@ -753,7 +915,6 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
             };
             format!(
                 r#"<li class="report"><p><strong>{name}</strong> <span class="muted">· {price} · {at}</span></p><div class="actions">{action}</div></li>"#,
-                price = dollars(price),
                 at = escape(&at),
             )
         })
@@ -903,22 +1064,55 @@ pub async fn refund(State(state): State<AppState>, headers: HeaderMap, Path(orde
     let Some(stripe) = state.stripe.as_ref() else {
         return order_list(&pool, "Selling isn't switched on.").await;
     };
-    let intent: Option<Option<String>> =
-        sqlx::query_scalar("SELECT stripe_payment_intent FROM mf_orders WHERE id = $1 AND status = 'paid'")
-            .bind(order)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten();
-    let Some(Some(intent)) = intent else {
+    let row = sqlx::query(
+        "SELECT stripe_payment_intent, price_cents, tax_cents FROM mf_orders WHERE id = $1 AND status = 'paid'",
+    )
+    .bind(order)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let paid = row.as_ref().and_then(|r| {
+        let intent: Option<String> = r.try_get("stripe_payment_intent").ok().flatten();
+        Some((
+            intent?,
+            r.try_get::<i64, _>("price_cents").ok()?,
+            r.try_get::<i64, _>("tax_cents").ok()?,
+        ))
+    });
+    let Some((intent, price, tax)) = paid else {
         return order_list(&pool, &format!("Order {order} isn't a paid order.")).await;
     };
+    // a taxed sale: the tax first (if it's still with the seller), then the price, taken back from
+    // the seller by MakerFoundry itself, since Stripe's reverse_transfer would reverse the whole
+    // payment, tax included, from what's left of the transfer
+    if tax > 0 {
+        let back = async {
+            withhold_tax(stripe, &pool, order).await?;
+            reverse(stripe, Some(&intent), order, price, "refund").await
+        };
+        if let Err(e) = back.await {
+            eprintln!("selling: refund {order}: {e}");
+            return order_list(
+                &pool,
+                &format!("Order {order} couldn't be refunded: the price couldn't be taken back from the seller ({e}). Nothing was refunded; try again."),
+            )
+            .await;
+        }
+        let _ =
+            sqlx::query("UPDATE mf_orders SET refund_reversed_at = now() WHERE id = $1 AND refund_reversed_at IS NULL")
+                .bind(order)
+                .execute(&pool)
+                .await
+                // (only a record: `reverse` checks Stripe itself before reversing again)
+                .map_err(|e| eprintln!("selling: refund {order}: {e}"));
+    }
     let refunded = stripe
         .post(
             "/v1/refunds",
             &[
                 ("payment_intent", intent),
-                ("reverse_transfer", "true".into()),
+                ("reverse_transfer", (tax == 0).to_string()),
                 // the 10% goes back separately, without the card fee (`return_fee`)
                 ("refund_application_fee", "false".into()),
                 ("metadata[order]", order.to_string()),

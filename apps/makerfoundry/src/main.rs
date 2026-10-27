@@ -151,7 +151,7 @@ async fn main() -> ExitCode {
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)
-    let (sweep_limits, sweep_db) = (state.limits.clone(), state.db.clone());
+    let (sweep_limits, sweep_db, sweep_stripe) = (state.limits.clone(), state.db.clone(), state.stripe.clone());
     tokio::spawn(async move {
         let mut every = tokio::time::interval(std::time::Duration::from_secs(600));
         loop {
@@ -171,6 +171,11 @@ async fn main() -> ExitCode {
                 && let Err(e) = makerfoundry::api::forget_old_links(pool).await
             {
                 eprintln!("open links: {e}");
+            }
+            if let (Some(pool), Some(stripe)) = (&sweep_db, &sweep_stripe)
+                && let Err(e) = makerfoundry::selling::withhold_taxes(stripe, pool).await
+            {
+                eprintln!("sales tax: {e}");
             }
         }
     });
