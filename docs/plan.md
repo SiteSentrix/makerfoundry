@@ -4,8 +4,9 @@
 the legal pages are approved (2026-10-22) for a free-only soft open (`docs/launch.md`: the contact
 email, admins, then `MF_LAUNCHED=yes`; the DMCA agent the week after; Stripe keys and sales tax
 before paid sales). MF-7's app side is StitchFoundry's
-(`docs/api.md`). Next, each needing the owner's decision: bundles, discount codes,
-pay-what-you-want. Owner: Bruce Wattendorf (SiteSentrix).
+(`docs/api.md`). Next after the soft open: the Preview & Approval Hub, MF-25 to MF-33 (planned
+2026-10-28, starting with approval links). Later, each needing the owner's decision: bundles,
+discount codes, pay-what-you-want. Owner: Bruce Wattendorf (SiteSentrix).
 
 ## What it is
 A place, like Thingiverse for 3D prints, where makers find, share and sell files for their
@@ -131,6 +132,15 @@ Nobody may resell or share the files themselves.
 | MF-22 | Activity | makers learn what people did with their designs without email. **Done 2026-10-22**: `/activity` lists, newest first, the comments and makes on a maker's designs by other people (who, the design, a line of what they wrote), their sales and refunds (what they got or gave back) and new followers (not named); what came since they last looked is marked new, and the account page counts it. Drawn from those tables; only when they last looked is kept (`mf_activity_seen`, in the data download and deleted with the data) (`activity.rs`) |
 | MF-23 | Refunds: the seller bears the card fee | a refunded seller is out only the card fee Stripe keeps (the owner's decision, Seller Terms § 7). **Done 2026-10-22**: an admin's refund gives the buyer the whole price back and reverses the seller's transfer, without the application fee; MakerFoundry then gives its 10% back to the seller as a partial refund of that fee (`/v1/application_fees/{id}/refunds`). In the ledger the refund takes the price from the seller (`refund`) and the 10% goes back (`fee_return`); the card fee row stays. If Stripe can't give the fee back at once, `/admin/orders` offers Give the fee back (`fee_returned_at`). Activity and the sales page show what the seller lost. The restricted key needs three more permissions (`docs/deploy.md`) |
 | MF-24 | Sales tax with Stripe Tax | the buyer pays the price plus the tax, which is MakerFoundry's, not the seller's. **Built 2026-10-27, off until `MF_STRIPE_TAX=yes`**: checkouts ask Stripe Tax for it (`automatic_tax`, MakerFoundry liable, billing address required, prices exclusive, tax code `txcd_10505001` or `MF_TAX_CODE`); a paid session is believed only if its subtotal is the price and its total the price plus the tax; the tax is taken back from the seller's transfer by a reversal once paid (webhook, return page, sweep; checked with Stripe so it's never taken twice); `tax` ledger rows; a taxed refund takes the price back from the seller first, then refunds the buyer everything; the buyer's library shows the tax, the admins' overview the tax collected (`selling.rs`, `docs/deploy.md` › Sales tax) |
+| MF-25 | Approval links (the Preview & Approval Hub, first slice) | a shop sends a customer a private link to a design and the customer approves it. **Planned 2026-10-28**: any Foundry Account uploads a design and mock-up photos as a proof (read and checked like an upload, drawn from its stitches), gets an unguessable link (kept as its hash); the customer, with no account, comments, approves or requests changes; versions keep the history; the shop sees viewed / approved / changes requested. Done when a customer approves version 2 on a phone and the shop sees who approved what and when. Needs: the soft open; the Terms' wording for shops and customers (owner) |
+| MF-26 | Product-photo previews | the design drawn onto a product photo on the server, added to a proof. **Planned**: needs MF-25, the stock photos (owner: own photos or CC0, in `ASSETS.md`), the StitchShop prototype's location and licence, a raster library with an allowed licence; placing by typed size and position unless the owner agrees to a little JavaScript for dragging |
+| MF-27 | Send to customer from the apps | `POST /api/v1/proofs` and its status, with the Foundry Account token as MF-7. **Planned**: needs MF-25; the button and `stitchfoundry://` links are StitchFoundry's |
+| MF-28 | Shop branding and subdomains | a shop's logo, colours and `<shop>.makerfoundry.app` (one Railway wildcard domain); sign-in cookies stay on makerfoundry.app. **Planned**: needs MF-25 |
+| MF-29 | Shop plans and the For Shops page | monthly plans on Stripe, tier limits, the demo shop. **Planned**: needs MF-28 and the owner's prices |
+| MF-30 | StitchShop order handoff | an approved proof becomes one StitchShop order. **Planned**: needs MF-25 and a StitchShop order API (owner: product or demo) |
+| MF-31 | More tools | previews and sending for SilkFoundry, PatternFoundry (and LightFoundry if wanted). **Planned**: needs MF-26, MF-27 and those apps |
+| MF-32 | Custom domains | a Top-tier shop's own domain through Cloudflare for SaaS (100 hostnames included, then $0.10 each). **Planned**: needs MF-29 |
+| MF-33 | Live camera preview | the design on the real garment through the phone camera. **Planned**: needs MF-26 and the owner's agreement to the JavaScript it needs |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
