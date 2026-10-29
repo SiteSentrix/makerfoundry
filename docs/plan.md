@@ -138,7 +138,7 @@ Nobody may resell or share the files themselves.
 | MF-28 | Shop branding and subdomains | a shop's logo, colours and `<shop>.makerfoundry.app` (one Railway wildcard domain); sign-in cookies stay on makerfoundry.app. **Planned**: needs MF-25 |
 | MF-29 | Shop plans and the For Shops page | monthly plans on Stripe, tier limits, the demo shop. **Planned**: needs MF-28 and the owner's prices |
 | MF-30 | StitchShop order handoff | an approved proof becomes one StitchShop order. **Planned**: needs MF-25 and a StitchShop order API (owner: product or demo) |
-| MF-31 | More tools | previews and sending for SilkFoundry (the owner's screen printing, DTG and sublimation software: previews show ink on fabric, not stitches), PatternFoundry and LightFoundry (laser cuts and engravings; owner, 2026-10-28). **Planned**: needs MF-26, MF-27 and those apps |
+| MF-31 | More tools | previews and sending for ScreenFoundry (the owner's screen printing, DTG and sublimation software: previews show ink on fabric, not stitches), PatternFoundry and LightFoundry (laser cuts and engravings; owner, 2026-10-28). **Planned**: needs MF-26, MF-27 and those apps |
 | MF-32 | Custom domains | a Top-tier shop's own domain through Cloudflare for SaaS (100 hostnames included, then $0.10 each). **Planned**: needs MF-29 |
 | MF-33 | Live camera preview | the design on the real garment through the phone camera. **Planned**: needs MF-26 and the owner's agreement to the JavaScript it needs |
 
