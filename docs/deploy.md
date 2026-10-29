@@ -144,6 +144,8 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
 | `MF_STRIPE_TAX` | no (off) | `yes` charges sales tax with Stripe Tax (MF-24, "Sales tax" below) |
 | `MF_TAX_CODE` | no (`txcd_10505001`) | the Stripe tax code designs are sold under: Digital Finished Artwork, downloaded, with permanent rights |
+| `MF_PROOF_KEY` | for approval links | the key proofs' customer links are made with (MF-25): 64 hex digits, `openssl rand -hex 32`. A secret: whoever has it can open any proof. Without it there are no proofs. A new key ends every customer link (shops then send their links again) |
+| `MF_PROOFS` | no (admins only) | `yes` lets every account send proofs; only once the wording in `docs/legal/proofs-draft.md` is approved and in the Terms and Privacy Policy |
 | `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |
 | `STRIPE_API_URL` | no | a stand-in for Stripe's API (local tests) |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |
@@ -162,10 +164,12 @@ redeploy, then revoke the old one.
 3. `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: a new R2 API token (Object Read & Write on the
    bucket only), the old one deleted (Cloudflare › R2 › Manage API tokens).
 4. `DATABASE_URL`: the Postgres credentials regenerated in Railway.
-5. `MF_END_SESSIONS_BEFORE` set to the time of the change: sessions made before it end on the
+5. `MF_PROOF_KEY` (once proofs are used, MF-25): a new `openssl rand -hex 32`. Every customer link
+   changes: shops copy their proofs' new links from `/proofs` and send them again.
+6. `MF_END_SESSIONS_BEFORE` set to the time of the change: sessions made before it end on the
    next start. The sessions hold StitchFoundry account tokens too, so end StitchFoundry's sessions
    the same way (`SF_CLOUD_END_SESSIONS_BEFORE`, StitchFoundry's `docs/cloud.md`).
-6. Railway itself: a new password, two-factor sign-in, its API tokens revoked, the project's
+7. Railway itself: a new password, two-factor sign-in, its API tokens revoked, the project's
    members and deploys checked.
 
 ## Building the image yourself

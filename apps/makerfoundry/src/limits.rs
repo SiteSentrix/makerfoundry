@@ -43,6 +43,11 @@ pub const OPEN: Rule = rule("open", 120, 60);
 pub const COMMENT: Rule = rule("comment", 20, 60);
 /// Purchases started (Stripe checkout pages made) by one account an hour.
 pub const CHECKOUT: Rule = rule("checkout", 30, 60);
+/// Proofs and new versions of them (MF-25) sent by one account a day.
+pub const PROOF_UPLOAD: Rule = rule("proof-upload", 100, 24 * 60);
+/// Comments, approvals and requests for changes on proofs from one address an hour (customers
+/// have no account).
+pub const PROOF_REPLY: Rule = rule("proof-reply", 30, 60);
 
 /// The most designs one account may keep.
 pub const MAX_DESIGNS: i64 = 500;

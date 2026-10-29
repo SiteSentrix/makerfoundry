@@ -7,6 +7,7 @@
   --card: #ffffff;
   --line: #e4e0d8;
   --on-accent: #ffffff;
+  --ok: #2e7d4f;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,6 +19,7 @@
     --card: #1f2228;
     --line: #33373e;
     --on-accent: #16181c;
+    --ok: #6cc58f;
   }
 }
 * { box-sizing: border-box; }
@@ -192,8 +194,8 @@ a.button.secondary { background: transparent; color: var(--fg); border: 1px soli
 .files li { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .7rem; overflow-wrap: anywhere; }
 .files li a { font-weight: 600; }
 .files form button { padding: .3rem .7rem; font-size: .9rem; }
-.add-file { display: grid; gap: .5rem; margin: 0 0 1.5rem; max-width: 40rem; }
-.add-file input[type=file] { font: inherit; }
+.add-file { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; margin: 0 0 1.5rem; max-width: 40rem; }
+.add-file input[type=file] { font: inherit; width: 100%; min-width: 0; }
 
 /* Saving a design */
 .save { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 .5rem; }
@@ -226,7 +228,7 @@ img.reported { max-width: 12rem; height: auto; border-radius: .5rem; border: 1px
 .badge { font-size: .78rem; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 0 .45rem; }
 blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px solid var(--line); background: var(--card); max-width: 40rem; }
 /* forms inside a design's page (comments, makes, files, collections) */
-.add-file label { display: grid; gap: .3rem; font-weight: 600; }
+.add-file label { display: grid; grid-template-columns: minmax(0, 1fr); gap: .3rem; font-weight: 600; }
 .add-file label.choice { display: flex; font-weight: 400; }
 .add-file textarea, .add-file input[name=name] {
   font: inherit; color: var(--fg); background: var(--card); width: 100%;
@@ -239,3 +241,16 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .activity .muted { margin-right: .4rem; font-size: .9rem; }
 .activity q { display: block; margin-top: .3rem; color: var(--muted); }
 .new { color: var(--accent); font-size: .85rem; }
+
+/* Proofs (MF-25): the shop's link box, a proof's state, the customer's answer */
+.share { display: grid; gap: .6rem; max-width: 40rem; margin: 0 0 1.5rem; }
+.share label { display: grid; gap: .3rem; font-weight: 600; }
+.share label small { font-weight: 400; color: var(--muted); }
+.share input {
+  font: inherit; color: var(--fg); background: var(--card); width: 100%;
+  border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .7rem;
+}
+.share form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.badge.status-approved { border-color: var(--ok); color: var(--ok); }
+.badge.status-changes { border-color: var(--fg); color: var(--fg); }
+.reply .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .3rem 0 0; }

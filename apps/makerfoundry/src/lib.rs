@@ -30,6 +30,7 @@ pub mod overview;
 pub mod pages;
 pub mod photos;
 pub mod preview;
+pub mod proofs;
 pub mod selling;
 pub mod sizes;
 pub mod storage;
@@ -110,6 +111,9 @@ pub struct AppState {
     pub public_url: String,
     /// The web apps' sites that may call the API from a browser (`MF_API_ORIGINS`).
     pub api_origins: Vec<String>,
+    /// Approval links (MF-25: `MF_PROOF_KEY`, and `MF_PROOFS=yes` for everyone, admins before);
+    /// without the key there are none.
+    pub proofs: Option<proofs::Proofs>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -194,6 +198,17 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/orders", get(selling::orders))
         .route("/admin/orders/{order}/refund", post(selling::refund))
         .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
+        .route("/proofs", get(proofs::list))
+        .route("/proofs/{id}", get(proofs::show))
+        .route("/proofs/{id}/link", post(proofs::link))
+        .route("/proofs/{id}/reply", post(proofs::shop_reply))
+        .route("/proofs/{id}/delete", post(proofs::delete))
+        .route("/proofs/{id}/photos/{photo}/{size}", get(proofs::shop_photo))
+        .route(
+            "/p/{id}/{token}",
+            get(proofs::customer_page).post(proofs::customer_reply),
+        )
+        .route("/p/{id}/{token}/photos/{photo}/{size}", get(proofs::customer_photo))
         .fallback(not_found)
         .layer(RequestBodyLimitLayer::new(BODY_LIMIT_BYTES));
     let uploads = Router::new()
@@ -204,6 +219,8 @@ pub fn app(state: AppState) -> Router {
         .route("/designs/new", get(designs::new_page).post(designs::upload))
         .route("/designs/{id}/files", post(files::add))
         .route("/d/{id}/makes", post(makes::post))
+        .route("/proofs/new", get(proofs::new_page).post(proofs::create))
+        .route("/proofs/{id}/versions", post(proofs::add_version))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
     let webhooks = Router::new()
@@ -325,7 +342,7 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
 async fn robots(State(state): State<AppState>) -> Response {
     let text = if state.launched {
         format!(
-            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nDisallow: /api/\nSitemap: {}/sitemap.xml\n",
+            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nDisallow: /api/\nDisallow: /proofs\nDisallow: /p/\nSitemap: {}/sitemap.xml\n",
             state.public_url
         )
     } else {

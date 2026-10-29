@@ -222,6 +222,7 @@ struct Site {
     pool: PgPool,
     fake: Shared,
     stored: Stored,
+    storage: Option<makerfoundry::storage::Storage>,
 }
 
 async fn site() -> Option<Site> {
@@ -240,8 +241,27 @@ async fn site_full(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe
 
 /// The test site, open to everyone (`launched`) or not.
 async fn site_opts(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe>, launched: bool) -> Option<Site> {
+    site_all(admins, stripe, launched, None).await
+}
+
+/// The key the test sites make proof links with.
+const PROOF_KEY: [u8; 32] = [9; 32];
+
+/// The test site with approval links (MF-25), for everyone (`open`) or for `admins` only.
+async fn site_with_proofs(admins: Vec<i64>, open: bool) -> Option<Site> {
+    let proofs = makerfoundry::proofs::Proofs::new(&PROOF_KEY, open).unwrap();
+    site_all(admins, None, false, Some(proofs)).await
+}
+
+async fn site_all(
+    admins: Vec<i64>,
+    stripe: Option<makerfoundry::stripe::Stripe>,
+    launched: bool,
+    proofs: Option<makerfoundry::proofs::Proofs>,
+) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
+    let storage_kept = storage.clone();
     let (url, fake) = fake_cloud().await;
     let app = makerfoundry::app(AppState {
         cloud: Cloud::new(&url).unwrap(),
@@ -254,12 +274,14 @@ async fn site_opts(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe
         launched,
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs,
     });
     Some(Site {
         app,
         pool,
         fake,
         stored,
+        storage: Some(storage_kept),
     })
 }
 
@@ -547,12 +569,14 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         launched: false,
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
     });
     let s = Site {
         stored: Arc::default(),
         app,
         pool: test_db().await.unwrap(),
         fake: Arc::default(),
+        storage: None,
     };
     let r = s.post("/signin", "email=a%40b.c&password=fire+truck+1", None).await;
     assert!(r.body.contains("can&#39;t be reached right now"), "{}", r.body);
@@ -571,6 +595,7 @@ async fn without_a_database_nobody_can_sign_in() {
         launched: false,
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -973,12 +998,14 @@ async fn without_storage_designs_can_only_be_previewed() {
         launched: false,
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
     });
     let s = Site {
         app,
         pool,
         fake: Arc::default(),
         stored: Arc::default(),
+        storage: None,
     };
     let cookie = s
         .post(
@@ -1201,12 +1228,14 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         launched: false,
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
     });
     let s = Site {
         app,
         pool,
         fake,
         stored,
+        storage: None,
     };
     let cookie = s
         .post(
@@ -4308,4 +4337,399 @@ async fn a_maker_sees_what_people_did_with_their_designs() {
     assert!(s.get("/activity", Some(&bea)).await.body.contains("Nothing yet"));
     // only when someone looked is kept, and only once there was something to see
     assert_eq!(s.scalar("SELECT count(*) FROM mf_activity_seen").await, 1);
+}
+
+// ---------------------------------------------------------------- MF-25: approval links
+
+/// A multipart form with text fields and files (`(field, file name, bytes)`; a text field has no
+/// file name), posted from our own page with `cookie`.
+fn form_parts(path: &str, text: &[(&str, &str)], files: &[(&str, &str, Vec<u8>)], cookie: &str) -> Request<Body> {
+    let boundary = "----mf-test-proof";
+    let mut body = Vec::new();
+    for (field, value) in text {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n{value}\r\n").as_bytes(),
+        );
+    }
+    for (field, name, bytes) in files {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Request::post(path)
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, format!("https://{HOST}"))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// Sends a proof of a PES with a mock-up photo as the shop signed in with `cookie` → its id.
+async fn send_proof(s: &Site, cookie: &str, title: &str) -> i64 {
+    let r = s
+        .send(form_parts(
+            "/proofs/new",
+            &[
+                ("title", title),
+                ("shop_name", "Rosa's Stitch Co."),
+                ("customer", "Café Luna"),
+                ("message", "Here's your logo for the aprons."),
+            ],
+            &[
+                ("file", "logo.pes", sample(sf_formats::Format::Pes)),
+                ("photos", "apron.jpg", photo_with_location()),
+            ],
+            cookie,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    r.location().trim_start_matches("/proofs/").parse().unwrap()
+}
+
+/// The customer's link as the shop's page shows it, as a path (`/p/<id>/<token>`).
+async fn proof_link(s: &Site, cookie: &str, id: i64) -> String {
+    let page = s.get(&format!("/proofs/{id}"), Some(cookie)).await.body;
+    let start = page
+        .find("value=\"https://makerfoundry.test/p/")
+        .unwrap_or_else(|| panic!("no link on {page}"));
+    let rest = &page[start + "value=\"https://makerfoundry.test".len()..];
+    rest[..rest.find('"').unwrap()].to_string()
+}
+
+#[tokio::test]
+async fn a_customer_asks_for_changes_then_approves_version_2() {
+    let Some(s) = site_with_proofs(Vec::new(), true).await else {
+        return;
+    };
+    let shop = s.sign_up("rosa%40example.com").await;
+    assert!(s.get("/account", Some(&shop)).await.body.contains(r#"href="/proofs""#));
+    // a proof: the design read and drawn, the photo cleaned, a private link for the customer
+    let id = send_proof(&s, &shop, "Café Luna logo").await;
+    let mine = s.get(&format!("/proofs/{id}"), Some(&shop)).await;
+    assert!(
+        mine.body.contains("Café Luna logo") && mine.body.contains("Sent"),
+        "{}",
+        mine.body
+    );
+    assert!(mine.body.contains("<svg"), "the stitches are drawn");
+    let link = proof_link(&s, &shop, id).await;
+    assert!(link.starts_with(&format!("/p/{id}/")) && link.len() == format!("/p/{id}/").len() + 64);
+    // the customer, with no account
+    let seen = s.get(&link, None).await;
+    assert_eq!(seen.status, StatusCode::OK);
+    for want in [
+        "Rosa&#39;s Stitch Co.",
+        "Café Luna logo",
+        "Here&#39;s your logo",
+        "<svg",
+        "Approve version 1",
+        "Mock-ups",
+    ] {
+        assert!(seen.body.contains(want), "{want} missing: {}", seen.body);
+    }
+    assert!(
+        !seen.body.contains("Café Luna</"),
+        "who it's for is the shop's own note"
+    );
+    assert_eq!(seen.headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(seen.headers[header::REFERRER_POLICY], "no-referrer");
+    assert_eq!(seen.headers["x-robots-tag"], "noindex, nofollow");
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_proofs WHERE id = {id} AND status = 'viewed'"
+        ))
+        .await,
+        1
+    );
+    // its photo, through the link only
+    let photo: i64 = s.scalar("SELECT id FROM mf_proof_photos").await;
+    let thumb = s.get(&format!("{link}/photos/{photo}/thumb"), None).await;
+    assert_eq!(thumb.status, StatusCode::OK);
+    assert_eq!(thumb.headers[header::CONTENT_TYPE], "image/jpeg");
+    assert_eq!(
+        s.get(&format!("/p/{id}/{}/photos/{photo}/thumb", "0".repeat(64)), None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // asking for changes needs words, and a name
+    let r = s.post(&link, "version=1&decision=changes&name=Ana&body=", None).await;
+    assert!(r.body.contains("Write what you&#39;d like changed"), "{}", r.body);
+    let r = s
+        .post(&link, "version=1&decision=changes&name=+&body=Bigger", None)
+        .await;
+    assert!(r.body.contains("Give your name"), "{}", r.body);
+    let r = s
+        .post(
+            &link,
+            "version=1&decision=changes&name=Ana+Ruiz&body=Make+the+moon+%3Cbigger%3E",
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let mine = s.get(&format!("/proofs/{id}"), Some(&shop)).await.body;
+    assert!(
+        mine.contains("Changes asked for") && mine.contains("Ana Ruiz"),
+        "{mine}"
+    );
+    assert!(mine.contains("Make the moon &lt;bigger&gt;"), "plain text: {mine}");
+    // the shop answers, and sends version 2
+    let r = s.post(&format!("/proofs/{id}/reply"), "body=On+it", Some(&shop)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let r = s
+        .send(form_parts(
+            &format!("/proofs/{id}/versions"),
+            &[("note", "The moon is 20% bigger.")],
+            &[("file", "logo2.pes", sample(sf_formats::Format::Pes))],
+            &shop,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_proofs WHERE id = {id} AND status = 'sent'"
+        ))
+        .await,
+        1
+    );
+    // an answer to the old version is refused; the link shows the new one
+    let r = s.post(&link, "version=1&decision=approved&name=Ana+Ruiz", None).await;
+    assert!(r.body.contains("newer version"), "{}", r.body);
+    let seen = s.get(&link, None).await.body;
+    assert!(
+        seen.contains("Approve version 2") && seen.contains("The moon is 20% bigger.") && seen.contains("On it"),
+        "{seen}"
+    );
+    let old = s.get(&format!("{link}?v=1"), None).await.body;
+    assert!(
+        old.contains("This is version 1") && !old.contains("Approve version"),
+        "{old}"
+    );
+    // approved: who, which version and when, on the shop's page
+    let r = s
+        .post(&link, "version=2&decision=approved&name=Ana+Ruiz&body=", None)
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let seen = s.get(&link, None).await.body;
+    assert!(
+        seen.contains("The shop has your approval") && !seen.contains("Approve version"),
+        "{seen}"
+    );
+    assert!(seen.contains("Ask for changes"), "they may still change their mind");
+    let mine = s.get(&format!("/proofs/{id}"), Some(&shop)).await.body;
+    assert!(mine.contains("approved version 2") && mine.contains("UTC"), "{mine}");
+    assert_eq!(
+        s.scalar(
+            "SELECT count(*) FROM mf_proof_replies WHERE decision = 'approved' AND version = 2 AND name = 'Ana Ruiz'"
+        )
+        .await,
+        1
+    );
+    let list = s.get("/proofs", Some(&shop)).await.body;
+    assert!(
+        list.contains("Approved") && list.contains("version 2") && list.contains("for Café Luna"),
+        "{list}"
+    );
+    // the shop opening its own link doesn't count as the customer viewing
+    let id2 = send_proof(&s, &shop, "Napkins").await;
+    let link2 = proof_link(&s, &shop, id2).await;
+    s.get(&link2, Some(&shop)).await;
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_proofs WHERE id = {id2} AND status = 'sent'"
+        ))
+        .await,
+        1
+    );
+    // in the shop's data download, and gone with it
+    let data = s.get("/account/data.json", Some(&shop)).await.body;
+    assert!(data.contains("\"proofs\"") && data.contains("Ana Ruiz"), "{data}");
+    let files_before = s.stored.lock().unwrap().keys().filter(|k| k.contains("proof")).count();
+    assert!(
+        files_before >= 4,
+        "two files and a photo with its thumbnail: {files_before}"
+    );
+    s.post("/account/data/delete", "confirm=delete", Some(&shop)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_proofs").await, 0);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_proof_replies").await, 0);
+    assert_eq!(
+        s.stored.lock().unwrap().keys().filter(|k| k.contains("proof")).count(),
+        0
+    );
+    assert_eq!(s.get(&link, None).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_proof_link_can_be_changed_and_turned_off_and_is_the_shops_alone() {
+    let Some(s) = site_with_proofs(Vec::new(), true).await else {
+        return;
+    };
+    let shop = s.sign_up("rosa%40example.com").await;
+    let other = s.sign_up("bea%40example.com").await;
+    let id = send_proof(&s, &shop, "Hats").await;
+    let link = proof_link(&s, &shop, id).await;
+    let token = link.rsplit('/').next().unwrap().to_string();
+    // a token doesn't open another proof, a made-up one opens nothing
+    let id2 = send_proof(&s, &shop, "Bags").await;
+    assert_eq!(
+        s.get(&format!("/p/{id2}/{token}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/p/{id}/{}", "ab".repeat(32)), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.get(&format!("/p/{id}/xyz"), None).await.status, StatusCode::NOT_FOUND);
+    // another account sees nothing of it, and can't change it
+    assert_eq!(
+        s.get(&format!("/proofs/{id}"), Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.post(&format!("/proofs/{id}/link"), "action=off", Some(&other))
+            .await
+            .status,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(s.get(&link, None).await.status, StatusCode::OK);
+    assert_eq!(
+        s.post(&format!("/proofs/{id}/delete"), "", Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // a new link ends the old one
+    s.post(&format!("/proofs/{id}/link"), "action=new", Some(&shop)).await;
+    let new_link = proof_link(&s, &shop, id).await;
+    assert_ne!(new_link, link);
+    assert_eq!(s.get(&link, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get(&new_link, None).await.status, StatusCode::OK);
+    // off, then on again
+    s.post(&format!("/proofs/{id}/link"), "action=off", Some(&shop)).await;
+    assert_eq!(s.get(&new_link, None).await.status, StatusCode::NOT_FOUND);
+    assert!(
+        s.get(&format!("/proofs/{id}"), Some(&shop))
+            .await
+            .body
+            .contains("link is off")
+    );
+    s.post(&format!("/proofs/{id}/link"), "action=on", Some(&shop)).await;
+    assert_eq!(s.get(&new_link, None).await.status, StatusCode::OK);
+    // a form from another site is refused
+    let r = s
+        .send(
+            Request::post(&new_link)
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, "https://evil.example")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("version=1&decision=approved&name=Eve"))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // deleted: link, rows and files gone
+    s.post(&format!("/proofs/{id}/delete"), "", Some(&shop)).await;
+    assert_eq!(s.get(&new_link, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_proof_versions WHERE proof_id = {id}"))
+            .await,
+        0
+    );
+    // a bad file is refused and nothing is kept
+    let before = s.stored.lock().unwrap().len();
+    let r = s
+        .send(form_parts(
+            "/proofs/new",
+            &[("title", "Junk"), ("shop_name", "Rosa")],
+            &[("file", "junk.pes", b"not a design".to_vec())],
+            &shop,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("junk.pes") && r.body.contains("value=\"Junk\""),
+        "{}",
+        r.body
+    );
+    assert_eq!(s.stored.lock().unwrap().len(), before);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_proofs").await, 1);
+}
+
+#[tokio::test]
+async fn proofs_are_for_admins_until_switched_on() {
+    let Some(s) = site_with_proofs(vec![1000], false).await else {
+        return;
+    };
+    let admin = s.sign_up("ada%40example.com").await;
+    let shop = s.sign_up("rosa%40example.com").await;
+    assert_eq!(s.get("/proofs", Some(&shop)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get("/proofs/new", Some(&shop)).await.status, StatusCode::NOT_FOUND);
+    assert!(!s.get("/account", Some(&shop)).await.body.contains("/proofs"));
+    assert_eq!(s.get("/proofs", None).await.location(), "/signin?next=/proofs");
+    // an admin tries it out; the link opens only for admins until then
+    let id = send_proof(&s, &admin, "Trial").await;
+    let link = proof_link(&s, &admin, id).await;
+    assert_eq!(s.get(&link, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get(&link, Some(&shop)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get(&link, Some(&admin)).await.status, StatusCode::OK);
+    // without the key, no proofs for anyone
+    let Some(plain) = site_with(vec![1000]).await else {
+        return;
+    };
+    let admin = plain.sign_up("ada%40example.com").await;
+    assert_eq!(plain.get("/proofs", Some(&admin)).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_proof_is_deleted_a_year_after_its_last_activity() {
+    let Some(s) = site_with_proofs(Vec::new(), true).await else {
+        return;
+    };
+    let shop = s.sign_up("rosa%40example.com").await;
+    let old = send_proof(&s, &shop, "Old").await;
+    let recent = send_proof(&s, &shop, "Recent").await;
+    let old_link = proof_link(&s, &shop, old).await;
+    sqlx::query("UPDATE mf_proofs SET active_at = now() - interval '366 days' WHERE id = $1")
+        .bind(old)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    // 364 days is kept
+    sqlx::query("UPDATE mf_proofs SET active_at = now() - interval '364 days' WHERE id = $1")
+        .bind(recent)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let files = s.stored.lock().unwrap().len();
+    let n = makerfoundry::proofs::forget_old(&s.pool, s.storage.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_proofs").await, 1);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_proofs WHERE id = {recent}"))
+            .await,
+        1
+    );
+    assert_eq!(
+        s.stored.lock().unwrap().len(),
+        files - 3,
+        "its file, photo and thumbnail"
+    );
+    assert_eq!(s.get(&old_link, None).await.status, StatusCode::NOT_FOUND);
+    // a customer looking counts as activity
+    let link = proof_link(&s, &shop, recent).await;
+    s.get(&link, None).await;
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_proofs WHERE id = {recent} AND active_at > now() - interval '1 minute'"
+        ))
+        .await,
+        1
+    );
 }

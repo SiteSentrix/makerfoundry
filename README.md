@@ -29,7 +29,9 @@ reader of uploads and typed input is property-tested with random and damaged fil
 (`apps/makerfoundry/tests/untrusted_input.rs`). **MF-21** done: signing everyone out after a breach. **MF-22** done: a maker's
 Activity page (comments, makes, sales and new followers). **MF-23** done: on a refund the seller
 bears only the card fee Stripe keeps (MakerFoundry's 10% goes back to them). **MF-24** built: sales tax with
-Stripe Tax, kept by MakerFoundry as the marketplace, off until `MF_STRIPE_TAX=yes`. See [`docs/plan.md`](docs/plan.md).
+Stripe Tax, kept by MakerFoundry as the marketplace, off until `MF_STRIPE_TAX=yes`. **MF-25** built:
+approval links (a shop sends a customer a proof to approve), switched off until the owner approves
+its wording (`docs/legal/proofs-draft.md`) and sets `MF_PROOFS=yes`. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

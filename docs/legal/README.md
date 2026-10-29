@@ -22,6 +22,8 @@ open), so the Terms needn't change then. **Sales tax** waits until paid sales op
 free-only launch (owner's decision, 2026-10-22), Seller Terms § 5 says paid sales aren't open yet;
 the decision, ideally with an accountant, goes there before the Stripe keys do (`docs/launch.md`).
 
+- [`proofs-draft.md`](proofs-draft.md): wording for approval links (MF-25), to add to the Terms
+  and the Privacy Policy once the owner approves it; proofs stay switched off until then.
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.
 - [`seller-terms.md`](seller-terms.md): Seller Terms, for makers who publish or sell designs.

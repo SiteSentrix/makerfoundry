@@ -462,13 +462,27 @@ pub async fn photos_html(pool: &PgPool, id: i64) -> String {
 
 /// A design's drawing, facts and colours under `title`, with `intro` and `footer` (HTML).
 pub fn facts_section(d: &DesignRow, title: &str, intro: &str, footer: &str) -> Option<String> {
-    let section = match d.kind.as_str() {
-        "laser" => serde_json::from_value::<Laser>(d.facts.clone()).map(|mut l| {
-            l.svg = d.preview_svg.clone();
+    drawing_section(&d.kind, &d.facts, &d.preview_svg, title, intro, footer)
+}
+
+/// A kept file's drawing, facts and colours (`kind` embroidery or laser, as reading found them)
+/// under `title`, with `intro` and `footer` (HTML). Designs and proofs (`proofs`) both show theirs
+/// this way.
+pub(crate) fn drawing_section(
+    kind: &str,
+    facts: &serde_json::Value,
+    svg: &str,
+    title: &str,
+    intro: &str,
+    footer: &str,
+) -> Option<String> {
+    let section = match kind {
+        "laser" => serde_json::from_value::<Laser>(facts.clone()).map(|mut l| {
+            l.svg = svg.to_string();
             laser_result(title, &l, intro, footer)
         }),
-        _ => serde_json::from_value::<Embroidery>(d.facts.clone()).map(|mut e| {
-            e.svg = d.preview_svg.clone();
+        _ => serde_json::from_value::<Embroidery>(facts.clone()).map(|mut e| {
+            e.svg = svg.to_string();
             result(title, &e, intro, footer)
         }),
     };
