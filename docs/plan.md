@@ -1,6 +1,6 @@
 # MakerFoundry: the plan
 
-**Status:** 2026-10-29. MF-0 to MF-25 built at https://makerfoundry.app (the table below);
+**Status:** 2026-10-29. MF-0 to MF-25, MF-34 and MF-54 built at https://makerfoundry.app (the table below);
 the legal pages are approved (2026-10-22) for a free-only soft open (`docs/launch.md`: the contact
 email, admins, then `MF_LAUNCHED=yes`; the DMCA agent the week after; Stripe keys and sales tax
 before paid sales). MF-7's app side is StitchFoundry's
@@ -142,6 +142,7 @@ Nobody may resell or share the files themselves.
 | MF-32 | Custom domains | a Top-tier shop's own domain through Cloudflare for SaaS (100 hostnames included, then $0.10 each). **Planned**: needs MF-29 |
 | MF-33 | Live camera preview | the design on the real garment through the phone camera. **Planned**: needs MF-26 and the owner's agreement to the JavaScript it needs |
 | MF-34 | Report a bug, suggest a feature | at the foot of every page, two buttons open an email to the owner with "[MakerFoundry] Bug report: " or "[MakerFoundry] Feature request: " as the subject and a short template. **Done** (2026-10-30) |
+| MF-54 | Founding creators | MakerFoundry's first 100 creators, with a numbered badge. **Built 2026-10-30** (the owner's decisions: 100 spots, makers apply and an admin approves, a numbered badge): `/founding` explains it and shows the spots left (it works before the launch, with a link preview, for the Facebook post); signed-in makers apply (the name to know them by, an optional link to their work, what they make), one application an account; admins approve or decline at `/admin/founding`, approving giving the lowest free number up to 100 (never more, approvals one at a time); "Founding creator #7" on their maker page, their designs' pages and their account page; removing a badge frees its number; applications in the data download and deleted with the data (`founding.rs`). Early access to MakerFoundry 3D comes with the 3D hub (#22) |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

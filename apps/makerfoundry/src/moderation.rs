@@ -1002,7 +1002,7 @@ pub async fn queue(State(state): State<AppState>, headers: HeaderMap) -> Respons
     private(
         "Reports · MakerFoundry",
         &format!(
-            r#"<section class="design"><h1>Reports</h1><p class="muted"><a href="/admin/overview">Overview</a> · <a href="/admin/orders">Orders</a></p>{body}</section>"#
+            r#"<section class="design"><h1>Reports</h1><p class="muted"><a href="/admin/overview">Overview</a> · <a href="/admin/orders">Orders</a> · <a href="/admin/founding">Founding creators</a></p>{body}</section>"#
         ),
         true,
     )

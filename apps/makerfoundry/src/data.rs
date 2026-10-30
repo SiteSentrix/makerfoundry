@@ -100,6 +100,7 @@ pub async fn export(pool: &PgPool, user: &User) -> Result<Value, sqlx::Error> {
                     (SELECT json_agg(json_build_object('version', r.version, 'by_shop', r.by_shop, 'name', r.name, 'body', r.body, 'decision', r.decision, 'at', r.at) ORDER BY r.at)
                        FROM mf_proof_replies r WHERE r.proof_id = p.id) AS replies
              FROM mf_proofs p WHERE p.account_id = $1 ORDER BY p.id", a).await?,
+        "founding_application": rows(pool, "SELECT name, work_url, about, applied_at, status, number FROM mf_founding WHERE account_id = $1", a).await?,
         "reports_sent": rows(pool, "SELECT kind, reason, details, created_at, status FROM mf_reports WHERE reporter_account = $1 ORDER BY id", a).await?,
     }))
 }
@@ -226,6 +227,7 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         "DELETE FROM mf_makers WHERE account_id = $1",
         "DELETE FROM mf_sessions WHERE account_id = $1",
         "DELETE FROM mf_activity_seen WHERE account_id = $1",
+        "DELETE FROM mf_founding WHERE account_id = $1",
         "UPDATE mf_accounts SET email = '' WHERE account_id = $1",
     ] {
         sqlx::query(sql).bind(account).execute(&mut *tx).await?;

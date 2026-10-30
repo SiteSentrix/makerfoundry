@@ -48,6 +48,8 @@ pub const PROOF_UPLOAD: Rule = rule("proof-upload", 100, 24 * 60);
 /// Comments, approvals and requests for changes on proofs from one address an hour (customers
 /// have no account).
 pub const PROOF_REPLY: Rule = rule("proof-reply", 30, 60);
+/// Founding-creator applications (and changes to a waiting one) by one account an hour.
+pub const FOUNDING: Rule = rule("founding", 10, 60);
 
 /// The most designs one account may keep.
 pub const MAX_DESIGNS: i64 = 500;

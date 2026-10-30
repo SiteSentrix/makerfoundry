@@ -255,3 +255,6 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .badge.status-approved { border-color: var(--ok); color: var(--ok); }
 .badge.status-changes { border-color: var(--fg); color: var(--fg); }
 .reply .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .3rem 0 0; }
+
+/* Founding creators (MF-54): the numbered badge, filled so it stands apart from other badges */
+.badge.founding { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; white-space: nowrap; }

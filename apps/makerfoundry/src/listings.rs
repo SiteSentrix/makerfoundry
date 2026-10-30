@@ -483,9 +483,10 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
             r#"<p class="problem">A draft: only you can see this page. <a href="/designs/{id}">Back to the draft</a></p>"#
         ),
     };
+    let founding = crate::founding::badge_for(pool, d.account_id).await;
     let byline = match &maker {
         Some(m) => format!(
-            r#"by <a href="/makers/{h}">{n}</a>"#,
+            r#"by <a href="/makers/{h}">{n}</a> {founding}"#,
             h = escape(&m.handle),
             n = escape(&m.name)
         ),

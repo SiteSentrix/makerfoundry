@@ -4733,3 +4733,180 @@ async fn a_proof_is_deleted_a_year_after_its_last_activity() {
         1
     );
 }
+
+// ---------------------------------------------------------------- MF-54: founding creators
+
+#[tokio::test]
+async fn makers_apply_to_be_founding_creators_and_admins_approve_numbered_badges() {
+    let Some(s) = site_with(vec![1000]).await else { return };
+    let admin = s.sign_up("ada%40example.com").await;
+    // the public page, shareable before the launch, with a link preview for Facebook
+    let public = s.get("/founding", None).await;
+    assert_eq!(public.status, StatusCode::OK);
+    assert!(
+        public.body.contains("100 of 100 spots left") && public.body.contains("/signup?next=/founding"),
+        "{}",
+        public.body
+    );
+    assert!(
+        public
+            .body
+            .contains(r#"property="og:url" content="https://makerfoundry.test/founding""#),
+        "{}",
+        public.body
+    );
+    // applying: checked, then waiting
+    let nick = s.sign_up("nick%40example.com").await;
+    let r = s
+        .post(
+            "/founding",
+            "name=Nick&work_url=javascript%3Aalert(1)&about=Prints",
+            Some(&nick),
+        )
+        .await;
+    assert!(r.body.contains("starting https://"), "{}", r.body);
+    assert!(r.body.contains("value=\"Nick\""), "the form keeps what was typed");
+    let r = s
+        .post(
+            "/founding",
+            "name=Nick+Prints&work_url=https%3A%2F%2Fmakerworld.com%2Fen%2F%40nick&about=Gridfinity+%3Cbins%3E",
+            Some(&nick),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert!(
+        s.get("/founding", Some(&nick))
+            .await
+            .body
+            .contains("your application is in")
+    );
+    // only admins see and decide; forms from elsewhere refused
+    assert_eq!(
+        s.get("/admin/founding", Some(&nick)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let queue = s.get("/admin/founding", Some(&admin)).await.body;
+    assert!(
+        queue.contains("Nick Prints") && queue.contains("Gridfinity &lt;bins&gt;") && queue.contains("waiting"),
+        "{queue}"
+    );
+    assert!(queue.contains(r#"rel="nofollow noopener noreferrer ugc""#));
+    assert_eq!(
+        s.post("/admin/founding/1001/approve", "", Some(&nick)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // approved: number 1, the badge on the account page, the maker page and their designs
+    let r = s.post("/admin/founding/1001/approve", "", Some(&admin)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert!(
+        s.get("/founding", Some(&nick))
+            .await
+            .body
+            .contains("Founding creator #1")
+    );
+    assert!(
+        s.get("/account", Some(&nick))
+            .await
+            .body
+            .contains("Founding creator #1")
+    );
+    let id = published(&s, &nick, "nickprints", "Bin").await;
+    assert!(
+        s.get("/makers/nickprints", None)
+            .await
+            .body
+            .contains("Founding creator #1")
+    );
+    assert!(
+        s.get(&format!("/d/{id}"), None)
+            .await
+            .body
+            .contains("Founding creator #1")
+    );
+    // an approved application can't be changed by sending the form again
+    s.post("/founding", "name=Changed&about=x", Some(&nick)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_founding WHERE name = 'Nick Prints' AND number = 1")
+            .await,
+        1
+    );
+    // numbers: the lowest free one; a removed badge frees its number
+    let bea = s.sign_up("bea%40example.com").await;
+    s.post("/founding", "name=Bea&about=Embroidery", Some(&bea)).await;
+    s.post("/admin/founding/1002/approve", "", Some(&admin)).await;
+    assert_eq!(
+        s.scalar("SELECT number::bigint FROM mf_founding WHERE account_id = 1002")
+            .await,
+        2
+    );
+    s.post("/admin/founding/1001/remove", "", Some(&admin)).await;
+    assert!(!s.get(&format!("/d/{id}"), None).await.body.contains("Founding creator"));
+    let cy = s.sign_up("cy%40example.com").await;
+    s.post("/founding", "name=Cy&about=Laser", Some(&cy)).await;
+    s.post("/admin/founding/1003/approve", "", Some(&admin)).await;
+    assert_eq!(
+        s.scalar("SELECT number::bigint FROM mf_founding WHERE account_id = 1003")
+            .await,
+        1
+    );
+    // declined, and back to waiting
+    let di = s.sign_up("di%40example.com").await;
+    s.post("/founding", "name=Di&about=Quilts", Some(&di)).await;
+    s.post("/admin/founding/1004/decline", "", Some(&admin)).await;
+    assert!(s.get("/founding", Some(&di)).await.body.contains("wasn't a yes"));
+    s.post("/admin/founding/1004/reconsider", "", Some(&admin)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_founding WHERE account_id = 1004 AND status = 'waiting'")
+            .await,
+        1
+    );
+    // in the data download, and gone with the data
+    assert!(
+        s.get("/account/data.json", Some(&cy))
+            .await
+            .body
+            .contains("founding_application")
+    );
+    s.post("/account/data/delete", "confirm=delete", Some(&cy)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_founding WHERE account_id = 1003")
+            .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn there_are_never_more_than_100_founding_creators() {
+    let Some(s) = site_with(vec![1000]).await else { return };
+    let admin = s.sign_up("ada%40example.com").await;
+    // 100 approved already (made directly), one more waiting
+    sqlx::query(
+        "INSERT INTO mf_accounts (account_id, email) SELECT 2000 + n, 'x' || n || '@example.com' FROM generate_series(1, 100) n",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO mf_founding (account_id, name, status, number) SELECT 2000 + n, 'Maker ' || n, 'approved', n FROM generate_series(1, 100) n",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let late = s.sign_up("late%40example.com").await;
+    let page = s.get("/founding", Some(&late)).await.body;
+    assert!(
+        page.contains("All 100 spots are taken") && !page.contains("<form method=\"post\" action=\"/founding\""),
+        "{page}"
+    );
+    sqlx::query("INSERT INTO mf_founding (account_id, name) VALUES (1001, 'Late')")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let r = s.post("/admin/founding/1001/approve", "", Some(&admin)).await;
+    assert!(r.body.contains("All 100 spots are taken"), "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_founding WHERE status = 'approved'")
+            .await,
+        100
+    );
+}

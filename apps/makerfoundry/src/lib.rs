@@ -17,6 +17,7 @@ pub mod designs;
 pub mod embroidery;
 pub mod files;
 pub mod follows;
+pub mod founding;
 pub mod laser;
 pub mod legal;
 pub mod licences;
@@ -198,6 +199,9 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/orders", get(selling::orders))
         .route("/admin/orders/{order}/refund", post(selling::refund))
         .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
+        .route("/founding", get(founding::page).post(founding::apply))
+        .route("/admin/founding", get(founding::admin))
+        .route("/admin/founding/{account}/{action}", post(founding::decide))
         .route("/proofs", get(proofs::list))
         .route("/proofs/{id}", get(proofs::show))
         .route("/proofs/{id}/link", post(proofs::link))

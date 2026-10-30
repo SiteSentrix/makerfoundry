@@ -432,6 +432,13 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
     let Some(user) = current_user(&state, &headers).await else {
         return Redirect::to("/signin").into_response();
     };
+    let founding = match state.db.as_ref() {
+        Some(pool) => match crate::founding::number(pool, user.account_id).await {
+            Some(n) => format!("<p>{}</p>", crate::founding::badge(n)),
+            None => r#"<p><a href="/founding">Founding creators</a>: apply to be one of MakerFoundry's first 100 creators.</p>"#.to_string(),
+        },
+        None => String::new(),
+    };
     let proofs = if crate::proofs::available(&state, &user) {
         r#"<p><a href="/proofs">Proofs</a>: send a customer a design to approve before you stitch or cut it.</p>"#
     } else {
@@ -448,6 +455,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <h1>Your account</h1>
 <p class="lead">You're signed in as <strong>{email}</strong>, with your Foundry Account.</p>
 <p><a href="/designs">Your designs</a>: add a design file and photos of what it makes.</p>
+{founding}
 {activity}
 {proofs}
 <p><a href="/account/maker">Your maker profile</a>: the name people see on your designs.</p>
