@@ -281,6 +281,12 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   designs, laser designs and 3D models in sections of their own (models once MakerFoundry 3D is
   open to the viewer), with counts of published designs and models, likes and downloads; drafts
   never show; the founding badge only when set.
+- **MF-51 moderation for 3D, built 2026-10-30** (#19): reports, copyright notices, takedowns,
+  counter-notices and restores work on 3D models as on designs (tested end to end): while a
+  model is down its page, downloads, file pictures and search results are gone for everyone but
+  its maker and the admins, and come back on restore. Takedowns count across kinds for repeat
+  infringers. The 3D limits are each tested: 100 models a day, 20 imports a day, 300 likes an
+  hour.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

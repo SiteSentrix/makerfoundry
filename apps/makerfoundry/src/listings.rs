@@ -651,10 +651,11 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         crate::files::public_html(id, first_format, &others, &converted, may_download)
     };
+    let noun = if d.kind == "model3d" { "model" } else { "design" };
     let edit = if mine {
-        format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
+        format!(r#"<p><a href="/designs/{id}">Manage this {noun}</a></p>"#)
     } else if d.status == "published" {
-        format!(r#"<p class="muted"><a href="/d/{id}/report">Report this design</a></p>"#)
+        format!(r#"<p class="muted"><a href="/d/{id}/report">Report this {noun}</a></p>"#)
     } else {
         String::new()
     };

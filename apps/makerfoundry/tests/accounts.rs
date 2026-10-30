@@ -7219,3 +7219,137 @@ async fn the_founding_badge_shows_only_when_set() {
     assert!(s.get("/makers/ann", None).await.body.contains("Founding creator #7"));
     assert!(!s.get("/makers/bea", None).await.body.contains("Founding creator"));
 }
+
+// ---------------------------------------------------------------- moderation for 3D (MF-51)
+
+/// The first report waiting in the admins' queue → its id.
+async fn first_report(s: &Site, admin: &str) -> String {
+    let queue = s.get("/admin", Some(admin)).await.body;
+    queue
+        .split("/admin/reports/")
+        .nth(1)
+        .and_then(|r| r.split('/').next())
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[tokio::test]
+async fn report_takedown_counter_notice_restore_for_a_3d_model() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let admin = model_maker(&s, "admin%40example.com", "admin").await;
+    let maker = model_maker(&s, "maker%40example.com", "maker").await;
+    let (_, id) = (admin.clone(), licensed_model(&s, &maker, "Famous mouse", "cc-by").await);
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    // reported from its page
+    let page = s.get(&format!("/d/{id}/famous-mouse"), None).await.body;
+    assert!(page.contains(&format!("/d/{id}/report")), "{page}");
+    assert_eq!(s.get(&format!("/d/{id}/report"), None).await.status, StatusCode::OK);
+    let r = s
+        .post(
+            &format!("/d/{id}/report"),
+            "reason=trademark&details=A+famous+cartoon+mouse.",
+            None,
+        )
+        .await;
+    assert!(r.body.contains("Your report is in"), "{}", r.body);
+    let rid = first_report(&s, &admin).await;
+    let r = s
+        .post(&format!("/admin/reports/{rid}/takedown"), "", Some(&admin))
+        .await;
+    assert_eq!(r.location(), "/admin");
+    // down: its page, files, pictures, search and the maker's page
+    for path in [
+        format!("/d/{id}/famous-mouse"),
+        format!("/d/{id}/download"),
+        format!("/d/{id}/download?model_file={fid}"),
+        format!("/3d/{id}/files/{fid}/hero"),
+    ] {
+        assert_eq!(s.get(&path, None).await.status, StatusCode::NOT_FOUND, "{path}");
+    }
+    assert!(!s.get("/3d?q=mouse", None).await.body.contains("Famous mouse"));
+    assert!(!s.get("/makers/maker", None).await.body.contains("Famous mouse"));
+    // the maker still sees it, and sends a counter-notice
+    assert_eq!(
+        s.get(&format!("/3d/{id}/files/{fid}/hero"), Some(&maker)).await.status,
+        StatusCode::OK
+    );
+    let counter = "name=Maker+Person&address=2+Elm+St&phone=555-0101&email=maker%40example.com&mistake=yes&consent=yes&signature=Maker+Person";
+    let r = s.post(&format!("/designs/{id}/counter"), counter, Some(&maker)).await;
+    assert!(r.body.contains("Counter-notice received"), "{}", r.body);
+    let rid = first_report(&s, &admin).await;
+    s.post(&format!("/admin/reports/{rid}/restore"), "", Some(&admin)).await;
+    assert_eq!(
+        s.get(&format!("/d/{id}/famous-mouse"), None).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        s.get(&format!("/3d/{id}/files/{fid}/hero"), None).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        s.get(&format!("/d/{id}/download"), None).await.status,
+        StatusCode::SEE_OTHER
+    );
+}
+
+#[tokio::test]
+async fn repeat_infringers_are_counted_across_kinds() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let admin = model_maker(&s, "admin%40example.com", "admin").await;
+    let maker = model_maker(&s, "maker%40example.com", "maker").await;
+    // an embroidery design taken down first
+    let rose = published(&s, &maker, "maker", "Copied+rose").await;
+    s.post(&format!("/d/{rose}/report"), "reason=trademark&details=Copied.", None)
+        .await;
+    let rid = first_report(&s, &admin).await;
+    s.post(&format!("/admin/reports/{rid}/takedown"), "", Some(&admin))
+        .await;
+    // then a 3D model of theirs is reported: the queue says they've had one before
+    let model = licensed_model(&s, &maker, "Copied gear", "cc-by").await;
+    s.post(
+        &format!("/d/{model}/report"),
+        "reason=trademark&details=Copied+too.",
+        None,
+    )
+    .await;
+    let queue = s.get("/admin", Some(&admin)).await.body;
+    assert!(
+        queue.contains("Copied gear") && queue.contains("1 takedown before"),
+        "{queue}"
+    );
+}
+
+#[tokio::test]
+async fn imports_and_likes_are_rate_limited() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    for _ in 0..makerfoundry::limits::IMPORT.max {
+        let r = import_files(&s, &ann, &[("a.stl", stl_cube(2.0))]).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    }
+    let r = import_files(&s, &ann, &[("a.stl", stl_cube(2.0))]).await;
+    assert!(r.body.contains("imported a lot today"), "{}", r.body);
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = s.join("bea%40example.com").await;
+    for n in 0..makerfoundry::limits::LIKE.max {
+        s.post(
+            &format!("/d/{gear}/like"),
+            if n % 2 == 0 { "like=yes" } else { "like=no" },
+            Some(&bea),
+        )
+        .await;
+    }
+    // over the limit the like isn't counted
+    s.post(&format!("/d/{gear}/like"), "like=yes", Some(&bea)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_likes").await, 0);
+}
