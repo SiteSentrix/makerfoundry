@@ -665,6 +665,7 @@ pub async fn manage_page(
     let has_profile = crate::makers::profile(pool, user.account_id).await.is_some();
     let listing = crate::listings::manage_html(d, id, has_profile, state.launched);
     let profiles = profiles_html(id, &profiles(pool, id).await, true);
+    let remix = super::remix::manage_section(pool, id).await;
     let add = format!(
         r#"<form method="post" action="/3d/{id}/files" enctype="multipart/form-data" class="form">
 <label>Add files <small>(another print profile as a 3MF, a STEP source, more parts…)</small><input type="file" name="files" multiple required></label>
@@ -679,7 +680,7 @@ pub async fn manage_page(
     private(
         &format!("{} · MakerFoundry", escape(title)),
         &format!(
-            r#"<section class="design"><h1>{title}</h1>{problem}{note}{listing}{profiles}{files}{add}{photos}{delete}<p><a href="/designs">Your designs</a></p></section>"#,
+            r#"<section class="design"><h1>{title}</h1>{problem}{note}{listing}{remix}{profiles}{files}{add}{photos}{delete}<p><a href="/designs">Your designs</a></p></section>"#,
             title = escape(title),
         ),
         true,
@@ -1016,7 +1017,11 @@ pub fn profiles_html(id: i64, list: &[ProfileView], may_download: bool) -> Strin
 // ---------------------------------------------------------------- adding and removing files
 
 /// The maker's own model `id`, its database and the signed-in maker; or the answer instead.
-async fn own_model(state: &AppState, headers: &HeaderMap, id: i64) -> Result<(User, PgPool, DesignRow), Response> {
+pub(crate) async fn own_model(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: i64,
+) -> Result<(User, PgPool, DesignRow), Response> {
     let (user, pool) = uploader(state, headers).await?;
     match crate::designs::design(&pool, id).await {
         Ok(Some(d)) if d.account_id == user.account_id && d.kind == "model3d" => Ok((user, pool, d)),

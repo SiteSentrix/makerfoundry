@@ -637,7 +637,8 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         let files = crate::model3d::upload::model_files(pool, id).await;
         let profiles = crate::model3d::upload::profiles(pool, id).await;
         format!(
-            "{}{}",
+            "{}{}{}",
+            crate::model3d::remix::section(pool, id).await,
             crate::model3d::upload::profiles_html(id, &profiles, may_download),
             crate::model3d::upload::public_files_html(id, &files, may_download)
         )
@@ -1222,6 +1223,11 @@ pub async fn save(
     } else {
         (None, None)
     };
+    if d.kind == "model3d"
+        && let Err(why) = crate::model3d::remix::check_licence(&pool, id, user.account_id, &f.licence).await
+    {
+        return again(&why);
+    }
     let saved = sqlx::query(
         "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5, price_cents = $7,
              material = $8, thickness_mm = $9, convert = $10, category = $11,
@@ -1291,6 +1297,13 @@ pub async fn publish(
         Some("Give the model a title, a category and a licence first (Edit details).")
     } else if d.title.is_empty() || d.licence.is_none() {
         Some("Give the design a title and a licence first (Edit details).")
+    } else if let Some(why) = match (d.kind.as_str(), d.licence.as_deref()) {
+        ("model3d", Some(l)) => crate::model3d::remix::check_licence(&pool, id, user.account_id, l)
+            .await
+            .err(),
+        _ => None,
+    } {
+        return designs::manage_page(&state, &pool, &user, id, &why).await;
     } else if d.price_cents > 0 && !selling::can_sell(&state, &pool, user.account_id).await {
         Some("To sell this design, finish setting up selling first (Account › Selling), or make it free.")
     } else if f.confirm != "yes" {

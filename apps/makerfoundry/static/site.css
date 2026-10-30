@@ -133,6 +133,8 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .badge.printer { background: var(--card); border: 1px solid var(--line); justify-self: start; }
 .filaments { display: flex; flex-wrap: wrap; gap: .25rem .9rem; }
 .filament { display: inline-flex; align-items: center; gap: .3rem; }
+.remixes { padding-left: 1.25rem; overflow-wrap: anywhere; }
+form.inline { display: inline; }
 .model-picture { margin: 0 0 1.5rem; }
 .model-picture img { display: block; width: 100%; max-width: 36rem; height: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
 .downloads { margin: 0 0 1.5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }

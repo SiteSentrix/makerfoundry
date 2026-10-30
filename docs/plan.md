@@ -256,6 +256,14 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   settings couldn't be read still shows and downloads. Makers add files to a model (another
   profile, a STEP source) and remove them (`/3d/<id>/files`), never the last printable file nor
   any file of a model people have bought; the model's ZIP is made again after any change.
+- **MF-47 remixes, built 2026-10-30** (#15): a model names the models it was made from
+  (`mf_remixes`, migration 0027), by address or number: published 3D models, or the maker's own.
+  The licence rules of § 6 (`model3d/remix.rs`, tested over all 441 pairs of 3D licences) are
+  checked when a parent is added (an ND or reserved licence refused, or parents no licence can
+  satisfy, naming the parent), when the licence is changed, and at publishing; a creator may
+  always remix their own. No cycles; up to 20 parents. A model's page shows "Remix of" and its
+  remixes; `/3d/<id>/tree` shows ten generations each way, a taken-down model named without a
+  link. The rules are still to be confirmed by the owner, ideally with a lawyer.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

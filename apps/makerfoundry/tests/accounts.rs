@@ -6540,3 +6540,253 @@ async fn an_unreadable_profile_still_shows_and_downloads() {
         "{page}"
     );
 }
+
+// ---------------------------------------------------------------- remixes (MF-47)
+
+/// A maker with a profile → cookie.
+async fn model_maker(s: &Site, email: &str, handle: &str) -> String {
+    let cookie = s.join(email).await;
+    s.post(
+        "/account/maker",
+        &format!("name={handle}&handle={handle}"),
+        Some(&cookie),
+    )
+    .await;
+    cookie
+}
+
+/// A model with its details given (not published) → id.
+async fn detailed_model(s: &Site, cookie: &str, title: &str, licence: &str) -> i64 {
+    let r = upload_model(s, cookie, &[("part.stl", stl_cube(5.0))], &[]).await;
+    let id = design_id(r.location());
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            &format!("title={title}&category=household&licence={licence}&price=0"),
+            Some(cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    id
+}
+
+async fn licensed_model(s: &Site, cookie: &str, title: &str, licence: &str) -> i64 {
+    let id = detailed_model(s, cookie, title, licence).await;
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    id
+}
+
+async fn add_parent(s: &Site, cookie: &str, child: i64, parent: &str) -> Answer {
+    s.post(
+        &format!("/3d/{child}/parents"),
+        &format!("parent={}", parent.replace('/', "%2F").replace(':', "%3A")),
+        Some(cookie),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_remix_of_nd_is_refused() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bob = model_maker(&s, "bob%40example.com", "bob").await;
+    let vase = licensed_model(&s, &ann, "Vase", "cc-by-nd").await;
+    let mine = detailed_model(&s, &bob, "My vase", "cc-by-nd").await;
+    let r = add_parent(&s, &bob, mine, &format!("https://makerfoundry.test/d/{vase}/vase")).await;
+    assert!(
+        r.body.contains("Vase&#39;s licence doesn&#39;t allow remixes"),
+        "{}",
+        r.body
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_remixes").await, 0);
+}
+
+#[tokio::test]
+async fn by_sa_forces_by_sa_and_the_link_shows_both_ways() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bob = model_maker(&s, "bob%40example.com", "bob").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by-sa").await;
+    let mine = detailed_model(&s, &bob, "Bigger gear", "cc-by").await;
+    let r = add_parent(&s, &bob, mine, &gear.to_string()).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let r = s
+        .post(&format!("/designs/{mine}/publish"), "confirm=yes", Some(&bob))
+        .await;
+    assert!(
+        r.body.contains("Gear is licensed") && r.body.contains("ShareAlike"),
+        "{}",
+        r.body
+    );
+    // changing the licence to one the parent forbids is refused too
+    let r = s
+        .post(
+            &format!("/designs/{mine}/edit"),
+            "title=Bigger+gear&category=household&licence=cc0&price=0",
+            Some(&bob),
+        )
+        .await;
+    assert!(r.body.contains("Gear is licensed"), "{}", r.body);
+    s.post(
+        &format!("/designs/{mine}/edit"),
+        "title=Bigger+gear&category=household&licence=cc-by-sa&price=0",
+        Some(&bob),
+    )
+    .await;
+    let r = s
+        .post(&format!("/designs/{mine}/publish"), "confirm=yes", Some(&bob))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let page = s.get(&format!("/d/{mine}/bigger-gear"), None).await.body;
+    assert!(
+        page.contains("Remix of") && page.contains(&format!(r#"<a href="/d/{gear}/gear">Gear</a>"#)),
+        "{page}"
+    );
+    let parent_page = s.get(&format!("/d/{gear}/gear"), None).await.body;
+    assert!(
+        parent_page.contains("Remixes") && parent_page.contains("Bigger gear"),
+        "{parent_page}"
+    );
+}
+
+#[tokio::test]
+async fn two_parents_with_no_common_licence_are_refused_naming_the_parent() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bob = model_maker(&s, "bob%40example.com", "bob").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by-sa").await;
+    let hub = licensed_model(&s, &ann, "Hub", "cc-by-nc-sa").await;
+    let mine = detailed_model(&s, &bob, "Wheel", "cc-by-sa").await;
+    add_parent(&s, &bob, mine, &gear.to_string()).await;
+    let r = add_parent(&s, &bob, mine, &hub.to_string()).await;
+    assert!(r.body.contains("Hub") && r.body.contains("no licence"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_remixes").await, 1);
+}
+
+#[tokio::test]
+async fn a_creator_may_remix_their_own_all_rights_reserved_model() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bob = model_maker(&s, "bob%40example.com", "bob").await;
+    let base = licensed_model(&s, &ann, "Base", "all-rights-reserved").await;
+    let hers = detailed_model(&s, &ann, "Base two", "cc-by").await;
+    assert_eq!(
+        add_parent(&s, &ann, hers, &base.to_string()).await.status,
+        StatusCode::SEE_OTHER
+    );
+    let r = s
+        .post(&format!("/designs/{hers}/publish"), "confirm=yes", Some(&ann))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let his = detailed_model(&s, &bob, "Copy", "cc-by").await;
+    let r = add_parent(&s, &bob, his, &base.to_string()).await;
+    assert!(r.body.contains("doesn&#39;t allow remixes"), "{}", r.body);
+    // someone else's draft can't be named at all
+    let draft = detailed_model(&s, &ann, "Secret", "cc0").await;
+    let r = add_parent(&s, &bob, his, &draft.to_string()).await;
+    assert!(r.body.contains("No published 3D model"), "{}", r.body);
+}
+
+#[tokio::test]
+async fn a_cycle_cant_be_made() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let a = detailed_model(&s, &ann, "A", "cc0").await;
+    let b = detailed_model(&s, &ann, "B", "cc0").await;
+    let c = detailed_model(&s, &ann, "C", "cc0").await;
+    assert_eq!(
+        add_parent(&s, &ann, b, &a.to_string()).await.status,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        add_parent(&s, &ann, c, &b.to_string()).await.status,
+        StatusCode::SEE_OTHER
+    );
+    for (child, parent) in [(a, c), (a, b), (a, a)] {
+        let r = add_parent(&s, &ann, child, &parent.to_string()).await;
+        assert!(r.body.contains("its own remix"), "{child} ← {parent}: {}", r.body);
+    }
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_remixes").await, 2);
+    // a parent can be taken off again
+    let r = s.post(&format!("/3d/{c}/parents/{b}/delete"), "", Some(&ann)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_remixes").await, 1);
+}
+
+#[tokio::test]
+async fn the_tree_stops_at_ten_generations() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let mut ids = Vec::new();
+    for n in 0..12 {
+        let r = upload_model(&s, &ann, &[("part.stl", stl_cube(5.0))], &[]).await;
+        let id = design_id(r.location());
+        sqlx::query("UPDATE mf_designs SET title = $2 WHERE id = $1")
+            .bind(id)
+            .bind(format!("Model {n:02}"))
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        if let Some(parent) = ids.last() {
+            assert_eq!(
+                add_parent(&s, &ann, id, &format!("{parent}")).await.status,
+                StatusCode::SEE_OTHER
+            );
+        }
+        ids.push(id);
+    }
+    let tree = s.get(&format!("/3d/{}/tree", ids[11]), Some(&ann)).await.body;
+    for n in 1..=10 {
+        assert!(tree.contains(&format!("Model {n:02} by")), "{n}: {tree}");
+    }
+    assert!(
+        !tree.contains("Model 00<"),
+        "eleven generations back isn't shown: {tree}"
+    );
+    let tree = s.get(&format!("/3d/{}/tree", ids[0]), Some(&ann)).await.body;
+    assert!(tree.contains("Model 10 by") && !tree.contains("Model 11 by"), "{tree}");
+}
+
+#[tokio::test]
+async fn a_taken_down_parent_stays_named_without_a_link() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bob = model_maker(&s, "bob%40example.com", "bob").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let mine = detailed_model(&s, &bob, "Wheel", "cc-by").await;
+    add_parent(&s, &bob, mine, &gear.to_string()).await;
+    s.post(&format!("/designs/{mine}/publish"), "confirm=yes", Some(&bob))
+        .await;
+    sqlx::query("UPDATE mf_designs SET status = 'removed' WHERE id = $1")
+        .bind(gear)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get(&format!("/d/{mine}/wheel"), None).await.body;
+    assert!(
+        page.contains("Gear") && !page.contains(&format!("/d/{gear}/")),
+        "{page}"
+    );
+    let tree = s.get(&format!("/3d/{mine}/tree"), None).await.body;
+    assert!(
+        tree.contains("Gear") && !tree.contains(&format!("/d/{gear}/")),
+        "{tree}"
+    );
+}

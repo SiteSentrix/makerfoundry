@@ -7,6 +7,7 @@ pub mod mesh;
 pub mod obj;
 pub mod origin;
 pub mod profile;
+pub mod remix;
 pub mod render;
 pub mod stl;
 pub mod threemf;
