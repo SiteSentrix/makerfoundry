@@ -7397,3 +7397,177 @@ async fn a_founding_creator_can_publish_3d_before_the_switch_and_others_cant() {
         .unwrap();
     assert_eq!(s.get("/3d/new", Some(&nick)).await.status, StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------- showcase consent (MF-55)
+
+const SHOWCASE_BOX: &str = r#"<input type="checkbox" name="showcase" value="yes">"#;
+
+async fn upload_with_showcase(s: &Site, cookie: &str, ticked: bool) -> i64 {
+    let mut parts = vec![("files", "cube.stl", stl_cube(5.0))];
+    if ticked {
+        parts.push(("showcase", "", b"yes".to_vec()));
+    }
+    let r = s.send(multipart("/3d/new", &parts, cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    design_id(r.location())
+}
+
+#[tokio::test]
+async fn consent_is_off_by_default_and_nothing_stored() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let form = s.get("/3d/new", Some(&ann)).await.body;
+    assert!(
+        form.contains(SHOWCASE_BOX) && form.contains("Feature my project on MakerFoundry"),
+        "{form}"
+    );
+    upload_with_showcase(&s, &ann, false).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_showcase_consents").await, 0);
+    // the make form for a model and the import's publishing step carry the box too
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    assert!(
+        s.get(&format!("/d/{gear}/gear"), Some(&bea))
+            .await
+            .body
+            .contains(SHOWCASE_BOX)
+    );
+    let r = import_files(&s, &ann, &[("vase.stl", stl_cube(5.0))]).await;
+    let iid = import_id(r.location());
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&ann)).await;
+    assert!(
+        s.get(&format!("/3d/import/{iid}"), Some(&ann))
+            .await
+            .body
+            .contains(SHOWCASE_BOX)
+    );
+}
+
+#[tokio::test]
+async fn ticked_it_is_stored_with_its_time() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let id = upload_with_showcase(&s, &ann, true).await;
+    let given: Vec<(i64, i64, bool)> = sqlx::query_as(
+        "SELECT account_id, design_id, given_at > now() - interval '1 minute' FROM mf_showcase_consents WHERE withdrawn_at IS NULL",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(given, [(1000, id, true)]);
+    // a make, ticked
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    let r = s
+        .send(multipart(
+            &format!("/d/{gear}/makes"),
+            &[
+                ("photo", "print.jpg", photo_with_location()),
+                ("confirm", "", b"yes".to_vec()),
+                ("showcase", "", b"yes".to_vec()),
+            ],
+            &bea,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_showcase_consents WHERE make_id IS NOT NULL AND account_id = 1001")
+            .await,
+        1
+    );
+    // the import's publishing step, ticked: one for each model published
+    let r = import_files(&s, &ann, &[("vase.stl", stl_cube(5.0)), ("lamp.stl", stl_cube(5.0))]).await;
+    let iid = import_id(r.location());
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&ann)).await;
+    s.post(
+        &format!("/3d/import/{iid}/details"),
+        "category=household&licence=cc-by",
+        Some(&ann),
+    )
+    .await;
+    s.post(
+        &format!("/3d/import/{iid}/publish"),
+        "confirm=yes&showcase=yes",
+        Some(&ann),
+    )
+    .await;
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_showcase_consents c JOIN mf_designs d ON d.id = c.design_id WHERE d.import_id = {iid}")).await,
+        2
+    );
+}
+
+#[tokio::test]
+async fn withdrawn_keeps_its_time_and_is_no_longer_active() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    upload_with_showcase(&s, &ann, true).await;
+    let page = s.get("/account/showcase", Some(&ann)).await.body;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_consents")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert!(
+        page.contains(&format!(r#"action="/account/showcase/{cid}/withdraw""#)),
+        "{page}"
+    );
+    let r = s
+        .post(&format!("/account/showcase/{cid}/withdraw"), "", Some(&ann))
+        .await;
+    assert_eq!(r.location(), "/account/showcase");
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_showcase_consents WHERE given_at IS NOT NULL AND withdrawn_at IS NOT NULL")
+            .await,
+        1
+    );
+    assert!(s.get("/account/showcase", Some(&ann)).await.body.contains("Withdrawn"));
+}
+
+#[tokio::test]
+async fn nobody_else_can_withdraw_it() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    upload_with_showcase(&s, &ann, true).await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_consents")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let bea = s.join("bea%40example.com").await;
+    assert_eq!(
+        s.post(&format!("/account/showcase/{cid}/withdraw"), "", Some(&bea))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!s.get("/account/showcase", Some(&bea)).await.body.contains("/withdraw"));
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_showcase_consents WHERE withdrawn_at IS NULL")
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn deleting_data_withdraws_everything_and_consents_are_in_the_download() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let id = upload_with_showcase(&s, &ann, true).await;
+    let data: serde_json::Value = serde_json::from_str(&s.get("/account/data.json", Some(&ann)).await.body).unwrap();
+    assert_eq!(data["showcase_consents"][0]["design_id"], id);
+    s.post("/account/data/delete", "confirm=DELETE", Some(&ann)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_showcase_consents WHERE withdrawn_at IS NULL")
+            .await,
+        0
+    );
+}

@@ -291,6 +291,13 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   approved founding creators use MakerFoundry 3D as admins do (upload, import, publish, see their
   models), and their numbered badge shows on their 3D models; everyone else waits for the
   switch. Removing a badge removes the early access.
+- **MF-55 showcase consent, built 2026-10-30** (#23): an unticked "Feature my project on
+  MakerFoundry's social pages" box on the 3D upload form, on makes of 3D models and on the
+  import's publishing step (`model3d/showcase.rs`, `mf_showcase_consents`, migration 0030).
+  Ticking it stores a consent with its time; `/account/showcase` lists them with Withdraw on
+  each (only their creator's); withdrawing keeps the times; consents are in the data download
+  and deleting the data withdraws them all. **The box's wording and what it permits are the
+  owner's to approve** with the Terms (#26).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

@@ -51,11 +51,13 @@ fn upload_form(problem: &str) -> String {
 <form method="post" action="/3d/new" enctype="multipart/form-data">
 <label>Model files <small>(STL, 3MF, OBJ or STEP; also .mtl, .scad, .txt or .md beside them; up to {MAX_FILES} files, {file_mb} MB each)</small><input type="file" name="files" multiple required></label>
 <label>Images of the print <small>(JPEG, PNG or WebP, up to {MAX_IMAGES})</small><input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple></label>
+{showcase}
 <button type="submit">Add the model</button>
 </form>
 <p class="muted">A 3MF is saved again with only what's needed to print it: its model, pictures and slicer settings. Sliced G-code and anything else in it is left out. Images are saved again without their hidden details (such as where they were taken).</p>
 </section>"#,
         file_mb = MAX_FILE_BYTES / (1024 * 1024),
+        showcase = super::showcase::CHECKBOX,
     )
 }
 
@@ -101,6 +103,7 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
     };
     let mut model_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut images: Vec<Vec<u8>> = Vec::new();
+    let mut showcase = false;
     loop {
         match multipart.next_field().await {
             Ok(Some(field)) => {
@@ -109,6 +112,10 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
                 let Ok(bytes) = field.bytes().await else {
                     return again(&whole());
                 };
+                if part == "showcase" {
+                    showcase = bytes.as_ref() == b"yes";
+                    continue;
+                }
                 // (a form sent with nothing chosen has one empty part)
                 if bytes.is_empty() {
                     continue;
@@ -141,7 +148,12 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
         }
     }
     match add(&state, &pool, user.account_id, model_files, images).await {
-        Ok(id) => Redirect::to(&format!("/designs/{id}")).into_response(),
+        Ok(id) => {
+            if showcase {
+                super::showcase::give(&pool, user.account_id, Some(id), None).await;
+            }
+            Redirect::to(&format!("/designs/{id}")).into_response()
+        }
         Err(Refused::Unavailable) => Redirect::to("/3d/new").into_response(),
         Err(r) => again(&r.message()),
     }

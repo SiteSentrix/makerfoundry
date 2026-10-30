@@ -11,6 +11,7 @@ pub mod profile;
 pub mod remix;
 pub mod render;
 pub mod search;
+pub mod showcase;
 pub mod stl;
 pub mod threemf;
 pub mod upload;

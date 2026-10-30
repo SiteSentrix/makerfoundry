@@ -182,6 +182,8 @@ pub fn app(state: AppState) -> Router {
         .route("/following", get(follows::following))
         .route("/activity", get(activity::page))
         .route("/account/data", get(data::page))
+        .route("/account/showcase", get(model3d::showcase::page))
+        .route("/account/showcase/{id}/withdraw", post(model3d::showcase::withdraw))
         .route("/account/data.json", get(data::download))
         .route("/account/data/delete", post(data::delete))
         .route("/account/maker", get(makers::edit_page).post(makers::save))

@@ -82,6 +82,7 @@ pub async fn export(pool: &PgPool, user: &User) -> Result<Value, sqlx::Error> {
         "following": rows(pool,
             "SELECT m.handle, f.at FROM mf_follows f JOIN mf_makers m ON m.account_id = f.maker_account
              WHERE f.follower_account = $1", a).await?,
+        "showcase_consents": rows(pool, "SELECT design_id, make_id, given_at, withdrawn_at FROM mf_showcase_consents WHERE account_id = $1 ORDER BY given_at", a).await?,
         "likes": rows(pool, "SELECT design_id, created_at FROM mf_likes WHERE account_id = $1 ORDER BY created_at", a).await?,
         "imports": rows(pool, "SELECT i.id, i.created_at, f.path, f.problem FROM mf_imports i JOIN mf_import_files f ON f.import_id = i.id WHERE i.account_id = $1 ORDER BY i.id, f.position", a).await?,
         "comments": rows(pool, "SELECT design_id, body, created_at FROM mf_comments WHERE account_id = $1 ORDER BY id", a).await?,
@@ -237,6 +238,7 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         "DELETE FROM mf_activity_seen WHERE account_id = $1",
         "DELETE FROM mf_founding WHERE account_id = $1",
         "DELETE FROM mf_likes WHERE account_id = $1",
+        "UPDATE mf_showcase_consents SET withdrawn_at = now() WHERE account_id = $1 AND withdrawn_at IS NULL",
         "UPDATE mf_designs SET import_id = NULL WHERE import_id IN (SELECT id FROM mf_imports WHERE account_id = $1)",
         "DELETE FROM mf_imports WHERE account_id = $1",
         "UPDATE mf_accounts SET email = '' WHERE account_id = $1",

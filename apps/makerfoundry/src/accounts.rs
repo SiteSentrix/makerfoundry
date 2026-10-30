@@ -464,6 +464,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <p><a href="/account/selling">Selling</a>: get paid for your designs, and <a href="/account/sales">your sales</a>.</p>
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>
 <p><a href="/account/data">Your data</a>: download a copy of it, or delete it.</p>
+<p><a href="/account/showcase">Featuring your projects</a>: what you've said MakerFoundry may feature on its social pages.</p>
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
 </section>"#,
             email = escape(&user.email)

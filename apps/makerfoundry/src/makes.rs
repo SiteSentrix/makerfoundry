@@ -69,6 +69,19 @@ pub async fn count(pool: &PgPool, id: i64) -> i64 {
 /// `owner` is the design's maker.
 pub async fn section(state: &AppState, pool: &PgPool, viewer: Option<&User>, id: i64, owner: i64) -> String {
     let makes = on(pool, id).await;
+    // featuring a make on our social pages is offered for 3D models (MF-55)
+    let is_model: bool = sqlx::query_scalar("SELECT kind = 'model3d' FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    let showcase = if is_model {
+        crate::model3d::showcase::CHECKBOX
+    } else {
+        ""
+    };
     let staff = viewer.is_some_and(|u| u.account_id == owner || state.admins.contains(&u.account_id));
     let items: String = makes
         .iter()
@@ -113,7 +126,7 @@ pub async fn section(state: &AppState, pool: &PgPool, viewer: Option<&User>, id:
 <label>Photo <small>(JPEG, PNG or WebP; saved again without its hidden details, such as where it was taken)</small><input type="file" name="photo" accept="image/jpeg,image/png,image/webp" required></label>
 <label>A note <small>(optional: fabric, thread, material, tips)</small><textarea name="note" rows="3" maxlength="{MAX_NOTE}"></textarea></label>
 <label class="choice"><input type="checkbox" name="confirm" value="yes" required> <span>It's my own photo of something I made from this design.</span></label>
-<button type="submit">Post it</button>
+{showcase}<button type="submit">Post it</button>
 </form></details>"#
         ),
     };
@@ -178,7 +191,7 @@ pub async fn post(
     if !state.limits.allow(limits::UPLOAD, &user.account_id.to_string()) {
         return problem(id, "You've posted a lot today. Please try again tomorrow.");
     }
-    let (mut photo, mut note, mut confirm) = (None, String::new(), false);
+    let (mut photo, mut note, mut confirm, mut showcase) = (None, String::new(), false, false);
     loop {
         match multipart.next_field().await {
             Ok(Some(field)) => {
@@ -190,6 +203,7 @@ pub async fn post(
                     "photo" if !bytes.is_empty() => photo = Some(bytes.to_vec()),
                     "note" => note = String::from_utf8_lossy(&bytes).trim().replace("\r\n", "\n"),
                     "confirm" => confirm = bytes.as_ref() == b"yes",
+                    "showcase" => showcase = bytes.as_ref() == b"yes",
                     _ => {}
                 }
             }
@@ -218,8 +232,8 @@ pub async fn post(
             let _ = storage.delete(&photo_key).await;
             return Err(e);
         }
-        let saved = sqlx::query(
-            "INSERT INTO mf_makes (design_id, account_id, photo_key, thumb_key, width, height, note) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        let saved: Result<i64, sqlx::Error> = sqlx::query_scalar(
+            "INSERT INTO mf_makes (design_id, account_id, photo_key, thumb_key, width, height, note) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
         )
         .bind(id)
         .bind(user.account_id)
@@ -228,13 +242,24 @@ pub async fn post(
         .bind(i32::try_from(clean.width).unwrap_or(i32::MAX))
         .bind(i32::try_from(clean.height).unwrap_or(i32::MAX))
         .bind(&note)
-        .execute(pool)
+        .fetch_one(pool)
         .await;
-        if let Err(e) = saved {
-            // (best effort: an orphaned photo costs a little storage)
-            let _ = storage.delete(&photo_key).await;
-            let _ = storage.delete(&thumb_key).await;
-            return Err(e.to_string());
+        let make = match saved {
+            Ok(m) => m,
+            Err(e) => {
+                // (best effort: an orphaned photo costs a little storage)
+                let _ = storage.delete(&photo_key).await;
+                let _ = storage.delete(&thumb_key).await;
+                return Err(e.to_string());
+            }
+        };
+        let is_model: bool = sqlx::query_scalar("SELECT kind = 'model3d' FROM mf_designs WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+        if showcase && is_model {
+            crate::model3d::showcase::give(pool, user.account_id, None, Some(make)).await;
         }
         Ok::<(), String>(())
     };

@@ -531,8 +531,10 @@ async fn review_html(state: &AppState, pool: &PgPool, id: i64, note: &str) -> St
 </form>
 <form method="post" action="/3d/import/{id}/publish" class="publish">
 <label class="choice"><input type="checkbox" name="confirm" value="yes"> <span>I confirm I created these models or have the right to share them, and they don't copy anyone else's logos, characters or designs.{seller_terms}</span></label>
+{showcase}
 <button type="submit">Publish every ready draft</button>
-</form>"#
+</form>"#,
+                showcase = super::showcase::CHECKBOX,
             )
         };
         format!(r#"<h2>Drafts</h2><ul class="import-drafts">{list}</ul>{forms}"#)
@@ -679,6 +681,7 @@ pub async fn details(
 #[serde(default)]
 pub struct PublishForm {
     confirm: String,
+    showcase: String,
 }
 
 /// Publishes every draft of an import that has its title, category and licence, once the creator
@@ -744,6 +747,9 @@ pub async fn publish(
         .is_ok()
         {
             published += 1;
+            if f.showcase == "yes" {
+                super::showcase::give(&pool, user.account_id, Some(did), None).await;
+            }
         }
     }
     if published > 0 && state.launched {
