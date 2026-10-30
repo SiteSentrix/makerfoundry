@@ -211,6 +211,8 @@ pub fn app(state: AppState) -> Router {
         .route("/account/showcase", get(model3d::showcase::page))
         .route("/account/showcase/{id}/withdraw", post(model3d::showcase::withdraw))
         .route("/account/notices", get(notices::page).post(notices::save))
+        .route("/account/api-keys", get(model3d::api::page).post(model3d::api::make))
+        .route("/account/api-keys/{id}/revoke", post(model3d::api::revoke))
         .route(
             "/notices/unsubscribe/{account}/{token}",
             get(notices::unsubscribe_page).post(notices::unsubscribe),
@@ -296,6 +298,8 @@ pub fn app(state: AppState) -> Router {
         .route("/api/v1", get(api::about))
         .route("/api/v1/designs", post(api::new_design).options(api::preflight))
         .route("/api/v1/designs/{id}/file/{name}", get(api::design_file))
+        .route("/api/v1/models", get(model3d::api::search))
+        .route("/api/v1/models/{id}", get(model3d::api::model))
         .layer(DefaultBodyLimit::max(api::API_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(api::API_LIMIT_BYTES));
     // 3D models (MF-41) are larger and take longer to read and draw: their own cap and time

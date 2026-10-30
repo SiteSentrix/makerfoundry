@@ -1,6 +1,7 @@
 //! MakerFoundry 3D (MF-35…): printable models, their categories, and (in the modules beside this
 //! one) the readers for the files makers upload. See docs/3d-hub-plan.md.
 
+pub mod api;
 pub mod files;
 pub mod import;
 pub mod likes;

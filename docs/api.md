@@ -121,3 +121,34 @@ LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as Sti
 
 Once it ships, tell the MakerFoundry chat to switch the button on.
 
+
+## Reading 3D models (issue #36)
+Read-only JSON about **published** 3D models, for slicers and apps (`apps/makerfoundry/src/model3d/api.rs`).
+Every request carries an API key a member makes at **Account › API keys** (up to 5; shown once,
+kept only as its SHA-256; revoked there): `Authorization: Bearer mfk_…`. Each key may make 1,000
+requests an hour. Until MakerFoundry 3D opens to everyone (`MF_3D=yes`), only admins' keys answer.
+There's no CORS: keys belong in apps and servers, not in web pages.
+
+### `GET https://makerfoundry.app/api/v1/models`
+The same search as `/3d`, with the same query: `q`, `category`, `licence`, `format` (`stl`, `3mf`,
+`obj`, `step`), `printer`, `filament`, `makes=yes`, `profile=yes`, `multicolour=yes`,
+`sort=popular` (newest first otherwise), `per` (1 to 24) and `after` (from `next`).
+
+```json
+{"models": [{"id": 42, "title": "Gear", "url": "https://makerfoundry.app/d/42/gear", "maker": "Ann",
+  "price_cents": 0, "downloads": 3, "picture": "https://makerfoundry.app/3d/42/files/7/hero",
+  "api": "https://makerfoundry.app/api/v1/models/42"}],
+ "next": "https://makerfoundry.app/api/v1/models?after=42"}
+```
+
+### `GET https://makerfoundry.app/api/v1/models/{id}`
+One published model: `id`, `title`, `url`, `description`, `tags`, `category`, `licence` (`id`,
+`name`, `url` of its text), `price_cents`, `downloads`, `likes`, `published_at` (UTC),
+`maker` (`name`, `url`), `files` (`id`, `name`, `format`, `role`, `bytes`, `triangles`,
+`size_mm`, `picture`), `profiles` (each 3MF's print settings: `slicer`, `printers`, `nozzle_mm`,
+`layer_mm`, `infill_percent`, `walls`, `supports`, `plates`, `filaments`) and `download`: for a free
+model, its download on the site, where its licence is shown; `null` for one for sale.
+
+Errors are `{"error": {"message"}}`: `401` without a known key, `404` for a model that isn't
+published (or before 3D opens), `429` past the hour's requests, `503` if MakerFoundry can't answer.
+Publishing from slicers is for later.

@@ -71,6 +71,10 @@ main { flex: 1; }
 .form .lead { font-size: 1.05rem; }
 .form form { display: grid; gap: 1rem; margin: 1.25rem 0; }
 .form label { display: grid; gap: .35rem; font-weight: 600; }
+.form code { overflow-wrap: anywhere; }
+.api-keys { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.api-keys li { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; }
+.api-keys form { margin: 0; }
 .form label small { font-weight: 400; color: var(--muted); }
 .form input {
   font: inherit; font-weight: 400; color: var(--fg); background: var(--card);

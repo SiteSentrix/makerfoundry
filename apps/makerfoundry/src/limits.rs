@@ -61,6 +61,9 @@ pub const IMPORT: Rule = rule("import", 20, 24 * 60);
 /// Likes and unlikes by one account an hour (MF-48).
 pub const LIKE: Rule = rule("like", 300, 60);
 
+/// Requests one API key may make an hour to the public API for 3D models (issue #36).
+pub const API_READ: Rule = rule("api-read", 1000, 60);
+
 /// The most designs one account may keep.
 pub const MAX_DESIGNS: i64 = 500;
 

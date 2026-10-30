@@ -8713,3 +8713,178 @@ async fn a_step_file_the_converter_cant_preview_is_still_taken() {
         0
     );
 }
+
+// ---------------------------------------------------------------- public API for 3D models (issue #36)
+
+/// A new API key for the person signed in with `cookie`.
+async fn api_key(s: &Site, cookie: &str, name: &str) -> String {
+    let page = s
+        .post("/account/api-keys", &format!("name={name}"), Some(cookie))
+        .await
+        .body;
+    let at = page.find("<code>mfk_").expect(&page) + "<code>".len();
+    page[at..].split('<').next().unwrap().to_string()
+}
+
+async fn api_get(s: &Site, path: &str, key: Option<&str>) -> (StatusCode, Value) {
+    let mut req = Request::get(path).header(header::HOST, HOST);
+    if let Some(k) = key {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {k}"));
+    }
+    let a = s.send(req.body(Body::empty()).unwrap()).await;
+    (a.status, serde_json::from_str(&a.body).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn api_keys_are_shown_once_kept_hashed_and_revoked() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert!(s.get("/account", Some(&ann)).await.body.contains("/account/api-keys"));
+    let key = api_key(&s, &ann, "My+slicer").await;
+    assert!(key.starts_with("mfk_") && key.len() == 52, "{key}");
+    let page = s.get("/account/api-keys", Some(&ann)).await.body;
+    assert!(
+        page.contains("My slicer") && !page.contains(&key),
+        "shown only once: {page}"
+    );
+    s.dump_page("api-keys", &page, Some(&ann)).await;
+    let kept: Vec<u8> = sqlx::query_scalar("SELECT key_hash FROM mf_api_keys")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(kept.len(), 32);
+    assert!(!kept.windows(4).any(|w| w == b"mfk_"));
+    // no key, a wrong one, then the right one
+    let (st, body) = api_get(&s, "/api/v1/models", None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert!(body["error"]["message"].as_str().unwrap().contains("API key"));
+    assert_eq!(
+        api_get(&s, "/api/v1/models", Some("mfk_nope")).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(api_get(&s, "/api/v1/models", Some(&key)).await.0, StatusCode::OK);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_api_keys WHERE last_used_at IS NOT NULL")
+            .await,
+        1
+    );
+    // up to five; revoked keys stop working; others can't revoke yours
+    for n in 0..4 {
+        api_key(&s, &ann, &format!("k{n}")).await;
+    }
+    let full = s.post("/account/api-keys", "name=six", Some(&ann)).await.body;
+    assert!(full.contains("up to 5 keys"), "{full}");
+    let id: i64 = sqlx::query_scalar("SELECT id FROM mf_api_keys WHERE name = 'My slicer'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    s.post(&format!("/account/api-keys/{id}/revoke"), "", Some(&bea)).await;
+    assert_eq!(api_get(&s, "/api/v1/models", Some(&key)).await.0, StatusCode::OK);
+    s.post(&format!("/account/api-keys/{id}/revoke"), "", Some(&ann)).await;
+    assert_eq!(
+        api_get(&s, "/api/v1/models", Some(&key)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // in the data download (never the key or its hash), and gone with the data
+    let data = s.get("/account/data.json", Some(&ann)).await.body;
+    assert!(
+        data.contains("\"api_keys\"") && data.contains("My slicer") && !data.contains("key_hash"),
+        "{data}"
+    );
+    s.post("/account/data/delete", "confirm=DELETE", Some(&ann)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_api_keys").await, 5 - 5);
+}
+
+#[tokio::test]
+async fn the_api_answers_published_models_only_with_their_files_and_profiles() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let vase = licensed_model(&s, &ann, "Vase", "cc0").await;
+    let draft = detailed_model(&s, &ann, "Secret", "cc-by").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    let key = api_key(&s, &bea, "app").await;
+    let (st, list) = api_get(&s, "/api/v1/models?per=1", Some(&key)).await;
+    assert_eq!(st, StatusCode::OK, "{list}");
+    assert_eq!(list["models"][0]["id"], vase);
+    assert_eq!(
+        list["models"][0]["url"],
+        format!("https://makerfoundry.test/d/{vase}/vase")
+    );
+    let next = list["next"].as_str().unwrap();
+    assert!(
+        next.starts_with("https://makerfoundry.test/api/v1/models?") && !next.contains("&amp;"),
+        "{next}"
+    );
+    let (_, page2) = api_get(&s, next.trim_start_matches("https://makerfoundry.test"), Some(&key)).await;
+    assert_eq!(page2["models"][0]["id"], gear);
+    assert!(page2["next"].is_null());
+    let (_, found) = api_get(&s, "/api/v1/models?q=gear&licence=cc-by", Some(&key)).await;
+    assert_eq!(found["models"].as_array().unwrap().len(), 1);
+    let (st, m) = api_get(&s, &format!("/api/v1/models/{gear}"), Some(&key)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(m["title"], "Gear");
+    assert_eq!(m["licence"]["id"], "cc-by");
+    assert_eq!(m["maker"]["url"], "https://makerfoundry.test/makers/ann");
+    assert_eq!(m["files"][0]["format"], "stl");
+    assert_eq!(m["files"][0]["triangles"], 12);
+    assert_eq!(m["download"], format!("https://makerfoundry.test/d/{gear}/download"));
+    assert!(m["published_at"].as_str().unwrap().ends_with('Z'));
+    let text = m.to_string();
+    assert!(
+        !text.contains("@example.com") && !text.contains("file_key") && !text.contains("account"),
+        "{text}"
+    );
+    assert_eq!(
+        api_get(&s, &format!("/api/v1/models/{draft}"), Some(&key)).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api_get(&s, "/api/v1/models/999999", Some(&key)).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, all) = api_get(&s, "/api/v1/models", Some(&key)).await;
+    assert!(!all.to_string().contains("Secret"));
+}
+
+#[tokio::test]
+async fn before_3d_opens_only_admin_keys_answer_and_keys_are_rate_limited() {
+    let Some(s) = site_3d(vec![1000], false).await else {
+        return;
+    };
+    let admin = model_maker(&s, "admin%40example.com", "admin").await;
+    let key = api_key(&s, &admin, "admin").await;
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert_eq!(
+        s.get("/account/api-keys", Some(&ann)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!s.get("/account", Some(&ann)).await.body.contains("/account/api-keys"));
+    // a key Ann had (say, from a founding period) doesn't answer before the opening
+    let ann_id: i64 = sqlx::query_scalar("SELECT account_id FROM mf_makers WHERE handle = 'ann'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO mf_api_keys (account_id, name, key_hash) VALUES ($1, 'old', sha256('mfk_ann'::bytea))")
+        .bind(ann_id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        api_get(&s, "/api/v1/models", Some("mfk_ann")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    for _ in 0..1000 {
+        assert_eq!(
+            api_get(&s, "/api/v1/models/1", Some(&key)).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let (st, body) = api_get(&s, "/api/v1/models/1", Some(&key)).await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{body}");
+}

@@ -368,6 +368,12 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   decide whether it's worth running (cost), then deploy a converter as its own Railway service
   (OpenCASCADE is LGPL: as a separate program that's fine; never linked or copied), and set
   `MF_STEP_CONVERTER` (and a key).
+- **#36 public API for 3D models, built 2026-10-30**: `GET /api/v1/models` (the `/3d` search,
+  paged by key) and `GET /api/v1/models/{id}` (details, files, print profiles), published models
+  only, with keys members make at Account › API keys (up to 5, shown once, kept hashed,
+  revocable) and 1,000 requests an hour a key; only admins' keys answer until `MF_3D=yes`. In the
+  data download and deleted with the data. Documented in `docs/api.md`. Publishing from slicers is
+  for later.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
