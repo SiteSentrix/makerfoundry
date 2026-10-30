@@ -168,7 +168,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
         return not_found();
     };
     // each kind of work in its own section (3D models once MakerFoundry 3D is open to the viewer)
-    let three_d = crate::model3d::open_to(&state, viewer.as_ref());
+    let three_d = crate::model3d::open_to(&state, viewer.as_ref()).await;
     let mut sections = String::new();
     for (kind, heading) in [
         ("embroidery", "Embroidery designs"),

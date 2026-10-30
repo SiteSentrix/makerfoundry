@@ -370,7 +370,7 @@ pub async fn tree(State(state): State<AppState>, headers: HeaderMap, Path(id): P
         Ok(Some(d)) if d.kind == "model3d" && crate::listings::visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return crate::designs::not_found(),
     };
-    if !super::open_to(&state, viewer.as_ref()) {
+    if !super::open_to(&state, viewer.as_ref()).await {
         return crate::designs::not_found();
     }
     let rows: Vec<TreeRow> = sqlx::query_as(

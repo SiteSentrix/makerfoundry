@@ -96,10 +96,20 @@ pub fn category(id: &str) -> Option<&'static Category> {
     CATEGORIES.iter().find(|c| c.id == id)
 }
 
-/// Whether `viewer` may see MakerFoundry 3D: everyone once it's switched on (`MF_3D=yes`), admins
-/// before.
-pub fn open_to(state: &AppState, viewer: Option<&User>) -> bool {
-    state.three_d || viewer.is_some_and(|u| state.admins.contains(&u.account_id))
+/// Whether `viewer` may see and use MakerFoundry 3D: everyone once it's switched on (`MF_3D=yes`);
+/// before, admins and founding creators (their early access, MF-54).
+pub async fn open_to(state: &AppState, viewer: Option<&User>) -> bool {
+    if state.three_d {
+        return true;
+    }
+    let Some(u) = viewer else { return false };
+    if state.admins.contains(&u.account_id) {
+        return true;
+    }
+    match state.db.as_ref() {
+        Some(pool) => crate::founding::number(pool, u.account_id).await.is_some(),
+        None => false,
+    }
 }
 
 /// `/3d`: the 3D section's front page.
@@ -109,7 +119,7 @@ pub async fn landing(
     axum::extract::Query(q): axum::extract::Query<search::Query>,
 ) -> Response {
     let viewer = current_user(&state, &headers).await;
-    if !open_to(&state, viewer.as_ref()) {
+    if !open_to(&state, viewer.as_ref()).await {
         return crate::not_found().await.into_response();
     }
     let Some(pool) = state.db.as_ref() else {

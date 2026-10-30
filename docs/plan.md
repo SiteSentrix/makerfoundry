@@ -287,6 +287,10 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   its maker and the admins, and come back on restore. Takedowns count across kinds for repeat
   infringers. The 3D limits are each tested: 100 models a day, 20 imports a day, 300 likes an
   hour.
+- **MF-54 founding creators' early access to 3D, built 2026-10-30** (#22): while `MF_3D` is off,
+  approved founding creators use MakerFoundry 3D as admins do (upload, import, publish, see their
+  models), and their numbered badge shows on their 3D models; everyone else waits for the
+  switch. Removing a badge removes the early access.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

@@ -7353,3 +7353,47 @@ async fn imports_and_likes_are_rate_limited() {
     s.post(&format!("/d/{gear}/like"), "like=yes", Some(&bea)).await;
     assert_eq!(s.scalar("SELECT count(*) FROM mf_likes").await, 0);
 }
+
+// ---------------------------------------------------------------- founding creators' early access (MF-54, 3D)
+
+#[tokio::test]
+async fn a_founding_creator_can_publish_3d_before_the_switch_and_others_cant() {
+    let Some(s) = site_3d(Vec::new(), false).await else {
+        return;
+    };
+    let nick = model_maker(&s, "nick%40example.com", "nick").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    assert_eq!(
+        s.get("/3d/new", Some(&nick)).await.status,
+        StatusCode::NOT_FOUND,
+        "not yet a founding creator"
+    );
+    sqlx::query("INSERT INTO mf_founding (account_id, name, status, number) VALUES (1000, 'Nick', 'approved', 1)")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(s.get("/3d", Some(&nick)).await.status, StatusCode::OK);
+    assert_eq!(s.get("/3d/new", Some(&nick)).await.status, StatusCode::OK);
+    assert_eq!(s.get("/3d/import", Some(&nick)).await.status, StatusCode::OK);
+    let gear = licensed_model(&s, &nick, "Gear", "cc-by").await;
+    let page = s.get(&format!("/d/{gear}/gear"), Some(&nick)).await.body;
+    assert!(
+        page.contains("Founding creator #1"),
+        "the badge shows on 3D models too: {page}"
+    );
+    // everyone else waits for the switch
+    for who in [Some(bea.as_str()), None] {
+        assert_eq!(s.get("/3d", who).await.status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            s.get(&format!("/d/{gear}/gear"), who).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(s.get("/3d/new", Some(&bea)).await.status, StatusCode::NOT_FOUND);
+    // removing the badge removes the early access
+    sqlx::query("UPDATE mf_founding SET status = 'declined', number = NULL WHERE account_id = 1000")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(s.get("/3d/new", Some(&nick)).await.status, StatusCode::NOT_FOUND);
+}

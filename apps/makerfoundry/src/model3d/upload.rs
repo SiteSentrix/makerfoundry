@@ -64,7 +64,7 @@ fn upload_form(problem: &str) -> String {
 async fn uploader(state: &AppState, headers: &HeaderMap) -> Result<(User, PgPool), Response> {
     let viewer = current_user(state, headers).await;
     match (viewer, state.db.clone()) {
-        (Some(u), Some(pool)) if super::open_to(state, Some(&u)) => Ok((u, pool)),
+        (Some(u), Some(pool)) if super::open_to(state, Some(&u)).await => Ok((u, pool)),
         (None, _) if state.three_d => Err(Redirect::to("/signin?next=/3d/new").into_response()),
         _ => Err(not_found()),
     }
@@ -699,7 +699,7 @@ pub async fn picture(
     let Some(pool) = state.db.as_ref() else {
         return not_found();
     };
-    if !super::open_to(&state, viewer.as_ref()) {
+    if !super::open_to(&state, viewer.as_ref()).await {
         return not_found();
     }
     let d = match crate::designs::design(pool, id).await {

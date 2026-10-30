@@ -495,7 +495,7 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         Ok(Some(d)) if visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return not_found(signed_in),
     };
-    if d.kind == "model3d" && !crate::model3d::open_to(&state, viewer.as_ref()) {
+    if d.kind == "model3d" && !crate::model3d::open_to(&state, viewer.as_ref()).await {
         return not_found(signed_in);
     }
     let maker = makers::profile(pool, d.account_id).await;
@@ -795,7 +795,7 @@ pub async fn download(
         // not bought: the page with the button to buy it
         return Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response();
     }
-    if d.kind == "model3d" && !crate::model3d::open_to(&state, viewer.as_ref()) {
+    if d.kind == "model3d" && !crate::model3d::open_to(&state, viewer.as_ref()).await {
         return not_found(viewer.is_some());
     }
     if let Some(ext) = &q.to {

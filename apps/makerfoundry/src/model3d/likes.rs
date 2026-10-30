@@ -64,7 +64,7 @@ pub async fn like(
         return Redirect::to(&format!("/signin?next=/d/{id}")).into_response();
     };
     let d = match crate::designs::design(&pool, id).await {
-        Ok(Some(d)) if d.kind == "model3d" && d.status == "published" && super::open_to(&state, Some(&user)) => d,
+        Ok(Some(d)) if d.kind == "model3d" && d.status == "published" && super::open_to(&state, Some(&user)).await => d,
         _ => return crate::designs::not_found(),
     };
     if state.limits.allow(limits::LIKE, &user.account_id.to_string()) {
