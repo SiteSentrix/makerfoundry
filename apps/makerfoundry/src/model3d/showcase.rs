@@ -103,3 +103,217 @@ pub async fn withdraw(State(state): State<AppState>, headers: HeaderMap, Path(id
         .await;
     Redirect::to("/account/showcase").into_response()
 }
+
+// ---------------------------------------------------------------- the admins' queue (MF-56)
+
+/// Where posts are made.
+const PLATFORMS: &[(&str, &str)] = &[
+    ("facebook", "Facebook"),
+    ("instagram", "Instagram"),
+    ("youtube", "YouTube"),
+];
+
+/// One item waiting to be featured: consent, make, model, its title and licence, the creator's
+/// display name, a photo, a model picture, when consent was given.
+type QueueRow = (
+    i64,
+    Option<i64>,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    String,
+);
+
+/// One post made: id, consent, platform, address, when.
+type PostRow = (i64, i64, String, String, String);
+
+/// The caption for a post: credits the creator's display name and links the model (our template;
+/// the owner approves it with the Terms).
+pub fn caption(title: &str, name: &str, licence: Option<&str>, url: &str, make: bool) -> String {
+    let licence = licence
+        .and_then(crate::licences::find)
+        .map(|l| format!(" ({})", l.name))
+        .unwrap_or_default();
+    if make {
+        format!("{name}'s print of {title} on MakerFoundry{licence}: {url}")
+    } else {
+        format!("{title} by {name} on MakerFoundry{licence}: {url}")
+    }
+}
+
+async fn admin(state: &AppState, headers: &HeaderMap) -> Option<(crate::accounts::User, PgPool)> {
+    let user = current_user(state, headers).await?;
+    let pool = state.db.clone()?;
+    state.admins.contains(&user.account_id).then_some((user, pool))
+}
+
+async fn queue_html(state: &AppState, pool: &PgPool, problem: &str) -> String {
+    let items: Vec<QueueRow> = sqlx::query_as(
+        "SELECT c.id, c.make_id, d.id, d.title, d.licence, m.name,
+                (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1),
+                (SELECT f.id FROM mf_model_files f WHERE f.design_id = d.id AND f.thumb_key IS NOT NULL ORDER BY f.position LIMIT 1),
+                to_char(c.given_at, 'YYYY-MM-DD')
+         FROM mf_showcase_consents c
+         JOIN mf_designs d ON d.id = coalesce(c.design_id, (SELECT k.design_id FROM mf_makes k WHERE k.id = c.make_id))
+         LEFT JOIN mf_makers m ON m.account_id = c.account_id
+         WHERE c.withdrawn_at IS NULL AND d.status = 'published' AND (c.design_id IS NOT NULL OR c.make_id IS NOT NULL)
+         ORDER BY c.given_at DESC LIMIT 200",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let posts: Vec<PostRow> = sqlx::query_as(
+        "SELECT id, consent_id, platform, url, to_char(posted_at, 'YYYY-MM-DD') FROM mf_showcase_posts ORDER BY posted_at",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let platform_name = |p: &str| PLATFORMS.iter().find(|(id, _)| *id == p).map_or("", |(_, n)| n);
+    let options: String = PLATFORMS
+        .iter()
+        .map(|(id, n)| format!(r#"<option value="{id}">{n}</option>"#))
+        .collect();
+    let list: String = items
+        .iter()
+        .map(|(cid, make, did, title, licence, name, photo, file, given)| {
+            let name = name.as_deref().unwrap_or("a maker");
+            let url = format!("{}/d/{did}/{}", state.public_url, crate::listings::slug(title));
+            let picture = match (make, photo, file) {
+                (Some(m), _, _) => format!("/makes/{m}/thumb"),
+                (None, Some(p), _) => format!("/designs/{did}/photos/{p}/thumb"),
+                (None, None, Some(f)) => format!("/3d/{did}/files/{f}/hero"),
+                _ => String::new(),
+            };
+            let picture = if picture.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<img src="{picture}" alt="" width="120" height="120" loading="lazy">"#)
+            };
+            let made: String = posts
+                .iter()
+                .filter(|p| p.1 == *cid)
+                .map(|p| format!(r#"<li>{} {}: <a href="{u}" rel="noopener">{u}</a></li>"#, platform_name(&p.2), p.4, u = escape(&p.3)))
+                .collect();
+            let made = if made.is_empty() { String::new() } else { format!(r#"<ul class="posts">{made}</ul>"#) };
+            format!(
+                r#"<li class="showcase-item">{picture}<div><strong><a href="/d/{did}/{slug}">{title}</a></strong> <span class="muted">· {who} · consent given {given}</span>
+<label>Caption <textarea readonly rows="3">{caption}</textarea></label>{made}
+<form method="post" action="/admin/showcase/{cid}/posted" class="inline-form"><select name="platform" aria-label="Where it was posted">{options}</select><input name="url" type="url" placeholder="The post's address" aria-label="The post's address" required maxlength="300"><button type="submit" class="secondary small">Posted</button></form></div></li>"#,
+                slug = crate::listings::slug(title),
+                title = escape(title),
+                who = if make.is_some() { format!("a make by {}", escape(name)) } else { format!("by {}", escape(name)) },
+                caption = escape(&caption(title, name, licence.as_deref(), &url, make.is_some())),
+            )
+        })
+        .collect();
+    // posts to take down: their consent withdrawn, or their model taken down
+    let flagged: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT p.id, p.platform, p.url FROM mf_showcase_posts p JOIN mf_showcase_consents c ON c.id = p.consent_id
+         LEFT JOIN mf_designs d ON d.id = coalesce(c.design_id, (SELECT k.design_id FROM mf_makes k WHERE k.id = c.make_id))
+         WHERE p.taken_down_at IS NULL AND (c.withdrawn_at IS NOT NULL OR d.id IS NULL OR d.status <> 'published')
+         ORDER BY p.posted_at",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let flagged = if flagged.is_empty() {
+        String::new()
+    } else {
+        let rows: String = flagged
+            .iter()
+            .map(|(pid, platform, url)| {
+                format!(
+                    r#"<li>{} <a href="{u}" rel="noopener">{u}</a> <form method="post" action="/admin/showcase/posts/{pid}/taken-down" class="inline"><button type="submit" class="secondary small">Taken down</button></form></li>"#,
+                    platform_name(platform),
+                    u = escape(url)
+                )
+            })
+            .collect();
+        format!(
+            r#"<div class="problem" role="alert"><h2>Take these down</h2><p>Their creator withdrew their consent, or the model was taken down.</p><ul>{rows}</ul></div>"#
+        )
+    };
+    let problem = if problem.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<p class="problem" role="alert">{}</p>"#, escape(problem))
+    };
+    let list = if list.is_empty() {
+        r#"<p class="muted">Nothing waiting.</p>"#.to_string()
+    } else {
+        format!(r#"<ul class="showcase">{list}</ul>"#)
+    };
+    format!(
+        r#"<section class="design"><h1>Showcase</h1>{problem}{flagged}<p class="lead">Published projects their creators asked us to feature, newest first. Post by hand, crediting the display name shown, then note where.</p>{list}<p><a href="/admin">The reports queue</a></p></section>"#
+    )
+}
+
+/// `GET /admin/showcase`.
+pub async fn queue(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some((_, pool)) = admin(&state, &headers).await else {
+        return crate::designs::not_found();
+    };
+    private("Showcase · MakerFoundry", &queue_html(&state, &pool, "").await, true)
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub struct PostedForm {
+    platform: String,
+    url: String,
+}
+
+/// `POST /admin/showcase/<consent>/posted`: notes a post made from an active consent.
+pub async fn posted(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(cid): Path<i64>,
+    axum::Form(f): axum::Form<PostedForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let Some((user, pool)) = admin(&state, &headers).await else {
+        return crate::designs::not_found();
+    };
+    let url = f.url.trim();
+    let problem = if !PLATFORMS.iter().any(|(id, _)| *id == f.platform) {
+        Some("Choose where it was posted.")
+    } else if !url.starts_with("https://") || url.len() > 300 || url::Url::parse(url).is_err() {
+        Some("Give the post's address (https://…).")
+    } else {
+        None
+    };
+    if let Some(p) = problem {
+        return private("Showcase · MakerFoundry", &queue_html(&state, &pool, p).await, true);
+    }
+    let _ = sqlx::query(
+        "INSERT INTO mf_showcase_posts (consent_id, platform, url, posted_by)
+         SELECT id, $2, $3, $4 FROM mf_showcase_consents WHERE id = $1 AND withdrawn_at IS NULL",
+    )
+    .bind(cid)
+    .bind(&f.platform)
+    .bind(url)
+    .bind(user.account_id)
+    .execute(&pool)
+    .await;
+    Redirect::to("/admin/showcase").into_response()
+}
+
+/// `POST /admin/showcase/posts/<post>/taken-down`.
+pub async fn taken_down(State(state): State<AppState>, headers: HeaderMap, Path(pid): Path<i64>) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let Some((_, pool)) = admin(&state, &headers).await else {
+        return crate::designs::not_found();
+    };
+    let _ = sqlx::query("UPDATE mf_showcase_posts SET taken_down_at = now() WHERE id = $1 AND taken_down_at IS NULL")
+        .bind(pid)
+        .execute(&pool)
+        .await;
+    Redirect::to("/admin/showcase").into_response()
+}

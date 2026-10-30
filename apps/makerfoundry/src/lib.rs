@@ -195,6 +195,12 @@ pub fn app(state: AppState) -> Router {
         .route("/dmca", get(moderation::policy))
         .route("/dmca/notice", get(moderation::notice_page).post(moderation::notice))
         .route("/admin", get(moderation::queue))
+        .route("/admin/showcase", get(model3d::showcase::queue))
+        .route("/admin/showcase/{id}/posted", post(model3d::showcase::posted))
+        .route(
+            "/admin/showcase/posts/{id}/taken-down",
+            post(model3d::showcase::taken_down),
+        )
         .route("/admin/overview", get(overview::overview))
         .route("/admin/reports/{rid}/takedown", post(moderation::takedown))
         .route("/admin/reports/{rid}/dismiss", post(moderation::dismiss))

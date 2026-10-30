@@ -7571,3 +7571,141 @@ async fn deleting_data_withdraws_everything_and_consents_are_in_the_download() {
         0
     );
 }
+
+// ---------------------------------------------------------------- the admins' showcase queue (MF-56)
+
+/// An admin (1000) and Bea (1001, "Bea's Prints") with: a consented published model, a consented
+/// draft, a published model without consent → (admin, bea, published id, draft id, other id).
+async fn showcase_site(s: &Site) -> (String, String, i64, i64, i64) {
+    let admin = model_maker(s, "admin%40example.com", "admin").await;
+    let bea = s.join("bea%40example.com").await;
+    s.post("/account/maker", "name=Bea%27s+Prints&handle=bea", Some(&bea))
+        .await;
+    let shared = upload_with_showcase(s, &bea, true).await;
+    s.post(
+        &format!("/designs/{shared}/edit"),
+        "title=Dragon&category=toys-games&licence=cc-by&price=0",
+        Some(&bea),
+    )
+    .await;
+    s.post(&format!("/designs/{shared}/publish"), "confirm=yes", Some(&bea))
+        .await;
+    let draft = upload_with_showcase(s, &bea, true).await;
+    let other = licensed_model(s, &bea, "Private", "cc-by").await;
+    (admin, bea, shared, draft, other)
+}
+
+#[tokio::test]
+async fn only_opted_in_published_items_are_listed() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let (admin, bea, shared, draft, other) = showcase_site(&s).await;
+    assert_eq!(s.get("/admin/showcase", Some(&bea)).await.status, StatusCode::NOT_FOUND);
+    let queue = s.get("/admin/showcase", Some(&admin)).await.body;
+    assert!(queue.contains(&format!("/d/{shared}/dragon")), "{queue}");
+    assert!(
+        !queue.contains(&format!("/d/{draft}/")) && !queue.contains(&format!("/d/{other}/")),
+        "{queue}"
+    );
+    assert!(!queue.contains("@example.com"), "no email ever shows: {queue}");
+    s.dump_page("showcase", &queue, Some(&admin)).await;
+}
+
+#[tokio::test]
+async fn the_caption_credits_the_display_name_and_links_the_model() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let (admin, _, shared, ..) = showcase_site(&s).await;
+    let queue = s.get("/admin/showcase", Some(&admin)).await.body;
+    assert!(
+        queue.contains(&format!("Dragon by Bea&#39;s Prints on MakerFoundry (Creative Commons Attribution (CC BY 4.0)): https://makerfoundry.test/d/{shared}/dragon")),
+        "{queue}"
+    );
+}
+
+#[tokio::test]
+async fn withdrawal_removes_from_the_queue_and_flags_posted_items_until_taken_down() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let (admin, bea, shared, ..) = showcase_site(&s).await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_consents WHERE design_id = $1")
+        .bind(shared)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    // the admin posts it by hand and notes where
+    let r = s
+        .post(
+            &format!("/admin/showcase/{cid}/posted"),
+            "platform=instagram&url=https%3A%2F%2Fwww.instagram.com%2Fp%2Fabc",
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(r.location(), "/admin/showcase");
+    let r = s
+        .post(
+            &format!("/admin/showcase/{cid}/posted"),
+            "platform=myspace&url=https%3A%2F%2Fx",
+            Some(&admin),
+        )
+        .await;
+    assert!(r.body.contains("Choose where it was posted"), "{}", r.body);
+    assert_eq!(
+        s.post(
+            &format!("/admin/showcase/{cid}/posted"),
+            "platform=facebook&url=https%3A%2F%2Fx",
+            Some(&bea)
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+    // Bea withdraws: off the queue, and the post is flagged
+    s.post(&format!("/account/showcase/{cid}/withdraw"), "", Some(&bea))
+        .await;
+    let queue = s.get("/admin/showcase", Some(&admin)).await.body;
+    assert!(!queue.contains(&format!("/admin/showcase/{cid}/posted")), "{queue}");
+    assert!(
+        queue.contains("Take these down") && queue.contains("https://www.instagram.com/p/abc"),
+        "{queue}"
+    );
+    let pid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_posts")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/admin/showcase/posts/{pid}/taken-down"), "", Some(&admin))
+        .await;
+    let queue = s.get("/admin/showcase", Some(&admin)).await.body;
+    assert!(!queue.contains("Take these down"), "{queue}");
+    // a model taken down after a report is off the queue too
+    let cid2: i64 = {
+        let r = upload_with_showcase(&s, &bea, true).await;
+        s.post(
+            &format!("/designs/{r}/edit"),
+            "title=Robot&category=toys-games&licence=cc0&price=0",
+            Some(&bea),
+        )
+        .await;
+        s.post(&format!("/designs/{r}/publish"), "confirm=yes", Some(&bea))
+            .await;
+        sqlx::query("UPDATE mf_designs SET status = 'removed' WHERE id = $1")
+            .bind(r)
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        sqlx::query_scalar("SELECT id FROM mf_showcase_consents WHERE design_id = $1")
+            .bind(r)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap()
+    };
+    assert!(
+        !s.get("/admin/showcase", Some(&admin))
+            .await
+            .body
+            .contains(&format!("/admin/showcase/{cid2}/posted"))
+    );
+}

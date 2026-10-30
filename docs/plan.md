@@ -298,6 +298,13 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   each (only their creator's); withdrawing keeps the times; consents are in the data download
   and deleting the data withdraws them all. **The box's wording and what it permits are the
   owner's to approve** with the Terms (#26).
+- **MF-56 showcase queue, built 2026-10-30** (#24): `/admin/showcase` (admins only) lists only
+  consented, published, not withdrawn projects: a picture, the creator's display name (never an
+  email), the model's link and licence, and a caption crediting that name and linking the model
+  (our template, for the owner to approve). Admins post by hand and note the platform and the
+  post's address (`mf_showcase_posts`, migration 0031). A withdrawn consent, or a model taken
+  down, takes the item off the queue and flags its posts ("Take these down") until marked taken
+  down.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

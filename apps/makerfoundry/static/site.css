@@ -135,6 +135,13 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .filament { display: inline-flex; align-items: center; gap: .3rem; }
 .remixes { padding-left: 1.25rem; overflow-wrap: anywhere; }
 form.inline { display: inline; }
+.showcase { list-style: none; padding: 0; display: grid; gap: 1rem; max-width: 48rem; }
+.showcase-item { display: flex; gap: 1rem; align-items: flex-start; border: 1px solid var(--line); border-radius: .5rem; padding: .75rem; }
+.showcase-item > div { display: grid; gap: .5rem; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.showcase-item img { width: 6rem; height: 6rem; object-fit: cover; border-radius: .375rem; flex: none; }
+.showcase-item textarea { width: 100%; }
+.inline-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.inline-form input { flex: 1; min-width: 10rem; }
 .model-picture { margin: 0 0 1.5rem; }
 .model-picture img { display: block; width: 100%; max-width: 36rem; height: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
 .downloads { margin: 0 0 1.5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }
