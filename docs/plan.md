@@ -384,6 +384,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   as its own Railway service (GPL: a separate program, never linked or copied; caps on time,
   memory and output; no network), set `MF_SCAD_SERVICE` (and a key); check it's fast and reliable
   before switching on, as the issue asks.
+- **#33 contests, built 2026-10-30, nothing shows until an admin opens one**: admins make a
+  contest at `/admin/contests` (title, theme, closing date, judged by the admins or by members'
+  votes, and its rules); it opens only with rules text and a closing date ahead. Creators enter up
+  to 3 of their own published 3D models, ticking that they made them and agree to the rules, and
+  can withdraw while it's open. Members get one vote a contest, never for their own entry,
+  changeable until it closes; counts show only after. Once closed, admins give up to three places
+  and announce them; winners lead the contest page. Contests show under `/3d` and `/contests`
+  while MakerFoundry 3D is open. In the data download, deleted with the data. **The owner's
+  steps**: prizes and each contest's rules (legal wording: `docs/legal/contest-rules-draft.md` is a
+  starting point), then an admin opens one.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

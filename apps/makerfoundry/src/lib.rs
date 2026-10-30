@@ -186,6 +186,17 @@ pub fn app(state: AppState) -> Router {
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
         .route("/d/{id}/like", post(model3d::likes::like))
+        .route("/contests", get(model3d::contests::list))
+        .route("/contests/{slug}", get(model3d::contests::page))
+        .route("/contests/{slug}/enter", post(model3d::contests::enter))
+        .route("/contests/{slug}/withdraw/{design}", post(model3d::contests::withdraw))
+        .route("/contests/{slug}/vote/{design}", post(model3d::contests::vote))
+        .route(
+            "/admin/contests",
+            get(model3d::contests::admin_page).post(model3d::contests::create),
+        )
+        .route("/admin/contests/{id}/open", post(model3d::contests::open))
+        .route("/admin/contests/{id}/announce", post(model3d::contests::announce))
         .route(
             "/d/{id}/customize/{file}",
             get(model3d::scad::page).post(model3d::scad::make),

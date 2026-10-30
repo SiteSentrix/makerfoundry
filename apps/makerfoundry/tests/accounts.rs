@@ -9095,3 +9095,268 @@ async fn customizing_is_off_without_the_service_and_for_models_for_sale() {
     assert_eq!(r.status, StatusCode::NOT_FOUND);
     assert!(calls.lock().unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------- contests (issue #33)
+
+const RULES: &str =
+    "Rules+for+the+test+contest%3A+one+model+each%2C+your+own+work%2C+no+prizes.+These+are+the+owner%27s+words.";
+
+/// A contest made and (when `rules`) opened by `admin`, closing in a day → its slug and id.
+async fn contest(s: &Site, admin: &str, title: &str, judging: &str, rules: bool) -> (String, i64) {
+    let closes = "2099-01-01T12%3A00";
+    let r = s
+        .post(
+            "/admin/contests",
+            &format!(
+                "title={title}&theme=Things+that+hold+things&closes={closes}&judging={judging}&rules={}",
+                if rules { RULES } else { "" }
+            ),
+            Some(admin),
+        )
+        .await;
+    assert_eq!(r.location(), "/admin/contests", "{}", r.body);
+    let (id, slug): (i64, String) = sqlx::query_as("SELECT id, slug FROM mf_contests ORDER BY id DESC LIMIT 1")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/admin/contests/{id}/open"), "", Some(admin)).await;
+    (slug, id)
+}
+
+async fn close(s: &Site, id: i64) {
+    sqlx::query("UPDATE mf_contests SET closes_at = now() - interval '1 minute' WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_contest_opens_only_with_rules_and_takes_creators_own_published_models() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let admin = model_maker(&s, "admin%40example.com", "admin").await;
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert_eq!(s.get("/admin/contests", Some(&ann)).await.status, StatusCode::NOT_FOUND);
+    assert!(!s.get("/3d", None).await.body.contains("/contests"));
+    // without rules it stays a draft, seen by nobody but admins
+    let (draft, _) = contest(&s, &admin, "No+rules", "admins", false).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_contests WHERE status = 'draft'")
+            .await,
+        1
+    );
+    assert_eq!(
+        s.get(&format!("/contests/{draft}"), Some(&ann)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/contests/{draft}"), Some(&admin)).await.status,
+        StatusCode::OK
+    );
+    let (slug, _) = contest(&s, &admin, "Hold+it", "admins", true).await;
+    assert_eq!(slug, "hold-it");
+    let landing = s.get("/3d", None).await.body;
+    assert!(landing.contains("/contests/hold-it"), "{landing}");
+    let page = s.get("/contests/hold-it", None).await.body;
+    assert!(
+        page.contains("Things that hold things") && page.contains("owner&#39;s words") && page.contains("Sign in"),
+        "{page}"
+    );
+    // Ann enters her published model, not her draft nor Bea's
+    let mine = licensed_model(&s, &ann, "Hook", "cc-by").await;
+    let draft_model = detailed_model(&s, &ann, "Draft", "cc-by").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    let beas = licensed_model(&s, &bea, "Shelf", "cc-by").await;
+    let r = s
+        .post("/contests/hold-it/enter", &format!("design={mine}"), Some(&ann))
+        .await;
+    assert!(
+        r.body.contains("agree to the rules"),
+        "the box must be ticked: {}",
+        r.body
+    );
+    let r = s
+        .post(
+            "/contests/hold-it/enter",
+            &format!("design={mine}&agree=yes"),
+            Some(&ann),
+        )
+        .await;
+    assert_eq!(r.location(), "/contests/hold-it");
+    for other in [draft_model, beas] {
+        let r = s
+            .post(
+                "/contests/hold-it/enter",
+                &format!("design={other}&agree=yes"),
+                Some(&ann),
+            )
+            .await;
+        assert!(r.body.contains("your published models"), "{}", r.body);
+    }
+    // up to three entries each
+    for t in ["A", "B"] {
+        let m = licensed_model(&s, &ann, t, "cc-by").await;
+        s.post("/contests/hold-it/enter", &format!("design={m}&agree=yes"), Some(&ann))
+            .await;
+    }
+    let fourth = licensed_model(&s, &ann, "C", "cc-by").await;
+    let r = s
+        .post(
+            "/contests/hold-it/enter",
+            &format!("design={fourth}&agree=yes"),
+            Some(&ann),
+        )
+        .await;
+    assert!(r.body.contains("up to 3 models"), "{}", r.body);
+    let page = s.get("/contests/hold-it", Some(&ann)).await.body;
+    assert!(
+        page.contains(&format!("/d/{mine}/hook")) && page.contains("Withdraw"),
+        "{page}"
+    );
+    s.dump_page("contest", &page, Some(&ann)).await;
+    s.post(&format!("/contests/hold-it/withdraw/{mine}"), "", Some(&ann))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_contest_entries").await, 2);
+    // closed: no more entries
+    let id: i64 = sqlx::query_scalar("SELECT id FROM mf_contests WHERE slug = 'hold-it'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    close(&s, id).await;
+    let r = s
+        .post(
+            "/contests/hold-it/enter",
+            &format!("design={mine}&agree=yes"),
+            Some(&ann),
+        )
+        .await;
+    assert!(r.body.contains("has closed"), "{}", r.body);
+    // a form from elsewhere
+    let mut req = Request::post("/contests/hold-it/enter").header(header::HOST, HOST);
+    req = req
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &ann)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+    assert_eq!(
+        s.send(req.body(Body::from("design=1&agree=yes")).unwrap()).await.status,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn members_vote_once_never_for_themselves_and_admins_announce_the_winners() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let admin = model_maker(&s, "admin%40example.com", "admin").await;
+    let (slug, id) = contest(&s, &admin, "Vote+it", "votes", true).await;
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    let hook = licensed_model(&s, &ann, "Hook", "cc-by").await;
+    let shelf = licensed_model(&s, &bea, "Shelf", "cc-by").await;
+    for (who, m) in [(&ann, hook), (&bea, shelf)] {
+        s.post(
+            &format!("/contests/{slug}/enter"),
+            &format!("design={m}&agree=yes"),
+            Some(who),
+        )
+        .await;
+    }
+    let r = s.post(&format!("/contests/{slug}/vote/{hook}"), "", Some(&ann)).await;
+    assert!(r.body.contains("your own entry"), "{}", r.body);
+    let cal = model_maker(&s, "cal%40example.com", "cal").await;
+    s.post(&format!("/contests/{slug}/vote/{hook}"), "", Some(&cal)).await;
+    s.post(&format!("/contests/{slug}/vote/{shelf}"), "", Some(&cal)).await;
+    s.post(&format!("/contests/{slug}/vote/{shelf}"), "", Some(&ann)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_contest_votes").await,
+        2,
+        "one vote each, moved"
+    );
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_contest_votes WHERE design_id = {shelf}"
+        ))
+        .await,
+        2
+    );
+    // counts stay hidden while it's open
+    let open = s.get(&format!("/contests/{slug}"), Some(&cal)).await.body;
+    assert!(!open.contains("2 votes") && open.contains("Your vote"), "{open}");
+    // announcing waits for the close
+    let r = s
+        .post(
+            &format!("/admin/contests/{id}/announce"),
+            &format!("place_{shelf}=1"),
+            Some(&admin),
+        )
+        .await;
+    assert!(r.body.contains("once a contest has closed"), "{}", r.body);
+    close(&s, id).await;
+    assert!(
+        s.post(&format!("/contests/{slug}/vote/{hook}"), "", Some(&cal))
+            .await
+            .body
+            .contains("has closed")
+    );
+    let queue = s.get("/admin/contests", Some(&admin)).await.body;
+    assert!(
+        queue.contains("Announce the winners") && queue.contains("(2 votes)"),
+        "{queue}"
+    );
+    let r = s
+        .post(
+            &format!("/admin/contests/{id}/announce"),
+            &format!("place_{shelf}=1&place_{hook}=1"),
+            Some(&admin),
+        )
+        .await;
+    assert!(r.body.contains("Each place goes to one entry"), "{}", r.body);
+    let r = s
+        .post(
+            &format!("/admin/contests/{id}/announce"),
+            &format!("place_{shelf}=1&place_{hook}=2"),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(r.location(), "/admin/contests");
+    let done = s.get(&format!("/contests/{slug}"), None).await.body;
+    assert!(
+        done.contains("First place") && done.contains("Second place") && done.contains("2 votes"),
+        "{done}"
+    );
+    assert!(done.find("Shelf") < done.find("Hook"), "the winner first");
+    s.dump_page("contest-announced", &done, None).await;
+    assert!(s.get("/contests", None).await.body.contains("Winners announced"));
+    // in the data download, and gone with the data
+    let data = s.get("/account/data.json", Some(&cal)).await.body;
+    assert!(data.contains("\"contest_votes\""), "{data}");
+    s.post("/account/data/delete", "confirm=DELETE", Some(&bea)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_contest_entries").await, 1);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_contest_votes").await,
+        0,
+        "votes for Bea's entry go with it"
+    );
+}
+
+#[tokio::test]
+async fn contests_are_hidden_while_3d_is_closed() {
+    let Some(s) = site_3d(vec![1000], false).await else {
+        return;
+    };
+    let admin = model_maker(&s, "admin%40example.com", "admin").await;
+    let (slug, _) = contest(&s, &admin, "Early", "admins", true).await;
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert_eq!(s.get("/contests", Some(&ann)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.get(&format!("/contests/{slug}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/contests/{slug}"), Some(&admin)).await.status,
+        StatusCode::OK
+    );
+}
