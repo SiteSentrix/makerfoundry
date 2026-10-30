@@ -5940,3 +5940,298 @@ async fn imports_and_their_unpublished_drafts_go_after_30_days() {
         "only the published model's files are left: {left:?}"
     );
 }
+
+// ---------------------------------------------------------------- import review (MF-53)
+
+/// An import of three loose models (vase, lamp, hook) by a maker with a profile → cookie, import.
+async fn three_model_import(s: &Site) -> (String, i64) {
+    let cookie = s.join("maker%40example.com").await;
+    s.post("/account/maker", "name=Maker&handle=maker", Some(&cookie)).await;
+    let r = import_files(
+        s,
+        &cookie,
+        &[
+            ("vase.stl", stl_cube(5.0)),
+            ("vase_part2.stl", stl_cube(4.0)),
+            ("lamp.stl", stl_cube(6.0)),
+            ("hook.stl", stl_cube(3.0)),
+        ],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    (cookie, import_id(r.location()))
+}
+
+async fn file_id(s: &Site, path: &str) -> i64 {
+    sqlx::query_scalar("SELECT id FROM mf_import_files WHERE path = $1")
+        .bind(path)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
+async fn groups_of(s: &Site, iid: i64) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT group_name, path FROM mf_import_files WHERE import_id = $1 ORDER BY group_name, path")
+        .bind(iid)
+        .fetch_all(&s.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn files_move_between_groups_and_groups_merge_split_and_rename() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, iid) = three_model_import(&s).await;
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await.body;
+    s.dump_page("import-arrange", &review, Some(&cookie)).await;
+    let (vase2, hook, lamp) = (
+        file_id(&s, "vase_part2.stl").await,
+        file_id(&s, "hook.stl").await,
+        file_id(&s, "lamp.stl").await,
+    );
+    assert!(review.contains(&format!(r#"name="f{vase2}" value="vase""#)), "{review}");
+    // split vase_part2 out as its own model, merge hook into lamp, rename vase
+    let form = format!(
+        "f{vase2}=Vase+insert&f{hook}=lamp&f{lamp}=lamp&old0=hook&new0=hook&old1=lamp&new1=Desk+lamp&old2=vase&new2=Tall+vase"
+    );
+    let r = s.post(&format!("/3d/import/{iid}/arrange"), &form, Some(&cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        groups_of(&s, iid).await,
+        [
+            ("Desk lamp".to_string(), "hook.stl".to_string()),
+            ("Desk lamp".to_string(), "lamp.stl".to_string()),
+            ("Tall vase".to_string(), "vase.stl".to_string()),
+            ("Vase insert".to_string(), "vase_part2.stl".to_string()),
+        ]
+    );
+    // an empty name keeps the file where it was; someone else can't arrange it
+    s.post(
+        &format!("/3d/import/{iid}/arrange"),
+        &format!("f{vase2}=+"),
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(groups_of(&s, iid).await[3].0, "Vase insert");
+    let other = s.join("other%40example.com").await;
+    let r = s
+        .post(
+            &format!("/3d/import/{iid}/arrange"),
+            &format!("f{vase2}=mine"),
+            Some(&other),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    let mut titles: Vec<String> = sqlx::query_scalar("SELECT title FROM mf_designs")
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    titles.sort();
+    assert_eq!(titles, ["Desk lamp", "Tall vase", "Vase insert"]);
+}
+
+#[tokio::test]
+async fn bulk_publish_needs_the_confirmation_and_every_draft_its_details() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, iid) = three_model_import(&s).await;
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await.body;
+    assert!(
+        review.contains("I confirm I created these models or have the right to share them"),
+        "{review}"
+    );
+    // without a licence or category none can publish
+    let r = s
+        .post(&format!("/3d/import/{iid}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert!(r.body.contains("needs a category and a licence"), "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_designs WHERE status = 'published'")
+            .await,
+        0
+    );
+    // details for every draft at once, then one keeps its own
+    let lamp: i64 = sqlx::query_scalar("SELECT id FROM mf_designs WHERE title = 'lamp'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(
+        &format!("/designs/{lamp}/edit"),
+        "title=lamp&category=art-decor&licence=cc0&price=0",
+        Some(&cookie),
+    )
+    .await;
+    let r = s
+        .post(
+            &format!("/3d/import/{iid}/details"),
+            "category=household&licence=cc-by",
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_designs WHERE category = 'household' AND licence = 'cc-by'")
+            .await,
+        2
+    );
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_designs WHERE id = {lamp} AND category = 'art-decor'"
+        ))
+        .await,
+        1,
+        "kept its own"
+    );
+    let r = s
+        .post(
+            &format!("/3d/import/{iid}/details"),
+            "category=nope&licence=cc-by",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("Choose a category"), "{}", r.body);
+    let r = s
+        .post(
+            &format!("/3d/import/{iid}/details"),
+            "category=household&licence=gpl-9",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("Choose a licence"), "{}", r.body);
+    // the confirmation is needed
+    let r = s.post(&format!("/3d/import/{iid}/publish"), "", Some(&cookie)).await;
+    assert!(r.body.contains("Confirm"), "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_designs WHERE status = 'published'")
+            .await,
+        0
+    );
+    let r = s
+        .post(&format!("/3d/import/{iid}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_designs WHERE status = 'published'")
+            .await,
+        3
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_agreements WHERE document = 'seller-terms'")
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_origin_address_on_another_site_is_refused_and_a_good_one_shows() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = model_draft(&s, "maker%40example.com", "maker").await;
+    let form = s.get(&format!("/designs/{id}/edit"), Some(&cookie)).await.body;
+    assert!(
+        form.contains(r#"name="original_site""#) && form.contains("MakerWorld"),
+        "{form}"
+    );
+    let base = "title=Cube&category=household&licence=cc-by&price=0";
+    for (extra, why) in [
+        (
+            "&original_site=makerworld&original_url=https%3A%2F%2Fevil.example%2Fmodels%2F1",
+            "isn&#39;t on MakerWorld",
+        ),
+        (
+            "&original_site=printables&original_url=https%3A%2F%2Fmakerworld.com%2Fen%2Fmodels%2F1",
+            "isn&#39;t on Printables",
+        ),
+        (
+            "&original_site=thingiverse&original_url=http%3A%2F%2Fwww.thingiverse.com%2Fthing%3A1",
+            "isn&#39;t on Thingiverse",
+        ),
+        (
+            "&original_site=thingiverse&original_url=https%3A%2F%2Fthingiverse.com.evil.example%2Fthing%3A1",
+            "isn&#39;t on Thingiverse",
+        ),
+        ("&original_site=myspace&original_url=", "Choose where"),
+        (
+            "&original_url=https%3A%2F%2Fwww.printables.com%2Fmodel%2F1",
+            "Choose where",
+        ),
+        (
+            "&original_site=printables&original_url=https%3A%2F%2Fwww.printables.com%2Fmodel%2F1&original_date=2025-02-30",
+            "date",
+        ),
+        (
+            "&original_site=printables&original_url=https%3A%2F%2Fwww.printables.com%2Fmodel%2F1&original_date=2999-01-01",
+            "date",
+        ),
+    ] {
+        let r = s
+            .post(&format!("/designs/{id}/edit"), &format!("{base}{extra}"), Some(&cookie))
+            .await;
+        assert!(r.body.contains(why), "{extra}: {}", r.body);
+    }
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            &format!("{base}&original_site=makerworld&original_url=https%3A%2F%2Fmakerworld.com%2Fen%2Fmodels%2F12345&original_date=2025-03-12"),
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    s.post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    let page = s.get(&format!("/d/{id}/cube"), None).await.body;
+    assert!(
+        page.contains(r#"Originally published on <a href="https://makerworld.com/en/models/12345" rel="nofollow noopener">MakerWorld</a>, 12 March 2025"#),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn draft_to_publish_end_to_end() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, iid) = three_model_import(&s).await;
+    let hook = file_id(&s, "hook.stl").await;
+    s.post(
+        &format!("/3d/import/{iid}/arrange"),
+        &format!("f{hook}=lamp"),
+        Some(&cookie),
+    )
+    .await;
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    s.post(
+        &format!("/3d/import/{iid}/details"),
+        "category=household&licence=cc-by",
+        Some(&cookie),
+    )
+    .await;
+    let r = s
+        .post(&format!("/3d/import/{iid}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert_eq!(r.location(), format!("/3d/import/{iid}"));
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await.body;
+    assert!(
+        review.contains("2 models found") && review.contains("published"),
+        "{review}"
+    );
+    let lamp: i64 = sqlx::query_scalar("SELECT id FROM mf_designs WHERE title = 'lamp'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_model_files WHERE design_id = {lamp}"))
+            .await,
+        2
+    );
+    let page = s.get(&format!("/d/{lamp}/lamp"), None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("hook.stl") && page.body.contains("Household"));
+    s.dump_page("import-done", &review, Some(&cookie)).await;
+}

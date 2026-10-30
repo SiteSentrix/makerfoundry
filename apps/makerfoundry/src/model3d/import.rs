@@ -420,10 +420,17 @@ pub async fn review(State(state): State<AppState>, headers: HeaderMap, Path(id):
     if own_import(&pool, &user, id).await.is_none() {
         return not_found();
     }
-    private("Your import · MakerFoundry", &review_html(&pool, id, "").await, true)
+    private(
+        "Your import · MakerFoundry",
+        &review_html(&state, &pool, id, "").await,
+        true,
+    )
 }
 
-async fn review_html(pool: &PgPool, id: i64, note: &str) -> String {
+/// One of an import's drafts as its review shows it: id, title, status, category, licence.
+type DraftRow = (i64, String, String, Option<String>, Option<String>);
+
+async fn review_html(state: &AppState, pool: &PgPool, id: i64, note: &str) -> String {
     let rows: Vec<FileRow> = sqlx::query_as(
         "SELECT id, path, group_name, design_id, problem FROM mf_import_files WHERE import_id = $1 ORDER BY group_name, position",
     )
@@ -431,29 +438,105 @@ async fn review_html(pool: &PgPool, id: i64, note: &str) -> String {
     .fetch_all(pool)
     .await
     .unwrap_or_default();
-    let mut groups: Vec<(&str, Vec<&FileRow>)> = Vec::new();
-    for r in rows.iter().filter(|r| r.4.is_none()) {
-        match groups.iter_mut().find(|g| g.0 == r.2) {
+    // the groups still waiting to be drafts, which can be arranged
+    let mut waiting: Vec<(&str, Vec<&FileRow>)> = Vec::new();
+    for r in rows.iter().filter(|r| r.4.is_none() && r.3.is_none()) {
+        match waiting.iter_mut().find(|g| g.0 == r.2) {
             Some(g) => g.1.push(r),
-            None => groups.push((&r.2, vec![r])),
+            None => waiting.push((&r.2, vec![r])),
         }
     }
-    let waiting = groups.iter().filter(|g| g.1.iter().any(|r| r.3.is_none())).count();
-    let list: String = groups
-        .iter()
-        .map(|(name, files)| {
-            let draft = files.iter().find_map(|r| r.3);
-            let state = match draft {
-                Some(d) => format!(r#" · <a href="/designs/{d}">its draft</a>"#),
-                None => String::new(),
+    let arrange = if waiting.is_empty() {
+        String::new()
+    } else {
+        let groups: String = waiting
+            .iter()
+            .enumerate()
+            .map(|(n, (name, files))| {
+                let items: String = files
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            r#"<li><label>{path} <small>in</small> <input name="f{fid}" value="{name}" maxlength="100" aria-label="Model for {path}"></label></li>"#,
+                            fid = r.0,
+                            path = escape(&r.1),
+                            name = escape(name),
+                        )
+                    })
+                    .collect();
+                format!(
+                    r#"<li><input type="hidden" name="old{n}" value="{name}"><label>Model name <input name="new{n}" value="{name}" maxlength="100"></label><ul>{items}</ul></li>"#,
+                    name = escape(name),
+                )
+            })
+            .collect();
+        let count = waiting.len();
+        format!(
+            r#"<h2>Waiting to be drafts</h2>
+<p class="muted">Rename a model, or move a file by typing another model's name beside it (a new name makes it a model of its own).</p>
+<form method="post" action="/3d/import/{id}/arrange"><ol class="import-groups">{groups}</ol><button type="submit" class="secondary">Save the changes</button></form>
+<form method="post" action="/3d/import/{id}/drafts"><button type="submit">Make {count} draft{s}</button></form>"#,
+            s = if count == 1 { "" } else { "s" },
+        )
+    };
+    // the drafts already made
+    let drafts: Vec<DraftRow> = sqlx::query_as(
+        "SELECT id, title, status, category, licence FROM mf_designs WHERE import_id = $1 ORDER BY title, id",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let made = if drafts.is_empty() {
+        String::new()
+    } else {
+        let list: String = drafts
+            .iter()
+            .map(|(did, title, status, category, licence)| {
+                let state = match (status.as_str(), category, licence) {
+                    ("published", _, _) => "published".to_string(),
+                    ("draft", Some(_), Some(_)) => "ready to publish".to_string(),
+                    ("draft", _, _) => "needs a category and a licence".to_string(),
+                    (other, _, _) => other.to_string(),
+                };
+                format!(
+                    r#"<li><a href="/designs/{did}">{title}</a> <span class="muted">· {state}</span></li>"#,
+                    title = escape(title)
+                )
+            })
+            .collect();
+        let waiting_drafts = drafts.iter().filter(|d| d.2 == "draft").count();
+        let forms = if waiting_drafts == 0 {
+            String::new()
+        } else {
+            let categories: String = super::CATEGORIES
+                .iter()
+                .map(|c| format!(r#"<option value="{}">{}</option>"#, c.id, escape(c.name)))
+                .collect();
+            let licences: String = crate::licences::for_kind("model3d")
+                .iter()
+                .map(|l| format!(r#"<option value="{}">{}</option>"#, l.id, escape(l.name)))
+                .collect();
+            let seller_terms = if state.launched {
+                r#" I agree to the <a href="/seller-terms">Seller Terms</a>."#
+            } else {
+                ""
             };
-            let items: String = files.iter().map(|r| format!("<li>{}</li>", escape(&r.1))).collect();
             format!(
-                r#"<li><strong>{name}</strong>{state}<ul>{items}</ul></li>"#,
-                name = escape(name)
+                r#"<form method="post" action="/3d/import/{id}/details" class="form">
+<p class="muted">Give every draft that has none yet a category and a licence (each draft's own Edit details can change them, and add a description and tags).</p>
+<label>Category<select name="category" required><option value="">Choose one</option>{categories}</select></label>
+<label>Licence<select name="licence" required><option value="">Choose one</option>{licences}</select></label>
+<button type="submit" class="secondary">Give them to every draft</button>
+</form>
+<form method="post" action="/3d/import/{id}/publish" class="publish">
+<label class="choice"><input type="checkbox" name="confirm" value="yes"> <span>I confirm I created these models or have the right to share them, and they don't copy anyone else's logos, characters or designs.{seller_terms}</span></label>
+<button type="submit">Publish every ready draft</button>
+</form>"#
             )
-        })
-        .collect();
+        };
+        format!(r#"<h2>Drafts</h2><ul class="import-drafts">{list}</ul>{forms}"#)
+    };
     let left_out: String = rows
         .iter()
         .filter_map(|r| {
@@ -466,24 +549,211 @@ async fn review_html(pool: &PgPool, id: i64, note: &str) -> String {
     } else {
         format!(r#"<h2>Left out</h2><ul class="problems">{left_out}</ul>"#)
     };
-    let action = if waiting > 0 {
-        format!(
-            r#"<form method="post" action="/3d/import/{id}/drafts"><button type="submit">Make {waiting} draft{s}</button></form>"#,
-            s = if waiting == 1 { "" } else { "s" }
-        )
-    } else {
-        r#"<p><a href="/designs">See your drafts</a> to check each one's details and publish it.</p>"#.to_string()
-    };
     let note = if note.is_empty() {
         String::new()
     } else {
         format!(r#"<p class="problem" role="alert">{}</p>"#, escape(note))
     };
-    let count = groups.len();
+    let count = waiting.len() + drafts.len();
     format!(
-        r#"<section class="design"><h1>Your import</h1>{note}<p class="lead">{count} model{s} found.</p><ol class="import-groups">{list}</ol>{left_out}{action}<p><a href="/3d/import">Import more</a></p></section>"#,
+        r#"<section class="design"><h1>Your import</h1>{note}<p class="lead">{count} model{s} found.</p>{arrange}{made}{left_out}<p><a href="/3d/import">Import more</a></p></section>"#,
         s = if count == 1 { "" } else { "s" },
     )
+}
+
+/// A model's name as typed: spaces tidied, at most 100 characters.
+fn tidy_name(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(100)
+        .collect()
+}
+
+/// Moves files between an import's waiting groups and renames groups: `f<file>` gives a file's
+/// model (another's name merges it in, a new name splits it out), and `old<n>`/`new<n>` rename a
+/// model, for every file that ends up in it.
+pub async fn arrange(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    axum::Form(form): axum::Form<Vec<(String, String)>>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (user, pool) = match importer(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    if own_import(&pool, &user, id).await.is_none() {
+        return not_found();
+    }
+    let value = |key: &str| form.iter().find(|(k, _)| k == key).map(|(_, v)| tidy_name(v));
+    let renames: Vec<(String, String)> = (0..form.len())
+        .map_while(|n| Some((value(&format!("old{n}"))?, value(&format!("new{n}"))?)))
+        .filter(|(old, new)| !new.is_empty() && old != new)
+        .collect();
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, group_name FROM mf_import_files WHERE import_id = $1 AND design_id IS NULL AND problem IS NULL",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    for (fid, current) in rows {
+        let target = value(&format!("f{fid}"))
+            .filter(|t| !t.is_empty())
+            .unwrap_or(current.clone());
+        let target = renames
+            .iter()
+            .find(|(old, _)| *old == target)
+            .map_or(target.clone(), |(_, new)| new.clone());
+        if target != current {
+            let _ = sqlx::query("UPDATE mf_import_files SET group_name = $2 WHERE id = $1")
+                .bind(fid)
+                .bind(&target)
+                .execute(&pool)
+                .await;
+        }
+    }
+    Redirect::to(&format!("/3d/import/{id}")).into_response()
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub struct DetailsForm {
+    category: String,
+    licence: String,
+}
+
+/// Gives every draft of an import that has none yet this category and licence.
+pub async fn details(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    axum::Form(f): axum::Form<DetailsForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (user, pool) = match importer(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    if own_import(&pool, &user, id).await.is_none() {
+        return not_found();
+    }
+    let problem = if super::category(&f.category).is_none() {
+        Some("Choose a category.")
+    } else if crate::licences::find_for("model3d", &f.licence).is_none() {
+        Some("Choose a licence.")
+    } else {
+        None
+    };
+    if let Some(p) = problem {
+        return private(
+            "Your import · MakerFoundry",
+            &review_html(&state, &pool, id, p).await,
+            true,
+        );
+    }
+    if let Err(e) = sqlx::query(
+        "UPDATE mf_designs SET category = coalesce(category, $3), licence = coalesce(licence, $4)
+         WHERE import_id = $1 AND account_id = $2 AND status = 'draft'",
+    )
+    .bind(id)
+    .bind(user.account_id)
+    .bind(&f.category)
+    .bind(&f.licence)
+    .execute(&pool)
+    .await
+    {
+        eprintln!("import {id}: details: {e}");
+    }
+    Redirect::to(&format!("/3d/import/{id}")).into_response()
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub struct PublishForm {
+    confirm: String,
+}
+
+/// Publishes every draft of an import that has its title, category and licence, once the creator
+/// confirms they made them or may share them; the others are named with what they still need.
+pub async fn publish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    axum::Form(f): axum::Form<PublishForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (user, pool) = match importer(&state, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    if own_import(&pool, &user, id).await.is_none() {
+        return not_found();
+    }
+    let again = |note: String| {
+        let (state, pool) = (state.clone(), pool.clone());
+        async move {
+            private(
+                "Your import · MakerFoundry",
+                &review_html(&state, &pool, id, &note).await,
+                true,
+            )
+        }
+    };
+    if f.confirm != "yes" {
+        return again("Confirm that you created these models or have the right to share them.".into()).await;
+    }
+    if !state.publishers.allows(user.account_id) {
+        return again("Publishing opens when MakerFoundry launches. Your drafts stay saved.".into()).await;
+    }
+    if crate::makers::profile(&pool, user.account_id).await.is_none() {
+        return again("Set up your maker profile first: it's the name people see on your models.".into()).await;
+    }
+    let drafts: Vec<(i64, String, bool, i64)> = sqlx::query_as(
+        "SELECT id, title, (title <> '' AND category IS NOT NULL AND licence IS NOT NULL), price_cents
+         FROM mf_designs WHERE import_id = $1 AND account_id = $2 AND status = 'draft' ORDER BY title",
+    )
+    .bind(id)
+    .bind(user.account_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let can_sell = crate::selling::can_sell(&state, &pool, user.account_id).await;
+    let mut waiting = Vec::new();
+    let mut published = 0;
+    for (did, title, ready, price) in drafts {
+        if !ready {
+            waiting.push(format!("{title} needs a category and a licence"));
+        } else if price > 0 && !can_sell {
+            waiting.push(format!("{title} has a price: finish setting up selling first"));
+        } else if sqlx::query(
+            "UPDATE mf_designs SET status = 'published', published_at = coalesce(published_at, now()) WHERE id = $1 AND status = 'draft'",
+        )
+        .bind(did)
+        .execute(&pool)
+        .await
+        .is_ok()
+        {
+            published += 1;
+        }
+    }
+    if published > 0 && state.launched {
+        crate::legal::agree(&pool, user.account_id, &[&crate::legal::SELLER_TERMS]).await;
+    }
+    if waiting.is_empty() {
+        Redirect::to(&format!("/3d/import/{id}")).into_response()
+    } else {
+        again(format!("Not published yet: {}.", waiting.join("; "))).await
+    }
 }
 
 /// Makes each waiting group of an import into a draft: its files fetched and checked one by one
@@ -539,7 +809,11 @@ pub async fn drafts(State(state): State<AppState>, headers: HeaderMap, Path(id):
     if note.is_empty() {
         Redirect::to(&format!("/3d/import/{id}")).into_response()
     } else {
-        private("Your import · MakerFoundry", &review_html(&pool, id, &note).await, true)
+        private(
+            "Your import · MakerFoundry",
+            &review_html(&state, &pool, id, &note).await,
+            true,
+        )
     }
 }
 
@@ -617,7 +891,9 @@ async fn make_draft(
         ));
     }
     let design = upload::add(state, pool, account, model_files, images).await?;
-    let _ = sqlx::query("UPDATE mf_designs SET import_id = $2, title = $3 WHERE id = $1")
+    let _ = sqlx::query(
+        "UPDATE mf_designs SET import_id = $2, title = $3, search = setweight(to_tsvector('english', $3), 'A') WHERE id = $1",
+    )
         .bind(design)
         .bind(import)
         .bind(name.chars().take(crate::listings::MAX_TITLE).collect::<String>())

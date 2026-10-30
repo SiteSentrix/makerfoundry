@@ -122,6 +122,12 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 }
 .cards .thumb img { width: 100%; height: 100%; object-fit: cover; }
 .photos { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); margin: 0 0 1.5rem; max-width: 40rem; }
+.import-groups { padding-left: 1.25rem; margin: 0 0 1rem; }
+.import-groups > li { margin: 0 0 1rem; }
+.import-groups ul { list-style: none; padding: 0; margin: .5rem 0 0; display: grid; gap: .375rem; }
+.import-groups label { display: flex; flex-wrap: wrap; gap: .375rem; align-items: center; overflow-wrap: anywhere; }
+.import-groups input { font: inherit; padding: .35rem .55rem; border: 1px solid var(--line); border-radius: .375rem; background: var(--card); color: var(--fg); max-width: 100%; }
+.import-drafts, .problems { padding-left: 1.25rem; overflow-wrap: anywhere; }
 .model-picture { margin: 0 0 1.5rem; }
 .model-picture img { display: block; width: 100%; max-width: 36rem; height: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
 .downloads { margin: 0 0 1.5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }

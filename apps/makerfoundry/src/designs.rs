@@ -386,12 +386,18 @@ pub struct DesignRow {
     /// A 3D model's category (`model3d::CATEGORIES`) and its files as one ZIP, once made (MF-42).
     pub category: Option<String>,
     pub zip_key: Option<String>,
+    /// Where an imported model was first published (MF-53, `model3d::origin`): site, the
+    /// creator's page there, and the date as `YYYY-MM-DD`.
+    pub original_site: Option<String>,
+    pub original_url: Option<String>,
+    pub original_date: Option<String>,
 }
 
 pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads,
-                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm, convert, category, zip_key
+                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm, convert, category, zip_key,
+                original_site, original_url, to_char(original_published_at, 'YYYY-MM-DD') AS original_date
          FROM mf_designs WHERE id = $1",
     )
     .bind(id)
@@ -420,6 +426,9 @@ pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::E
             convert: r.try_get("convert")?,
             category: r.try_get("category")?,
             zip_key: r.try_get("zip_key")?,
+            original_site: r.try_get("original_site")?,
+            original_url: r.try_get("original_url")?,
+            original_date: r.try_get("original_date")?,
         })
     })
     .transpose()

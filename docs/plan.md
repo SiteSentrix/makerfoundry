@@ -224,6 +224,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   and what was left out; "Make drafts" makes each group a draft titled by its name, a file that
   fails its checks reported and the rest kept. Pending files and unpublished imported drafts go
   after 30 days (the 10-minute sweep), and with the account's data.
+- **MF-53 import review, built 2026-10-30** (#21): before drafts are made, the review page lets
+  the creator rename models and move files between them (typing another model's name merges,
+  a new name splits a file out; plain forms). Once drafts exist it lists them (ready, or what
+  each needs), gives every draft without one a category and a licence at once, and publishes
+  every ready draft after the creator ticks "I confirm I created these models or have the right
+  to share them" (and the Seller Terms once launched); drafts still missing something are named.
+  A model's details take "Originally published on" (`model3d/origin.rs`): MakerWorld,
+  Printables or Thingiverse, the creator's own page there (https, on that site's own host, never
+  fetched) and the date (from 2000 to today), shown on its page as "Originally published on
+  MakerWorld, 12 March 2025" with a `nofollow` link.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

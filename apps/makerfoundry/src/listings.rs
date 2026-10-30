@@ -607,8 +607,16 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         }
         _ => String::new(),
     };
-    let intro =
-        format!(r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{buy}{open}{save}"#);
+    let origin = match d.original_site.as_deref() {
+        Some(site) => format!(
+            r#"<p class="muted">{}</p>"#,
+            crate::model3d::origin::line(site, d.original_url.as_deref(), d.original_date.as_deref())
+        ),
+        None => String::new(),
+    };
+    let intro = format!(
+        r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{origin}{buy}{open}{save}"#
+    );
     let photos = designs::photos_html(pool, id).await;
     let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
     let first_format = d
@@ -929,8 +937,9 @@ struct Details<'a> {
     thickness: &'a str,
     /// An embroidery design: offered converted to other formats.
     convert: bool,
-    /// A 3D model's category.
+    /// A 3D model's category, and where it was first published (`model3d::origin`).
     category: &'a str,
+    original: [&'a str; 3],
 }
 
 fn details_form(id: i64, f: &Details, problem: &str) -> String {
@@ -946,6 +955,7 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
         thickness,
         convert,
         category,
+        original,
     } = *f;
     let made_for = if kind == "model3d" {
         let options: String = crate::model3d::CATEGORIES
@@ -959,8 +969,24 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
                 )
             })
             .collect();
+        let sites: String = crate::model3d::origin::SITES
+            .iter()
+            .map(|(id, name, _)| {
+                format!(
+                    r#"<option value="{id}"{selected}>{name}</option>"#,
+                    selected = if *id == original[0] { " selected" } else { "" }
+                )
+            })
+            .collect();
         format!(
-            r#"<label>Category<select name="category" required><option value="">Choose one</option>{options}</select></label>"#
+            r#"<label>Category<select name="category" required><option value="">Choose one</option>{options}</select></label>
+<fieldset><legend>Originally published on <small>(if you shared it elsewhere first: optional)</small></legend>
+<label>Site<select name="original_site"><option value="">Nowhere else</option>{sites}</select></label>
+<label>Your page there <small>(its address)</small><input name="original_url" type="url" value="{url}" maxlength="300"></label>
+<label>Date first published <small>(YYYY-MM-DD)</small><input name="original_date" value="{date}" maxlength="10" placeholder="2025-03-12"></label>
+</fieldset>"#,
+            url = escape(original[1]),
+            date = escape(original[2]),
         )
     } else if kind == "laser" {
         let options: String = MATERIALS
@@ -1077,6 +1103,11 @@ pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(i
                 thickness: &thickness,
                 convert: d.convert,
                 category: d.category.as_deref().unwrap_or(""),
+                original: [
+                    d.original_site.as_deref().unwrap_or(""),
+                    d.original_url.as_deref().unwrap_or(""),
+                    d.original_date.as_deref().unwrap_or(""),
+                ],
             },
             "",
         ),
@@ -1097,6 +1128,9 @@ pub struct DetailsForm {
     convert: String,
     convert_shown: String,
     category: String,
+    original_site: String,
+    original_url: String,
+    original_date: String,
 }
 
 pub async fn save(
@@ -1133,6 +1167,7 @@ pub async fn save(
                     thickness: &f.thickness,
                     convert: f.convert == "yes",
                     category: &f.category,
+                    original: [&f.original_site, &f.original_url, &f.original_date],
                 },
                 why,
             ),
@@ -1169,17 +1204,23 @@ pub async fn save(
     } else {
         (None, None)
     };
-    let category = if d.kind == "model3d" {
-        match crate::model3d::category(&f.category) {
-            Some(c) => Some(c.id),
+    let (category, origin) = if d.kind == "model3d" {
+        let category = match crate::model3d::category(&f.category) {
+            Some(c) => c.id,
             None => return again("Choose a category."),
+        };
+        let today = crate::model3d::origin::today();
+        match crate::model3d::origin::check(&f.original_site, &f.original_url, &f.original_date, &today) {
+            Ok(origin) => (Some(category), origin),
+            Err(why) => return again(&why),
         }
     } else {
-        None
+        (None, None)
     };
     let saved = sqlx::query(
         "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5, price_cents = $7,
              material = $8, thickness_mm = $9, convert = $10, category = $11,
+             original_site = $12, original_url = $13, original_published_at = $14::date,
              search = setweight(to_tsvector('english', $2), 'A')
                    || setweight(to_tsvector('english', array_to_string($4::text[], ' ')), 'B')
                    || setweight(to_tsvector('english', $3), 'C')
@@ -1200,6 +1241,9 @@ pub async fn save(
         d.convert
     })
     .bind(category)
+    .bind(origin.as_ref().map(|o| o.site))
+    .bind(origin.as_ref().and_then(|o| o.url.clone()))
+    .bind(origin.as_ref().and_then(|o| o.date.clone()))
     .execute(&pool)
     .await;
     match saved {
