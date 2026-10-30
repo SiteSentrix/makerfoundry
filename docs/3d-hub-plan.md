@@ -137,7 +137,7 @@ property-tested with random and damaged input, as the embroidery and laser reade
   with only the parts we know: the model XML, `[Content_Types].xml`, relationships, thumbnails
   (PNG/JPEG, re-encoded) and the slicers' settings files. Anything else (scripts, executables,
   unknown parts) is dropped, and the rebuilt file is what people download. Sliced G-code inside
-  a 3MF is dropped too unless the owner decides otherwise (Decisions).
+  a 3MF is dropped too (the owner's decision, 2026-10-30, for now: printers run it).
 - **STEP:** checked to be ISO 10303-21 text (`ISO-10303-21;` header) and size-capped; offered as a
   download, not previewed (P3).
 - **Images:** the existing photo cleaner.
@@ -187,23 +187,44 @@ files from our creators before each parser is written):
 
 ## 6. Licences and remixes
 
-The licence picker: CC BY, CC BY-SA, CC BY-NC, CC BY-NC-SA, CC BY-ND, CC BY-NC-ND (4.0), CC0
-(public domain dedication) and All rights reserved. The 3D section uses these; embroidery and
-laser keep their own three (personal, small business, commercial). More licences (GPL and others)
-are the owner's call.
+**The licence picker** (the owner's decision, 2026-10-30: licences like Thingiverse's and
+Printables'). The standard public licences are offered by name and linked to their official
+texts, never retyped; Printables' own "Standard Digital File License" is its text, so its place is
+taken by MakerFoundry's own licences, already in the approved Terms (§ 3).
 
-A remix links one or more parents. Publishing a remix checks every parent (Creative Commons FAQ;
-the rules to be confirmed by the owner, ideally with a lawyer):
+| Group | Licences |
+|---|---|
+| Creative Commons 4.0 ([creativecommons.org](https://creativecommons.org/licenses/)) | CC BY, CC BY-SA, CC BY-NC, CC BY-NC-SA, CC BY-ND, CC BY-NC-ND |
+| Public domain | CC0 1.0 |
+| GNU ([gnu.org](https://www.gnu.org/licenses/)) | GPL v2 or later, GPL v3 or later, LGPL v2.1 or later, LGPL v3 or later |
+| Permissive software licences | BSD 3-Clause ([opensource.org](https://opensource.org/license/bsd-3-clause)), Apache 2.0 ([apache.org](https://www.apache.org/licenses/LICENSE-2.0)), MIT ([opensource.org](https://opensource.org/license/mit)) |
+| Open hardware ([CERN OHL v2](https://ohwr.org/cern_ohl_s_v2.txt)) | CERN-OHL-S, CERN-OHL-W, CERN-OHL-P |
+| MakerFoundry's own (as for embroidery and laser designs) | Personal use, Small business (up to 200 items), Commercial |
+| Reserved | All rights reserved |
+
+Printables also lists an "Open Community License"; it's left out until its text and author are
+checked. Embroidery and laser designs keep their three; paid 3D models (if ever sold) would use
+MakerFoundry's own three, as paid designs do.
+
+A remix links one or more parents. Publishing a remix checks every parent (the licences' own
+terms and the Creative Commons FAQ; the rules to be confirmed by the owner, ideally with a
+lawyer):
 
 | Parent's licence | A remix may be published as |
 |---|---|
-| CC0 | any licence |
-| CC BY | any licence (attribution shown) |
+| CC0, MIT, BSD 3-Clause, Apache 2.0, CERN-OHL-P | any licence (credit shown) |
+| CC BY | any licence (credit shown) |
 | CC BY-SA | CC BY-SA only |
 | CC BY-NC | CC BY-NC or CC BY-NC-SA |
 | CC BY-NC-SA | CC BY-NC-SA only |
 | CC BY-ND, CC BY-NC-ND | not at all (adaptations can't be shared) |
-| All rights reserved | not at all, unless the remixer made the parent |
+| GPL v2 or later | GPL v2 or later, or GPL v3 or later |
+| GPL v3 or later | GPL v3 or later |
+| LGPL v2.1 or later | LGPL v2.1 or later, LGPL v3 or later, or a GPL |
+| LGPL v3 or later | LGPL v3 or later, or GPL v3 or later |
+| CERN-OHL-S | CERN-OHL-S |
+| CERN-OHL-W | CERN-OHL-W or CERN-OHL-S |
+| Personal use, Small business, Commercial, All rights reserved | not at all, unless the remixer made the parent |
 
 With several parents, the remix must satisfy every one; if no licence does, it can't be published.
 A creator may always remix their own models. The model page shows its parents (creator, licence,
@@ -326,9 +347,10 @@ PrusaSlicer 3MF, broken 3MF, oversized uploads, and draft to publish.
 
 1. **The viewer's JavaScript:** our own WebGL viewer (recommended), three.js, or images only.
 2. **Size limits** (section 3) and the storage they cost.
-3. **Sliced G-code inside 3MF files:** dropped (recommended: printers run it) or kept.
+3. ~~**Sliced G-code inside 3MF files**~~: **decided 2026-10-30: dropped** (printers run it).
 4. **ClamAV** scanning now (a Railway service, its memory cost) or later (P2).
-5. **Licences** beyond CC and All rights reserved (GPL, BSD, CERN OHL, a commercial licence).
+5. ~~**Licences**~~: **decided 2026-10-30: like Thingiverse's and Printables'** (§ 6). Still open:
+   the remix rules' confirmation, ideally by a lawyer, and the section's name and categories (11).
 6. **Ownership of imported files:** the creator's confirmation and the takedown process (P1 as
    planned), or also a check such as a code placed on their profile there (MakerFoundry would then
    fetch that one page, which those sites' terms may not allow).
