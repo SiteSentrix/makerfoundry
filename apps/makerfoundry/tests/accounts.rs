@@ -4999,13 +4999,16 @@ impl Site {
         };
         let mut html = html.replace("/static/site.css", "site.css");
         std::fs::write(format!("{dir}/site.css"), include_str!("../static/site.css")).unwrap();
-        let sources: Vec<String> = html
-            .split(r#"src=""#)
-            .skip(1)
-            .filter_map(|t| t.split('"').next())
-            .filter(|u| u.starts_with('/'))
-            .map(String::from)
-            .collect();
+        let mut sources: Vec<String> = Vec::new();
+        for attr in [r#"src=""#, r#"data-mesh=""#] {
+            sources.extend(
+                html.split(attr)
+                    .skip(1)
+                    .filter_map(|t| t.split('"').next())
+                    .filter(|u| u.starts_with('/'))
+                    .map(String::from),
+            );
+        }
         for (i, src) in sources.iter().enumerate() {
             let mut req = Request::get(src.replace("&amp;", "&")).header(header::HOST, HOST);
             if let Some(c) = cookie {
@@ -5018,9 +5021,12 @@ impl Site {
                 .await
                 .unwrap();
             let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-            let file = format!("{name}-{i}.img");
+            let ext = if src.ends_with(".js") { "js" } else { "img" };
+            let file = format!("{name}-{i}.{ext}");
             std::fs::write(format!("{dir}/{file}"), &bytes).unwrap();
-            html = html.replace(&format!(r#"src="{src}""#), &format!(r#"src="{file}""#));
+            html = html
+                .replace(&format!(r#"src="{src}""#), &format!(r#"src="{file}""#))
+                .replace(&format!(r#"data-mesh="{src}""#), &format!(r#"data-mesh="{file}""#));
         }
         std::fs::write(format!("{dir}/{name}.html"), html).unwrap();
     }
@@ -7744,4 +7750,109 @@ async fn none_when_the_maker_has_no_other_kinds() {
     licensed_model(&s, &ann, "Wheel", "cc-by").await;
     let page = s.get(&format!("/d/{gear}/gear"), None).await.body;
     assert!(!page.contains("Also by this maker"), "{page}");
+}
+
+// ---------------------------------------------------------------- the 3D viewer (MF-46)
+
+#[tokio::test]
+async fn the_page_works_with_scripts_off() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, id) = published_model(&s, "maker%40example.com", "maker").await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 ORDER BY position LIMIT 1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get(&format!("/d/{id}/cube"), None).await.body;
+    // the server-drawn picture and the downloads are there; the viewer waits, hidden, for its script
+    assert!(
+        page.contains(&format!(r#"src="/3d/{id}/files/{fid}/hero""#)) && page.contains("Download all (ZIP)"),
+        "{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            r#"<div class="viewer" hidden data-mesh="/3d/{id}/files/{fid}/mesh">"#
+        )),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<script src="/static/viewer.js" defer></script>"#),
+        "{page}"
+    );
+    s.dump_page("viewer", &page, None).await;
+    let js = s.get("/static/viewer.js", None).await;
+    assert_eq!(js.status, StatusCode::OK);
+    assert!(
+        js.headers[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/javascript")
+    );
+}
+
+#[tokio::test]
+async fn the_mesh_endpoint_serves_only_published_or_own() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = model_draft(&s, "maker%40example.com", "maker").await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND role = 'mesh'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let path = format!("/3d/{id}/files/{fid}/mesh");
+    assert_eq!(s.get(&path, None).await.status, StatusCode::NOT_FOUND);
+    let other = s.join("other%40example.com").await;
+    assert_eq!(s.get(&path, Some(&other)).await.status, StatusCode::NOT_FOUND);
+    let own = s.get(&path, Some(&cookie)).await;
+    assert_eq!(own.status, StatusCode::OK);
+    assert_eq!(own.headers[header::CONTENT_TYPE], "application/octet-stream");
+    assert!(own.body.starts_with("MFM1"));
+    s.post(
+        &format!("/designs/{id}/edit"),
+        "title=Cube&category=household&licence=cc0&price=0",
+        Some(&cookie),
+    )
+    .await;
+    s.post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert_eq!(s.get(&path, None).await.status, StatusCode::OK);
+    // a STEP file has no mesh
+    let step: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND role = 'source'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(&format!("/3d/{id}/files/{step}/mesh"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn csp_on_other_pages_is_unchanged() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, id) = published_model(&s, "maker%40example.com", "maker").await;
+    let csp = |a: &Answer| a.headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap().to_string();
+    let model = csp(&s.get(&format!("/d/{id}/cube"), None).await);
+    assert!(
+        model.contains("script-src 'self'") && model.contains("connect-src 'self'"),
+        "{model}"
+    );
+    assert!(!model.contains("unsafe"), "{model}");
+    for path in ["/", "/3d", "/browse", "/terms"] {
+        let other = csp(&s.get(path, None).await);
+        assert!(
+            !other.contains("script-src") && !other.contains("connect-src"),
+            "{path}: {other}"
+        );
+    }
+    let maker = s.join("ann%40example.com").await;
+    let rose = published(&s, &maker, "ann", "Rose").await;
+    assert!(!csp(&s.get(&format!("/d/{rose}/rose"), None).await).contains("script-src"));
 }

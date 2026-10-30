@@ -142,6 +142,8 @@ form.inline { display: inline; }
 .showcase-item textarea { width: 100%; }
 .inline-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .inline-form input { flex: 1; min-width: 10rem; }
+.viewer { margin: 0 0 1.5rem; max-width: 36rem; }
+.viewer canvas { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); touch-action: none; cursor: grab; }
 .model-picture { margin: 0 0 1.5rem; }
 .model-picture img { display: block; width: 100%; max-width: 36rem; height: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
 .downloads { margin: 0 0 1.5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }

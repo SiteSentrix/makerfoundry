@@ -754,13 +754,20 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
                 image: image.as_deref(),
             };
             let shared = (d.status == "published").then_some(&preview);
-            Html(crate::pages::page_with(
+            let mut response = Html(crate::pages::page_with(
                 &format!("{} · MakerFoundry", escape(&title)),
                 &html,
                 signed_in,
                 shared,
             ))
-            .into_response()
+            .into_response();
+            if d.kind == "model3d" {
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static(crate::MODEL_PAGE_SECURITY_POLICY),
+                );
+            }
+            response
         }
         None => not_found(signed_in),
     }

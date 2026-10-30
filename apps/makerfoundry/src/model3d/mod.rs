@@ -15,6 +15,7 @@ pub mod showcase;
 pub mod stl;
 pub mod threemf;
 pub mod upload;
+pub mod viewer;
 pub mod zip;
 
 use axum::extract::State;

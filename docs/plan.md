@@ -308,6 +308,15 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
 - **MF-57 Also by this maker, built 2026-10-30** (#25): a 3D model's page lists a few of its
   maker's published embroidery and laser designs, with a link to all their work; nothing when
   they have none. No "Get this printed" button (the owner's decision: off for now).
+- **MF-46 the 3D viewer, built 2026-10-30** (#14): our own small WebGL viewer
+  (`static/viewer.js`, plain JavaScript with no libraries, MIT OR Apache-2.0; the owner agreed to
+  it, 2026-10-30). At upload the server writes each mesh's viewer copy (`model3d/viewer.rs`: at
+  most 100,000 triangles, 16-bit quantized, `mesh_key`, migration 0032), served under the same
+  rules as the file's pictures. A model's page keeps its server-drawn picture; the script, when
+  it runs, swaps in a view you can turn (drag) and zoom (scroll or pinch). Only model pages allow
+  `script-src 'self'` and `connect-src 'self'`; every other page keeps the old policy (tested).
+  Checked in Chromium: it draws, turns, fits a phone, no console errors. Models uploaded before
+  this keep their pictures only.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

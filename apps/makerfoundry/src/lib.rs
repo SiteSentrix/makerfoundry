@@ -92,6 +92,13 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; style-src 'self'; img
 const WEBHOOK_LIMIT_BYTES: usize = 1024 * 1024;
 
 const STYLESHEET: &str = include_str!("../static/site.css");
+const VIEWER_SCRIPT: &str = include_str!("../static/viewer.js");
+
+/// A 3D model's page also runs our viewer script and lets it fetch the model's mesh (MF-46; the
+/// owner agreed to its JavaScript, 2026-10-30). Every other page keeps `CONTENT_SECURITY_POLICY`.
+pub const MODEL_PAGE_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; \
+     img-src 'self' data:; base-uri 'none'; form-action 'self' https://checkout.stripe.com https://connect.stripe.com; \
+     frame-ancestors 'none'";
 
 /// What every request may use: the account service, and the database when there is one (without
 /// `DATABASE_URL` the site runs, but nobody can sign in).
@@ -130,6 +137,7 @@ pub fn app(state: AppState) -> Router {
         .route("/", get(home))
         .route("/health", get(health))
         .route("/static/site.css", get(stylesheet))
+        .route("/static/viewer.js", get(viewer_script))
         .route("/favicon.svg", get(favicon))
         .route("/robots.txt", get(robots))
         .route("/sitemap.xml", get(sitemap))
@@ -320,6 +328,18 @@ async fn health() -> Response {
             Some(c) => format!("ok {VERSION} {c}\n"),
             None => format!("ok {VERSION}\n"),
         },
+    )
+        .into_response()
+}
+
+/// The 3D viewer's script (MF-46), the only script MakerFoundry serves; only model pages load it.
+async fn viewer_script() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        VIEWER_SCRIPT,
     )
         .into_response()
 }

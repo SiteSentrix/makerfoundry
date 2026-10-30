@@ -182,6 +182,8 @@ struct Prepared {
     size_mm: Option<[f64; 3]>,
     hero: Option<(Vec<u8>, &'static str)>,
     views: Vec<Vec<u8>>,
+    /// What the viewer draws (`viewer`), for meshes and projects.
+    viewer: Option<Vec<u8>>,
     dropped: Vec<String>,
     profile: Option<super::profile::Profile>,
 }
@@ -189,6 +191,10 @@ struct Prepared {
 fn prepare(name: String, bytes: &[u8]) -> Result<Prepared, String> {
     let checked = files::check(&name, bytes)?;
     let drawn = matches!(checked.role, Role::Mesh | Role::Project);
+    let viewer = match (&checked.mesh, drawn) {
+        (Some(mesh), true) => Some(super::viewer::encode(mesh)),
+        _ => None,
+    };
     let (hero, views) = match (&checked.mesh, drawn) {
         (Some(mesh), true) => {
             let hero = render::hero(Some(mesh), &checked.pictures, HERO_SIDE);
@@ -209,6 +215,7 @@ fn prepare(name: String, bytes: &[u8]) -> Result<Prepared, String> {
         bytes: checked.bytes,
         hero,
         views,
+        viewer,
         dropped: checked.dropped,
         profile: checked.profile,
     })
@@ -304,6 +311,7 @@ struct StoredFile {
     size_mm: Option<Vec<f64>>,
     thumb: Option<(String, &'static str)>,
     views: Vec<String>,
+    mesh: Option<String>,
     dropped: Vec<String>,
     profile: Option<super::profile::Profile>,
 }
@@ -336,7 +344,17 @@ async fn store_files(
             stored.push(k.clone());
             views.push(k);
         }
+        let mesh = match p.viewer {
+            Some(bytes) => {
+                let k = new_key("mesh")?;
+                storage.put(&k, bytes, "application/octet-stream").await?;
+                stored.push(k.clone());
+                Some(k)
+            }
+            None => None,
+        };
         rows.push(StoredFile {
+            mesh,
             name: p.name,
             format: p.format,
             role: p.role,
@@ -362,8 +380,8 @@ async fn note_files(
 ) -> Result<(), String> {
     for (n, r) in rows.iter().enumerate() {
         let file_id: i64 = sqlx::query_scalar(
-            "INSERT INTO mf_model_files (design_id, role, format, file_name, file_key, file_bytes, triangles, size_mm, thumb_key, thumb_type, view_keys, dropped, position)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
+            "INSERT INTO mf_model_files (design_id, role, format, file_name, file_key, file_bytes, triangles, size_mm, thumb_key, thumb_type, view_keys, dropped, position, mesh_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
         )
         .bind(id)
         .bind(r.role.as_str())
@@ -378,6 +396,7 @@ async fn note_files(
         .bind(&r.views)
         .bind(&r.dropped)
         .bind(start.saturating_add(i32::try_from(n).unwrap_or(i32::MAX)))
+        .bind(&r.mesh)
         .fetch_one(&mut **tx)
         .await
         .map_err(|e| e.to_string())?;
@@ -505,7 +524,8 @@ pub async fn keys(pool: &PgPool, designs: &[i64]) -> Vec<String> {
         "SELECT zip_key FROM mf_designs WHERE id = ANY($1) AND zip_key IS NOT NULL
          UNION ALL SELECT file_key FROM mf_model_files WHERE design_id = ANY($1)
          UNION ALL SELECT thumb_key FROM mf_model_files WHERE design_id = ANY($1) AND thumb_key IS NOT NULL
-         UNION ALL SELECT unnest(view_keys) FROM mf_model_files WHERE design_id = ANY($1)",
+         UNION ALL SELECT unnest(view_keys) FROM mf_model_files WHERE design_id = ANY($1)
+         UNION ALL SELECT mesh_key FROM mf_model_files WHERE design_id = ANY($1) AND mesh_key IS NOT NULL",
     )
     .bind(designs)
     .fetch_all(pool)
@@ -700,6 +720,12 @@ pub async fn manage_page(
     )
 }
 
+/// A model file's role, stored key, picture, views and viewer mesh.
+type FileKeys = (String, String, Option<String>, Vec<String>, Option<String>);
+
+/// A model file's stored pictures: main picture and its type, views, and the viewer's mesh.
+type Pictures = (Option<String>, Option<String>, Vec<String>, Option<String>);
+
 /// A model file's picture (`hero`) or view (`front`, `side`, `top`): anyone's once the model is
 /// published, only its maker's (and admins') before.
 pub async fn picture(
@@ -718,19 +744,21 @@ pub async fn picture(
         Ok(Some(d)) if d.kind == "model3d" && crate::listings::visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return not_found(),
     };
-    let row: Option<(Option<String>, Option<String>, Vec<String>)> =
-        sqlx::query_as("SELECT thumb_key, thumb_type, view_keys FROM mf_model_files WHERE id = $1 AND design_id = $2")
-            .bind(file)
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
-    let Some((thumb, kind, views)) = row else {
+    let row: Option<Pictures> = sqlx::query_as(
+        "SELECT thumb_key, thumb_type, view_keys, mesh_key FROM mf_model_files WHERE id = $1 AND design_id = $2",
+    )
+    .bind(file)
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((thumb, kind, views, mesh)) = row else {
         return not_found();
     };
     let found = match view.as_str() {
         "hero" => thumb.zip(kind),
+        "mesh" => mesh.map(|k| (k, "application/octet-stream".to_string())),
         v => View::ALL
             .iter()
             .skip(1)
@@ -747,10 +775,10 @@ pub async fn picture(
         "private, max-age=3600"
     };
     // (only the two picture types are ever stored)
-    let kind = if kind == "image/jpeg" {
-        "image/jpeg"
-    } else {
-        "image/png"
+    let kind = match kind.as_str() {
+        "image/jpeg" => "image/jpeg",
+        "application/octet-stream" => "application/octet-stream",
+        _ => "image/png",
     };
     match storage.get(&key).await {
         Ok(Some(bytes)) => ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, cache)], bytes).into_response(),
@@ -805,8 +833,24 @@ pub async fn public_section(pool: &PgPool, id: i64, title: &str, intro: &str, fo
         ),
         None => String::new(),
     };
+    // the viewer (MF-46): hidden until its script has the mesh drawn; the picture stays without it
+    let meshed: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM mf_model_files WHERE design_id = $1 AND mesh_key IS NOT NULL ORDER BY position LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let viewer = match meshed {
+        Some(f) => format!(
+            r#"<div class="viewer" hidden data-mesh="/3d/{id}/files/{f}/mesh"><canvas width="800" height="800" aria-label="A 3D view of {alt}: drag to turn it, scroll or pinch to zoom"></canvas></div><script src="/static/viewer.js" defer></script>"#,
+            alt = escape(title)
+        ),
+        None => String::new(),
+    };
     Some(format!(
-        r#"<section class="design"><h1>{title}</h1>{intro}{picture}{footer}</section>"#,
+        r#"<section class="design"><h1>{title}</h1>{intro}{viewer}{picture}{footer}</section>"#,
         title = escape(title)
     ))
 }
@@ -1166,8 +1210,8 @@ pub async fn remove_file(
     let Some(storage) = state.storage.as_ref() else {
         return not_found();
     };
-    let row: Option<(String, String, Option<String>, Vec<String>)> = sqlx::query_as(
-        "SELECT role, file_key, thumb_key, view_keys FROM mf_model_files WHERE id = $1 AND design_id = $2",
+    let row: Option<FileKeys> = sqlx::query_as(
+        "SELECT role, file_key, thumb_key, view_keys, mesh_key FROM mf_model_files WHERE id = $1 AND design_id = $2",
     )
     .bind(file)
     .bind(id)
@@ -1175,7 +1219,7 @@ pub async fn remove_file(
     .await
     .ok()
     .flatten();
-    let Some((role, key, thumb, views)) = row else {
+    let Some((role, key, thumb, views, mesh)) = row else {
         return not_found();
     };
     let printable: i64 =
@@ -1221,6 +1265,7 @@ pub async fn remove_file(
     let mut keys = vec![key];
     keys.extend(thumb);
     keys.extend(views);
+    keys.extend(mesh);
     forget(storage, &keys).await;
     drop_zip(storage, &pool, id).await;
     Redirect::to(&format!("/designs/{id}")).into_response()
