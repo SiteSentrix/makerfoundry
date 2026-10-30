@@ -214,6 +214,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   file names lose any folders. While `MF_3D` is off, models stay out of browsing, the home page
   and the sitemap, and their pages and files are for admins only. Browsing shows 3D models with
   their picture.
+- **MF-52 bulk import, built 2026-10-30** (#20): `/3d/import` takes many files or ZIPs at once
+  (200 files or 2 GB, counting what ZIPs hold; a ZIP at most 300 MB and read with the ZIP limits;
+  20 imports a day). Each file is stored as a pending import file as it arrives
+  (`mf_import_files`, migration 0025), so memory holds one file at a time; anything that isn't a
+  model file or image is noted and left out, system files in ZIPs skipped. Files are grouped
+  into models (`model3d/import.rs`): by folder in a ZIP, else by name stem (endings `_plate2`,
+  `-v2`, `_part3`, `(1)` ignored), images joining their stem. The review page shows the groups
+  and what was left out; "Make drafts" makes each group a draft titled by its name, a file that
+  fails its checks reported and the rest kept. Pending files and unpublished imported drafts go
+  after 30 days (the 10-minute sweep), and with the account's data.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

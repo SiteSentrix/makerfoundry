@@ -197,6 +197,12 @@ async fn main() -> ExitCode {
             {
                 eprintln!("proofs: {e}");
             }
+            // MF-52: pending import files and unpublished imported drafts after 30 days
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::model3d::import::forget_old(pool, sweep_storage.as_ref()).await
+            {
+                eprintln!("imports: {e}");
+            }
             if let (Some(pool), Some(stripe)) = (&sweep_db, &sweep_stripe)
                 && let Err(e) = makerfoundry::selling::withhold_taxes(stripe, pool).await
             {

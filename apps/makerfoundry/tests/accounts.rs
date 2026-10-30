@@ -5653,3 +5653,290 @@ async fn uploaded_file_names_lose_their_folders() {
         .unwrap();
     assert_eq!(names, ["evil.stl", "part.stl"]);
 }
+
+// ---------------------------------------------------------------- bulk import (MF-52)
+
+/// Sends files to the import → the answer.
+async fn import_files(s: &Site, cookie: &str, files: &[(&str, Vec<u8>)]) -> Answer {
+    let parts: Vec<(&str, &str, Vec<u8>)> = files.iter().map(|(n, b)| ("files", *n, b.clone())).collect();
+    s.send(multipart("/3d/import", &parts, cookie)).await
+}
+
+fn import_id(location: &str) -> i64 {
+    location.trim_start_matches("/3d/import/").parse().unwrap()
+}
+
+#[tokio::test]
+async fn thirty_files_across_several_models_group_by_name() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let names: Vec<String> = (0..10)
+        .flat_map(|i| {
+            [
+                format!("model{i}_plate1.stl"),
+                format!("model{i}_plate2.stl"),
+                format!("model{i}.png"),
+            ]
+        })
+        .collect();
+    let files: Vec<(&str, Vec<u8>)> = names
+        .iter()
+        .map(|n| {
+            (
+                n.as_str(),
+                if n.ends_with(".png") {
+                    small_png()
+                } else {
+                    stl_cube(5.0)
+                },
+            )
+        })
+        .collect();
+    let r = import_files(&s, &cookie, &files).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let iid = import_id(r.location());
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await;
+    assert_eq!(review.status, StatusCode::OK);
+    assert!(
+        review.body.contains("10 models") && review.body.contains("model7"),
+        "{}",
+        review.body
+    );
+    let r = s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_designs WHERE import_id = {iid} AND status = 'draft'"
+        ))
+        .await,
+        10
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_model_files").await, 20);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_design_photos").await, 10);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_designs WHERE title = 'model3'").await,
+        1,
+        "titled by the group"
+    );
+    // the pending copies are gone once their drafts are made
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_import_files WHERE file_key IS NOT NULL")
+            .await,
+        0
+    );
+    // someone else can't see the import
+    let other = s.join("other%40example.com").await;
+    assert_eq!(
+        s.get(&format!("/3d/import/{iid}"), Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&other))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_zip_with_nested_folders_groups_by_folder() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let zip = makerfoundry::model3d::zip::write(&[
+        ("My models/".to_string(), Vec::new()),
+        ("My models/Planter/base.stl".to_string(), stl_cube(10.0)),
+        ("My models/Planter/tray.stl".to_string(), stl_cube(8.0)),
+        ("My models/Planter/print.jpg".to_string(), photo_with_location()),
+        ("My models/Hook/hook.3mf".to_string(), project_3mf(None)),
+        ("__MACOSX/My models/._base.stl".to_string(), b"junk".to_vec()),
+        ("My models/.DS_Store".to_string(), b"junk".to_vec()),
+    ])
+    .unwrap();
+    let r = import_files(&s, &cookie, &[("models.zip", zip), ("loose.stl", stl_cube(3.0))]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let iid = import_id(r.location());
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await.body;
+    for text in ["3 models", "Planter", "Hook", "loose", "base.stl", "print.jpg"] {
+        assert!(review.contains(text), "{text}: {review}");
+    }
+    assert!(!review.contains("DS_Store") && !review.contains("MACOSX"), "{review}");
+    s.dump_page("import-review", &review, Some(&cookie)).await;
+    s.dump_page(
+        "import-form",
+        &s.get("/3d/import", Some(&cookie)).await.body,
+        Some(&cookie),
+    )
+    .await;
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    let planter: i64 = sqlx::query_scalar("SELECT id FROM mf_designs WHERE title = 'Planter'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_model_files WHERE design_id = {planter}"
+        ))
+        .await,
+        2
+    );
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_design_photos WHERE design_id = {planter}"
+        ))
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_zip_bomb_or_traversal_entry_is_refused() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let traversal = makerfoundry::model3d::zip::write(&[("../../evil.stl".to_string(), stl_cube(5.0))]).unwrap();
+    let r = import_files(&s, &cookie, &[("good.stl", stl_cube(5.0)), ("models.zip", traversal)]).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("models.zip") && r.body.contains("outside it"),
+        "{}",
+        r.body
+    );
+    let bomb = makerfoundry::model3d::zip::write(&[("big.stl".to_string(), vec![0u8; 4 * 1024 * 1024])]).unwrap();
+    let r = import_files(&s, &cookie, &[("models.zip", bomb)]).await;
+    assert!(r.body.contains("zip bomb"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_imports").await, 0);
+    assert!(s.stored.lock().unwrap().is_empty(), "nothing kept");
+}
+
+#[tokio::test]
+async fn an_oversized_batch_is_refused() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let names: Vec<String> = (0..201).map(|i| format!("part{i}.stl")).collect();
+    let cube = stl_cube(2.0);
+    let files: Vec<(&str, Vec<u8>)> = names.iter().map(|n| (n.as_str(), cube.clone())).collect();
+    let r = import_files(&s, &cookie, &files).await;
+    assert!(r.body.contains("up to 200 files"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_import_files").await, 0);
+    assert!(s.stored.lock().unwrap().is_empty(), "nothing kept");
+    let r = import_files(&s, &cookie, &files[..200]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "200 is allowed");
+}
+
+#[tokio::test]
+async fn a_bad_file_is_reported_and_the_rest_kept() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let html = b"<!doctype html><html><body>not a model</body></html>".to_vec();
+    let r = import_files(
+        &s,
+        &cookie,
+        &[
+            ("vase.stl", stl_cube(5.0)),
+            ("vase_part2.stl", html),
+            ("setup.exe", b"MZ".to_vec()),
+            ("lamp.stl", stl_cube(5.0)),
+        ],
+    )
+    .await;
+    let iid = import_id(r.location());
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await.body;
+    assert!(
+        review.contains("setup.exe") && review.contains("isn&#39;t a model file"),
+        "{review}"
+    );
+    let r = s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&cookie)).await.body;
+    assert!(
+        review.contains("vase_part2.stl") && review.contains("left out"),
+        "{review}"
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 2, "vase and lamp");
+    let vase: i64 = sqlx::query_scalar("SELECT id FROM mf_designs WHERE title = 'vase'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_model_files WHERE design_id = {vase}"))
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn imports_and_their_unpublished_drafts_go_after_30_days() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let r = import_files(&s, &cookie, &[("vase.stl", stl_cube(5.0)), ("lamp.stl", stl_cube(5.0))]).await;
+    let iid = import_id(r.location());
+    // one becomes a draft; the other waits
+    sqlx::query("UPDATE mf_import_files SET group_name = 'lamp-later' WHERE path = 'lamp.stl'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&cookie)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 2);
+    // a day short of 30: nothing goes
+    sqlx::query("UPDATE mf_imports SET created_at = now() - interval '29 days'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::model3d::import::forget_old(&s.pool, s.storage.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 2);
+    // past 30, unpublished imported drafts and anything still waiting go, with their files
+    let lamp: i64 = sqlx::query_scalar("SELECT id FROM mf_designs WHERE title = 'lamp-later'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mf_designs SET status = 'published', published_at = now() WHERE id = $1")
+        .bind(lamp)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO mf_import_files (import_id, path, file_key, file_bytes, image, position) VALUES ($1, 'late.stl', 'import/late', 1, false, 99)")
+        .bind(iid)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    s.stored
+        .lock()
+        .unwrap()
+        .insert("import/late".into(), ("application/octet-stream".into(), vec![1]));
+    sqlx::query("UPDATE mf_imports SET created_at = now() - interval '31 days'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::model3d::import::forget_old(&s.pool, s.storage.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_designs").await,
+        1,
+        "the published one stays"
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_import_files WHERE file_key IS NOT NULL")
+            .await,
+        0
+    );
+    let left: Vec<String> = s.stored.lock().unwrap().keys().cloned().collect();
+    let lamp_keys = makerfoundry::model3d::upload::keys(&s.pool, &[lamp]).await;
+    assert!(
+        left.iter().all(|k| lamp_keys.contains(k)),
+        "only the published model's files are left: {left:?}"
+    );
+}

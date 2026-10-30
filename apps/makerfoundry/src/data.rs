@@ -202,7 +202,9 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
          UNION ALL SELECT photo_key FROM mf_design_photos WHERE design_id = ANY($1)
          UNION ALL SELECT thumb_key FROM mf_design_photos WHERE design_id = ANY($1)
          UNION ALL SELECT photo_key FROM mf_makes WHERE design_id = ANY($1) OR account_id = $2
-         UNION ALL SELECT thumb_key FROM mf_makes WHERE design_id = ANY($1) OR account_id = $2",
+         UNION ALL SELECT thumb_key FROM mf_makes WHERE design_id = ANY($1) OR account_id = $2
+         UNION ALL SELECT f.file_key FROM mf_import_files f JOIN mf_imports i ON i.id = f.import_id
+                   WHERE i.account_id = $2 AND f.file_key IS NOT NULL",
     )
     .bind(&gone)
     .bind(account)
@@ -232,6 +234,8 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         "DELETE FROM mf_sessions WHERE account_id = $1",
         "DELETE FROM mf_activity_seen WHERE account_id = $1",
         "DELETE FROM mf_founding WHERE account_id = $1",
+        "UPDATE mf_designs SET import_id = NULL WHERE import_id IN (SELECT id FROM mf_imports WHERE account_id = $1)",
+        "DELETE FROM mf_imports WHERE account_id = $1",
         "UPDATE mf_accounts SET email = '' WHERE account_id = $1",
     ] {
         sqlx::query(sql).bind(account).execute(&mut *tx).await?;

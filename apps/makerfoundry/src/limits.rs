@@ -55,6 +55,9 @@ pub const FOUNDING: Rule = rule("founding", 10, 60);
 /// 2026-10-30).
 pub const MODEL_UPLOAD: Rule = rule("model-upload", 100, 24 * 60);
 
+/// Bulk imports (MF-52) started by one account a day.
+pub const IMPORT: Rule = rule("import", 20, 24 * 60);
+
 /// The most designs one account may keep.
 pub const MAX_DESIGNS: i64 = 500;
 
@@ -93,7 +96,7 @@ impl Limits {
         if hits.len() > 100_000 {
             hits.retain(|(name, _), times| {
                 let per = match *name {
-                    "upload" | "model-upload" => UPLOAD.per,
+                    "upload" | "model-upload" | "import" => UPLOAD.per,
                     _ => Duration::from_secs(3600),
                 };
                 times.back().is_some_and(|t| now.duration_since(*t) < per)

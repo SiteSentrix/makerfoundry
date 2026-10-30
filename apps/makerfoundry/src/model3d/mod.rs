@@ -2,6 +2,7 @@
 //! one) the readers for the files makers upload. See docs/3d-hub-plan.md.
 
 pub mod files;
+pub mod import;
 pub mod mesh;
 pub mod obj;
 pub mod render;

@@ -78,6 +78,8 @@ const UPLOAD_LIMIT_BYTES: usize = laser::MAX_FILE_BYTES + 64 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The same for a 3D model's upload: up to 300 MB to receive, read, draw and store.
 const MODEL_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+/// The same for a bulk import (up to 2 GB) and making its drafts.
+const IMPORT_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Scripts, frames, plug-ins and other origins are off; pages use only our own stylesheet. Forms
 /// post only here, and may be sent on to Stripe's checkout and set-up pages (browsers check
@@ -206,6 +208,7 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
         .route("/3d", get(model3d::landing))
         .route("/3d/{id}/files/{file}/{view}", get(model3d::upload::picture))
+        .route("/3d/import/{id}", get(model3d::import::review))
         .route("/founding", get(founding::page).post(founding::apply))
         .route("/admin/founding", get(founding::admin))
         .route("/admin/founding/{account}/{action}", post(founding::decide))
@@ -253,6 +256,19 @@ pub fn app(state: AppState) -> Router {
             StatusCode::REQUEST_TIMEOUT,
             MODEL_UPLOAD_TIMEOUT,
         ));
+    // bulk imports (MF-52): up to 2 GB, kept file by file as it arrives
+    let imports = Router::new()
+        .route(
+            "/3d/import",
+            get(model3d::import::new_page).post(model3d::import::create),
+        )
+        .route("/3d/import/{id}/drafts", post(model3d::import::drafts))
+        .layer(DefaultBodyLimit::max(model3d::import::BODY_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(model3d::import::BODY_LIMIT_BYTES))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            IMPORT_TIMEOUT,
+        ));
     pages
         .merge(uploads)
         .merge(api)
@@ -263,6 +279,7 @@ pub fn app(state: AppState) -> Router {
             REQUEST_TIMEOUT,
         ))
         .merge(models)
+        .merge(imports)
         .with_state(state)
         .layer(header_layer(header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY))
         .layer(header_layer(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
