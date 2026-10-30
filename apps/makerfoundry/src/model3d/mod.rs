@@ -12,6 +12,7 @@ pub mod remix;
 pub mod render;
 pub mod search;
 pub mod showcase;
+pub mod social;
 pub mod stl;
 pub mod thingiverse;
 pub mod threemf;

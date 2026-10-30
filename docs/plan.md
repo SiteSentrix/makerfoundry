@@ -341,6 +341,14 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   a stand-in Thingiverse. **The owner's steps**: check Thingiverse's API terms allow this, register
   the app, set `MF_THINGIVERSE_CLIENT_ID` and `MF_THINGIVERSE_CLIENT_SECRET`; the answers' field
   names are then checked against the live API.
+- **#30 showcase posting, built 2026-10-30, off until the Page is connected**: with the Page's id
+  and token (and the Instagram account's), `/admin/showcase` gets "Post to Facebook" and "Post to
+  Instagram" (Meta's Graph API: a Page photo; Instagram's container then publish), only for
+  active consents of published items, the caption crediting only the display name. A creator's
+  withdrawal deletes their Facebook posts through the API; Instagram's API can't delete, so those
+  stay flagged for the admins. YouTube takes video, so it stays by hand. Tested against a
+  stand-in Graph API. **The owner's steps**: a Meta app with page-posting permission (Meta's app
+  review), then the three settings.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

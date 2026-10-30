@@ -27,6 +27,7 @@ fn app() -> axum::Router {
         three_d: false,
         scanner: None,
         thingiverse: None,
+        social: None,
     })
 }
 

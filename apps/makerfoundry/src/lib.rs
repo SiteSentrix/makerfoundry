@@ -136,6 +136,10 @@ pub struct AppState {
     /// Importing from a linked Thingiverse account (issue #28: `MF_THINGIVERSE_CLIENT_ID` and
     /// `MF_THINGIVERSE_CLIENT_SECRET`); without them it's off.
     pub thingiverse: Option<model3d::thingiverse::Thingiverse>,
+    /// Posting showcase items to MakerFoundry's Facebook Page and Instagram (issue #30:
+    /// `MF_FACEBOOK_PAGE_ID`, `MF_FACEBOOK_PAGE_TOKEN`, `MF_INSTAGRAM_USER_ID`); without them
+    /// admins post by hand.
+    pub social: Option<model3d::social::Social>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -215,6 +219,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/admin/showcase/posts/{id}/taken-down",
             post(model3d::showcase::taken_down),
+        )
+        .route(
+            "/admin/showcase/{id}/post/{platform}",
+            post(model3d::showcase::post_now),
         )
         .route("/admin/overview", get(overview::overview))
         .route("/admin/reports/{rid}/takedown", post(moderation::takedown))

@@ -297,6 +297,7 @@ async fn site_scanned(
         three_d,
         scanner,
         thingiverse,
+        social: None,
     });
     Some(Site {
         app,
@@ -595,6 +596,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         three_d: false,
         scanner: None,
         thingiverse: None,
+        social: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -624,6 +626,7 @@ async fn without_a_database_nobody_can_sign_in() {
         three_d: false,
         scanner: None,
         thingiverse: None,
+        social: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1030,6 +1033,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         three_d: false,
         scanner: None,
         thingiverse: None,
+        social: None,
     });
     let s = Site {
         app,
@@ -1263,6 +1267,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         three_d: false,
         scanner: None,
         thingiverse: None,
+        social: None,
     });
     let s = Site {
         app,
@@ -8215,4 +8220,145 @@ async fn the_token_is_never_stored() {
     .await
     .unwrap();
     assert_eq!(found, 0);
+}
+
+// ---------------------------------------------------------------- showcase posting (issue #30)
+
+async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
+    let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
+    let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
+    let pool = test_db().await?;
+    let (storage, stored) = fake_storage().await;
+    let storage_kept = storage.clone();
+    let (url, fake) = fake_cloud().await;
+    let app = makerfoundry::app(AppState {
+        cloud: Cloud::new(&url).unwrap(),
+        db: Some(pool.clone()),
+        storage: Some(storage),
+        publishers: makerfoundry::listings::Publishers::Everyone,
+        admins: vec![1000],
+        limits: std::sync::Arc::default(),
+        stripe: None,
+        launched: true,
+        public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
+        three_d: true,
+        scanner: None,
+        thingiverse: None,
+        social,
+    });
+    Some((
+        Site {
+            app,
+            pool,
+            fake,
+            stored,
+            storage: Some(storage_kept),
+        },
+        calls,
+    ))
+}
+
+#[tokio::test]
+async fn only_active_consents_post_and_the_post_credits_only_the_display_name() {
+    let Some((s, calls)) = social_site().await else { return };
+    let (admin, bea, shared, ..) = showcase_site(&s).await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_consents WHERE design_id = $1")
+        .bind(shared)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let queue = s.get("/admin/showcase", Some(&admin)).await.body;
+    assert!(
+        queue.contains("Post to Facebook") && queue.contains("Post to Instagram"),
+        "{queue}"
+    );
+    assert_eq!(
+        s.post(&format!("/admin/showcase/{cid}/post/facebook"), "", Some(&bea))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let r = s
+        .post(&format!("/admin/showcase/{cid}/post/facebook"), "", Some(&admin))
+        .await;
+    assert_eq!(r.location(), "/admin/showcase");
+    let sent = calls.lock().unwrap()[0].2.clone();
+    assert!(
+        sent.contains("Bea%27s+Prints") && sent.contains("makerfoundry.test%2Fd%2F"),
+        "{sent}"
+    );
+    assert!(!sent.contains("example.com"), "no email: {sent}");
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_showcase_posts WHERE remote_id IS NOT NULL")
+            .await,
+        1
+    );
+    // a draft's consent, or a withdrawn one, never posts
+    let draft_cid: i64 = sqlx::query_scalar(
+        "SELECT c.id FROM mf_showcase_consents c JOIN mf_designs d ON d.id = c.design_id WHERE d.status = 'draft'",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    let r = s
+        .post(&format!("/admin/showcase/{draft_cid}/post/facebook"), "", Some(&admin))
+        .await;
+    assert!(r.body.contains("can&#39;t be posted"), "{}", r.body);
+    assert_eq!(calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn withdrawn_before_posting_never_posts() {
+    let Some((s, calls)) = social_site().await else { return };
+    let (admin, bea, shared, ..) = showcase_site(&s).await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_consents WHERE design_id = $1")
+        .bind(shared)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/account/showcase/{cid}/withdraw"), "", Some(&bea))
+        .await;
+    let r = s
+        .post(&format!("/admin/showcase/{cid}/post/instagram"), "", Some(&admin))
+        .await;
+    assert!(r.body.contains("can&#39;t be posted"), "{}", r.body);
+    assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn withdrawal_after_posting_deletes_or_flags() {
+    let Some((s, calls)) = social_site().await else { return };
+    let (admin, bea, shared, ..) = showcase_site(&s).await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_showcase_consents WHERE design_id = $1")
+        .bind(shared)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/admin/showcase/{cid}/post/facebook"), "", Some(&admin))
+        .await;
+    s.post(&format!("/admin/showcase/{cid}/post/instagram"), "", Some(&admin))
+        .await;
+    s.post(&format!("/account/showcase/{cid}/withdraw"), "", Some(&bea))
+        .await;
+    // Facebook's is deleted there; Instagram's is flagged for the admins
+    assert!(
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.0 == "DELETE" && c.1.contains("111_"))
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_showcase_posts WHERE platform = 'facebook' AND taken_down_at IS NOT NULL")
+            .await,
+        1
+    );
+    let queue = s.get("/admin/showcase", Some(&admin)).await.body;
+    assert!(
+        queue.contains("Take these down") && queue.contains("instagram.com/p/test"),
+        "{queue}"
+    );
+    assert!(!queue.contains("facebook.com/111_"), "{queue}");
 }

@@ -168,6 +168,12 @@ async fn main() -> ExitCode {
             std::env::var("THINGIVERSE_WWW_URL").ok().as_deref(),
             std::env::var("THINGIVERSE_API_URL").ok().as_deref(),
         ),
+        social: makerfoundry::model3d::social::Social::new(
+            &std::env::var("MF_FACEBOOK_PAGE_ID").unwrap_or_default(),
+            &std::env::var("MF_FACEBOOK_PAGE_TOKEN").unwrap_or_default(),
+            &std::env::var("MF_INSTAGRAM_USER_ID").unwrap_or_default(),
+            std::env::var("META_GRAPH_URL").ok().as_deref(),
+        ),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),

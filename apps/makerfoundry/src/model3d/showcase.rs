@@ -101,6 +101,29 @@ pub async fn withdraw(State(state): State<AppState>, headers: HeaderMap, Path(id
         .bind(id)
         .execute(pool)
         .await;
+    // posts made through a platform's API that it lets us delete go now (issue #30); the rest stay
+    // flagged for the admins
+    if let Some(social) = &state.social {
+        let posts: Vec<(i64, String, String)> = sqlx::query_as(
+            "SELECT id, platform, remote_id FROM mf_showcase_posts WHERE consent_id = $1 AND taken_down_at IS NULL AND remote_id IS NOT NULL",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        for (pid, platform, remote) in posts {
+            match social.delete(&platform, &remote).await {
+                Ok(true) => {
+                    let _ = sqlx::query("UPDATE mf_showcase_posts SET taken_down_at = now() WHERE id = $1")
+                        .bind(pid)
+                        .execute(pool)
+                        .await;
+                }
+                Ok(false) => {}
+                Err(e) => eprintln!("showcase: delete post {pid}: {e}"),
+            }
+        }
+    }
     Redirect::to("/account/showcase").into_response()
 }
 
@@ -201,11 +224,26 @@ async fn queue_html(state: &AppState, pool: &PgPool, problem: &str) -> String {
             format!(
                 r#"<li class="showcase-item">{picture}<div><strong><a href="/d/{did}/{slug}">{title}</a></strong> <span class="muted">· {who} · consent given {given}</span>
 <label>Caption <textarea readonly rows="3">{caption}</textarea></label>{made}
-<form method="post" action="/admin/showcase/{cid}/posted" class="inline-form"><select name="platform" aria-label="Where it was posted">{options}</select><input name="url" type="url" placeholder="The post's address" aria-label="The post's address" required maxlength="300"><button type="submit" class="secondary small">Posted</button></form></div></li>"#,
+{post_now}<form method="post" action="/admin/showcase/{cid}/posted" class="inline-form"><select name="platform" aria-label="Where it was posted">{options}</select><input name="url" type="url" placeholder="The post's address" aria-label="The post's address" required maxlength="300"><button type="submit" class="secondary small">Posted</button></form></div></li>"#,
                 slug = crate::listings::slug(title),
                 title = escape(title),
                 who = if make.is_some() { format!("a make by {}", escape(name)) } else { format!("by {}", escape(name)) },
                 caption = escape(&caption(title, name, licence.as_deref(), &url, make.is_some())),
+                post_now = state
+                    .social
+                    .as_ref()
+                    .map(|s| {
+                        s.platforms()
+                            .iter()
+                            .map(|p| {
+                                format!(
+                                    r#"<form method="post" action="/admin/showcase/{cid}/post/{p}" class="inline"><button type="submit" class="small">Post to {}</button></form> "#,
+                                    platform_name(p)
+                                )
+                            })
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default(),
             )
         })
         .collect();
@@ -316,4 +354,105 @@ pub async fn taken_down(State(state): State<AppState>, headers: HeaderMap, Path(
         .execute(&pool)
         .await;
     Redirect::to("/admin/showcase").into_response()
+}
+
+/// One item to post: make, model, its title and licence, the creator's display name, a photo, a
+/// model picture.
+type Item = (
+    Option<i64>,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+);
+
+/// `POST /admin/showcase/<consent>/post/<platform>`: posts an active consent's item through the
+/// platform's API (issue #30) and notes it.
+pub async fn post_now(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((cid, platform)): Path<(i64, String)>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (Some((user, pool)), Some(social)) = (admin(&state, &headers).await, state.social.clone()) else {
+        return crate::designs::not_found();
+    };
+    if !social.platforms().contains(&platform.as_str()) {
+        return crate::designs::not_found();
+    }
+    // only an active consent for a published item: the same rule as the queue
+    let item: Option<Item> = sqlx::query_as(
+        "SELECT c.make_id, d.id, d.title, d.licence, m.name,
+                (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1),
+                (SELECT f.id FROM mf_model_files f WHERE f.design_id = d.id AND f.thumb_key IS NOT NULL ORDER BY f.position LIMIT 1)
+         FROM mf_showcase_consents c
+         JOIN mf_designs d ON d.id = coalesce(c.design_id, (SELECT k.design_id FROM mf_makes k WHERE k.id = c.make_id))
+         LEFT JOIN mf_makers m ON m.account_id = c.account_id
+         WHERE c.id = $1 AND c.withdrawn_at IS NULL AND d.status = 'published'",
+    )
+    .bind(cid)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((make, did, title, licence, name, photo, file)) = item else {
+        return private(
+            "Showcase · MakerFoundry",
+            &queue_html(
+                &state,
+                &pool,
+                "That item can't be posted: its consent was withdrawn, or it isn't published.",
+            )
+            .await,
+            true,
+        );
+    };
+    let base = &state.public_url;
+    let image = match (make, photo, file) {
+        (Some(m), _, _) => format!("{base}/makes/{m}/large"),
+        (None, Some(p), _) => format!("{base}/designs/{did}/photos/{p}/large"),
+        (None, None, Some(f)) => format!("{base}/3d/{did}/files/{f}/hero"),
+        _ => {
+            return private(
+                "Showcase · MakerFoundry",
+                &queue_html(&state, &pool, "That item has no picture to post.").await,
+                true,
+            );
+        }
+    };
+    let name = name.unwrap_or_else(|| "a maker".into());
+    let url = format!("{base}/d/{did}/{}", crate::listings::slug(&title));
+    let text = caption(&title, &name, licence.as_deref(), &url, make.is_some());
+    match social.post(&platform, &image, &text).await {
+        Ok(posted) => {
+            let _ = sqlx::query(
+                "INSERT INTO mf_showcase_posts (consent_id, platform, url, posted_by, remote_id) VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(cid)
+            .bind(&platform)
+            .bind(&posted.url)
+            .bind(user.account_id)
+            .bind(&posted.remote_id)
+            .execute(&pool)
+            .await;
+            Redirect::to("/admin/showcase").into_response()
+        }
+        Err(e) => {
+            eprintln!("showcase: post {cid} to {platform}: {e}");
+            private(
+                "Showcase · MakerFoundry",
+                &queue_html(
+                    &state,
+                    &pool,
+                    "The post didn't go through. Please try again, or post it by hand.",
+                )
+                .await,
+                true,
+            )
+        }
+    }
 }
