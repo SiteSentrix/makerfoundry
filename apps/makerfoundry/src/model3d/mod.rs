@@ -2,6 +2,7 @@
 //! one) the readers for the files makers upload. See docs/3d-hub-plan.md.
 
 pub mod mesh;
+pub mod obj;
 pub mod stl;
 
 use axum::extract::State;

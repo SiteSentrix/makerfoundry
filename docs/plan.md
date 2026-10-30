@@ -170,6 +170,10 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   5000 mm a side, every number finite); a binary count must match the file's size, checked before
   anything is allocated; property tests with random and damaged files (20,000 cases under a 3 GB
   cap pass).
+- **MF-37 OBJ, built 2026-10-30** (#5): our own reader (`model3d/obj.rs`): `v` and `f` lines only
+  (every index form, negative indexes, polygons cut into triangles), every other line ignored;
+  5 million vertices at most; a zero, missing or later index refused; property tests with random,
+  damaged and generated files.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

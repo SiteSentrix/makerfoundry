@@ -14,7 +14,7 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat, RgbImage};
 use lopdf::{Document, Object, Stream, dictionary};
 use makerfoundry::model3d::mesh::{self, Mesh};
-use makerfoundry::model3d::stl;
+use makerfoundry::model3d::{obj, stl};
 use makerfoundry::{convert, embroidery, laser, money, photos, sizes, stripe};
 use proptest::prelude::*;
 use sf_core::{Cmd, Pattern, Point, Rgb, Thread};
@@ -395,6 +395,28 @@ fn check_mesh(m: &Mesh) {
     assert!(m.size_mm().iter().all(|s| s.is_finite() && *s <= mesh::MAX_SIZE_MM));
 }
 
+/// A small OBJ: a square pyramid with a quad base, every index form.
+const OBJ: &str = "v 0 0 0\nv 20 0 0\nv 20 20 0\nv 0 20 0\nv 10 10 15\nvt 0 0\nvn 0 0 1\n\
+f 1 2 3 4\nf 1/1 2/1 5/1\nf 2//1 3//1 5//1\nf 3/1/1 4/1/1 5/1/1\nf -5 -2 -1\n";
+
+/// OBJ lines with numbers and indexes from the edges of what's allowed.
+fn obj_line() -> impl Strategy<Value = String> {
+    let num = prop_oneof![
+        Just("0".to_string()),
+        Just("1e30".to_string()),
+        Just("-1e38".to_string()),
+        Just("nan".to_string()),
+        (-1e4f32..1e4).prop_map(|n| n.to_string()),
+    ];
+    let index = prop_oneof![(-8i64..12).prop_map(|i| i.to_string()), Just("99999999999".to_string())];
+    prop_oneof![
+        (num.clone(), num.clone(), num).prop_map(|(a, b, c)| format!("v {a} {b} {c}\n")),
+        prop::collection::vec(index, 0..6).prop_map(|i| format!("f {}\n", i.join(" "))),
+        Just("vn 0 0 1\n".to_string()),
+        Just("# note\n".to_string()),
+    ]
+}
+
 /// A small STL: a tetrahedron, binary or ASCII.
 fn stl_sample(ascii: bool) -> Vec<u8> {
     let p = [[0.0f32, 0.0, 0.0], [20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
@@ -435,6 +457,27 @@ proptest! {
     fn stl_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..4096), solid in any::<bool>()) {
         let bytes = if solid { [b"solid ".as_slice(), &bytes].concat() } else { bytes };
         if let Ok(m) = stl::read(&bytes) {
+            check_mesh(&m);
+        }
+    }
+
+    #[test]
+    fn obj_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        if let Ok(m) = obj::read(&bytes) {
+            check_mesh(&m);
+        }
+    }
+
+    #[test]
+    fn obj_damaged(ds in damages()) {
+        if let Ok(m) = obj::read(&damaged(OBJ.as_bytes(), &ds)) {
+            check_mesh(&m);
+        }
+    }
+
+    #[test]
+    fn obj_generated(lines in prop::collection::vec(obj_line(), 0..64)) {
+        if let Ok(m) = obj::read(lines.concat().as_bytes()) {
             check_mesh(&m);
         }
     }
