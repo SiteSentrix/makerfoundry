@@ -41,6 +41,12 @@ rusty-s3 = "0.10"
 url = "2"
 # The apps' API (MF-7) takes design files as base64 in JSON. MIT OR Apache-2.0.
 base64 = "0.22"
+# 3MF files and bulk imports (MF-38) are ZIP archives, read by our own small reader
+# (model3d/zip.rs) so every zip-bomb limit is ours: flate2 inflates and deflates (MIT OR
+# Apache-2.0, pure Rust), crc32fast checks each entry (MIT OR Apache-2.0). Both were already in
+# the build through lopdf and png.
+flate2 = "1"
+crc32fast = "1"
 # StitchFoundry's embroidery file readers (DST, PES, JEF, EXP, VP3, XXX, U01 and more; fuzzed
 # there against untrusted bytes) and its stitch statistics. MIT OR Apache-2.0, by SiteSentrix.
 # Pinned by commit: bump on purpose.

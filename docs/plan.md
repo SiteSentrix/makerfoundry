@@ -174,6 +174,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   (every index form, negative indexes, polygons cut into triangles), every other line ignored;
   5 million vertices at most; a zero, missing or later index refused; property tests with random,
   damaged and generated files.
+- **MF-38 3MF, built 2026-10-30** (#6): our own small ZIP reader and writer (`model3d/zip.rs`, on
+  flate2 and crc32fast): 4,096 entries, 512 MB an entry, 1 GB in all, at most 200 times the
+  archive's size, no overlapping entries, no `..`/absolute/backslash names, no encryption or
+  ZIP64, every entry's length and CRC checked as it's inflated. The 3MF reader
+  (`model3d/threemf.rs`): roxmltree with DTDs refused; units to millimetres; components and
+  build transforms, Bambu/Orca `p:path` parts; at most 16 levels and 50 million placed triangles;
+  a model part at most 256 MB unpacked. The file is rebuilt with only the model parts read, their
+  relationships, PNG/JPEG pictures decoded and written again (`photos::reencode`), and slicer
+  settings that read as text; scripts, programs, unknown parts and sliced G-code are dropped and
+  listed. Property tests: random archives, damaged 3MFs and model XML, generated models.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

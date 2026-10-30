@@ -4,6 +4,8 @@
 pub mod mesh;
 pub mod obj;
 pub mod stl;
+pub mod threemf;
+pub mod zip;
 
 use axum::extract::State;
 use axum::http::HeaderMap;

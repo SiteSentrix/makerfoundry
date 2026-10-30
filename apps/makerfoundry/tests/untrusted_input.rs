@@ -14,7 +14,7 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat, RgbImage};
 use lopdf::{Document, Object, Stream, dictionary};
 use makerfoundry::model3d::mesh::{self, Mesh};
-use makerfoundry::model3d::{obj, stl};
+use makerfoundry::model3d::{obj, stl, threemf, zip};
 use makerfoundry::{convert, embroidery, laser, money, photos, sizes, stripe};
 use proptest::prelude::*;
 use sf_core::{Cmd, Pattern, Point, Rgb, Thread};
@@ -417,6 +417,60 @@ fn obj_line() -> impl Strategy<Value = String> {
     ]
 }
 
+/// A small 3MF: a tetrahedron placed twice through components, a thumbnail and settings.
+fn threemf_sample(model_xml: &str) -> Vec<u8> {
+    let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>"#;
+    let mut png = Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(RgbImage::new(4, 4))
+        .write_to(&mut png, ImageFormat::Png)
+        .unwrap();
+    let files = [
+        ("_rels/.rels".to_string(), rels.as_bytes().to_vec()),
+        ("3D/3dmodel.model".to_string(), model_xml.as_bytes().to_vec()),
+        ("Metadata/plate_1.png".to_string(), png.into_inner()),
+        (
+            "Metadata/project_settings.config".to_string(),
+            br#"{"layer_height": "0.2"}"#.to_vec(),
+        ),
+        ("Metadata/plate_1.gcode".to_string(), b"G28".to_vec()),
+    ];
+    zip::write(&files).unwrap()
+}
+
+const MODEL_3MF: &str = r#"<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="20" y="0" z="0"/><vertex x="0" y="20" z="0"/><vertex x="0" y="0" z="20"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/><triangle v1="0" v2="1" v3="3"/><triangle v1="1" v2="2" v3="3"/><triangle v1="0" v2="2" v3="3"/></triangles></mesh></object><object id="2"><components><component objectid="1"/><component objectid="1" transform="1 0 0 0 1 0 0 0 1 30 0 0"/></components></object></resources><build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 0 0 1"/></build></model>"#;
+
+/// Model XML from pieces near the edges of what's allowed.
+fn model_pieces() -> impl Strategy<Value = String> {
+    let num = prop_oneof![
+        Just("0".to_string()),
+        Just("1e30".to_string()),
+        Just("NaN".to_string()),
+        Just("-0.5".to_string()),
+        (-1e3f32..1e3).prop_map(|n| n.to_string()),
+    ];
+    let index = prop_oneof![
+        (0u32..8).prop_map(|i| i.to_string()),
+        Just("4294967295".to_string()),
+        Just("-1".to_string())
+    ];
+    let piece = prop_oneof![
+        (num.clone(), num.clone(), num.clone()).prop_map(|(x, y, z)| format!(r#"<vertex x="{x}" y="{y}" z="{z}"/>"#)),
+        (index.clone(), index.clone(), index.clone())
+            .prop_map(|(a, b, c)| format!(r#"<triangle v1="{a}" v2="{b}" v3="{c}"/>"#)),
+        (0u32..4, num)
+            .prop_map(|(id, t)| format!(r#"<component objectid="{id}" transform="1 0 0 0 1 0 0 0 1 {t} 0 0"/>"#)),
+        Just("</vertices><triangles>".to_string()),
+        Just("</mesh></object><object id=\"2\"><components>".to_string()),
+        Just("</components></object><object id=\"3\"><mesh><vertices>".to_string()),
+    ];
+    prop::collection::vec(piece, 0..40).prop_map(|pieces| {
+        format!(
+            r#"<model unit="millimeter"><resources><object id="1"><mesh><vertices>{}</vertices></mesh></object></resources><build><item objectid="2"/><item objectid="1"/></build></model>"#,
+            pieces.concat()
+        )
+    })
+}
+
 /// A small STL: a tetrahedron, binary or ASCII.
 fn stl_sample(ascii: bool) -> Vec<u8> {
     let p = [[0.0f32, 0.0, 0.0], [20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
@@ -479,6 +533,50 @@ proptest! {
     fn obj_generated(lines in prop::collection::vec(obj_line(), 0..64)) {
         if let Ok(m) = obj::read(lines.concat().as_bytes()) {
             check_mesh(&m);
+        }
+    }
+
+    #[test]
+    fn zip_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        if let Ok(a) = zip::Archive::open(&bytes) {
+            for e in a.entries() {
+                if let Ok(data) = a.read(e) {
+                    assert_eq!(data.len() as u64, e.size);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn threemf_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        if let Ok(t) = threemf::read(&bytes) {
+            check_mesh(&t.mesh);
+        }
+    }
+
+    #[test]
+    fn threemf_damaged(ds in damages()) {
+        if let Ok(t) = threemf::read(&damaged(&threemf_sample(MODEL_3MF), &ds)) {
+            check_mesh(&t.mesh);
+            // what's rebuilt reads back the same
+            assert_eq!(threemf::read(&t.file).unwrap().mesh, t.mesh);
+        }
+    }
+
+    #[test]
+    fn threemf_damaged_model(ds in damages()) {
+        let xml = damaged(MODEL_3MF.as_bytes(), &ds);
+        let xml = String::from_utf8_lossy(&xml);
+        if let Ok(t) = threemf::read(&threemf_sample(&xml)) {
+            check_mesh(&t.mesh);
+            assert!(!t.kept.iter().any(|k| k.ends_with(".gcode")));
+        }
+    }
+
+    #[test]
+    fn threemf_generated(xml in model_pieces()) {
+        if let Ok(t) = threemf::read(&threemf_sample(&xml)) {
+            check_mesh(&t.mesh);
         }
     }
 
@@ -656,4 +754,16 @@ fn the_samples_read() {
     for format in [ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::WebP] {
         photos::read(&photo_sample(format)).unwrap();
     }
+}
+
+#[test]
+fn the_3d_samples_read() {
+    for ascii in [false, true] {
+        assert_eq!(stl::read(&stl_sample(ascii)).unwrap().triangles.len(), 4);
+    }
+    assert_eq!(obj::read(OBJ.as_bytes()).unwrap().triangles.len(), 6);
+    let t = threemf::read(&threemf_sample(MODEL_3MF)).unwrap();
+    assert_eq!(t.mesh.triangles.len(), 8);
+    assert_eq!(t.dropped, ["Metadata/plate_1.gcode"]);
+    assert_eq!(t.pictures.len(), 1);
 }

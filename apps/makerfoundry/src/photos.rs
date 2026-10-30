@@ -36,15 +36,27 @@ pub fn read(bytes: &[u8]) -> Result<Photo, String> {
             MAX_FILE_BYTES / (1024 * 1024)
         ));
     }
+    let (picture, _) = decode(bytes)?;
+    let picture = DynamicImage::ImageRgb8(picture.into_rgb8());
+    let large = shrink(&picture, PHOTO_SIDE);
+    let thumb = shrink(&picture, THUMB_SIDE);
+    Ok(Photo {
+        width: large.width(),
+        height: large.height(),
+        jpeg: jpeg(&large)?,
+        thumb: jpeg(&thumb)?,
+    })
+}
+
+/// Decodes a JPEG, PNG or WebP picture within the limits, turned upright → it and its format.
+fn decode(bytes: &[u8]) -> Result<(DynamicImage, ImageFormat), String> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| not_a_photo())?;
-    if !matches!(
-        reader.format(),
-        Some(ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP)
-    ) {
-        return Err(not_a_photo());
-    }
+    let format = match reader.format() {
+        Some(f @ (ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP)) => f,
+        _ => return Err(not_a_photo()),
+    };
     let mut reader = reader;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
@@ -61,15 +73,32 @@ pub fn read(bytes: &[u8]) -> Result<Photo, String> {
     if picture.width() == 0 || picture.height() == 0 {
         return Err(not_a_photo());
     }
-    let picture = DynamicImage::ImageRgb8(picture.into_rgb8());
-    let large = shrink(&picture, PHOTO_SIDE);
-    let thumb = shrink(&picture, THUMB_SIDE);
-    Ok(Photo {
-        width: large.width(),
-        height: large.height(),
-        jpeg: jpeg(&large)?,
-        thumb: jpeg(&thumb)?,
-    })
+    Ok((picture, format))
+}
+
+/// A picture inside a model file (a 3MF's thumbnail, MF-38), decoded within the limits and
+/// written again in the same format (PNG or JPEG), at most `PHOTO_SIDE` a side: nothing of the
+/// original bytes is kept.
+pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "the picture is larger than {} MB",
+            MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    let (picture, format) = decode(bytes)?;
+    let picture = shrink(&picture, PHOTO_SIDE);
+    match format {
+        ImageFormat::Png => {
+            let mut out = Cursor::new(Vec::new());
+            DynamicImage::ImageRgba8(picture.into_rgba8())
+                .write_to(&mut out, ImageFormat::Png)
+                .map_err(|e| format!("the picture couldn't be saved: {e}"))?;
+            Ok(out.into_inner())
+        }
+        ImageFormat::Jpeg => jpeg(&DynamicImage::ImageRgb8(picture.into_rgb8())),
+        _ => Err("only PNG and JPEG pictures are kept in a model file".into()),
+    }
 }
 
 fn not_a_photo() -> String {
