@@ -184,6 +184,11 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   relationships, PNG/JPEG pictures decoded and written again (`photos::reencode`), and slicer
   settings that read as text; scripts, programs, unknown parts and sliced G-code are dropped and
   listed. Property tests: random archives, damaged 3MFs and model XML, generated models.
+- **MF-39 the file allow-list, built 2026-10-30** (#7): `model3d/files.rs` checks each file by
+  what it is: STL and OBJ read as meshes, 3MF read and kept as rebuilt, STEP/STP checked to be
+  ISO 10303-21 text (header, `HEADER;`, end line, no NUL bytes), `.mtl`, `.scad`, `.txt` and
+  `.md` checked to be text of at most 5 MB; every other extension refused. STEP and the text
+  companions are only ever downloads (`attachment_only`).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
