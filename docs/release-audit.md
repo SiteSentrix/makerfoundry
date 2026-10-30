@@ -49,8 +49,10 @@ it. MakerFoundry 3D and the outside services stay off until their own steps.
    is no way to check from here that they are on. Files in R2 have no second copy. Consider R2
    object versioning, or a periodic copy of the bucket.
 3. **Admins and the launch switch:** `docs/launch.md` steps 5 and 6.
-4. **Dependency checks in CI:** `cargo audit` isn't part of `cargo xtask ci` yet (installing it
-   adds a few minutes to a run). Suggest a weekly scheduled GitHub Action that runs it.
+4. ~~**Dependency checks in CI**~~: **done 2026-10-30**: `.github/workflows/audit.yml` runs
+   `cargo audit` every Monday, whenever `Cargo.lock` changes, and on demand. A red run there
+   means a new advisory: update the crate, or record why it can't be reached in
+   `.cargo/audit.toml`.
 5. **MakerFoundry 3D:** approve `docs/legal/3d-draft.md` (#26), then `MF_3D=yes`.
 6. **Each switched-off service:** its Privacy line (above), its account, then its setting
    (`docs/deploy.md`).

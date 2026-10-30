@@ -1,0 +1,34 @@
+# Dependency check (release audit, issue #40): `cargo audit` checks Cargo.lock against the RustSec
+# advisory database (https://rustsec.org). New advisories appear without any change here, so it
+# runs weekly as well as when the dependencies change. Exceptions, each with its reason, are in
+# .cargo/audit.toml. A red run means: update the crate (`cargo update -p <crate>`), or, if it isn't
+# reachable, add it there with why.
+name: Audit
+
+on:
+  schedule:
+    # Mondays, 14:17 UTC
+    - cron: "17 14 * * 1"
+  push:
+    branches: [main]
+    paths: [Cargo.lock, .cargo/audit.toml, .github/workflows/audit.yml]
+  pull_request:
+    paths: [Cargo.lock, .cargo/audit.toml, .github/workflows/audit.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # A prebuilt cargo-audit, so the check takes seconds rather than a compile.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo audit
+        run: cargo audit
