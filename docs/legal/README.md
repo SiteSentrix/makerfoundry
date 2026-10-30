@@ -16,14 +16,16 @@ it off; payouts held up to 90 days after an account is closed for breaking the t
 notices kept 3 years; makes in Terms § 4. Earlier: the fee (10%, the card fee from the seller's
 share, monthly payouts: Seller Terms § 4, § 6).
 
+**Proofs (MF-25), approved by the owner 2026-10-30:** Terms § 9 (the later sections renumbered,
+§§ 10 to 13) and four additions to the Privacy Policy (§ 2's table, its network-address row, a
+paragraph for a shop's customers, § 3's "What's public").
+
 **Still open:** a lawyer's read. Terms § 7 points to makerfoundry.app/dmca for the designated agent,
 which shows `MF_DMCA_AGENT` once the owner has registered one (planned for the week after the soft
 open), so the Terms needn't change then. **Sales tax** waits until paid sales open: for the
 free-only launch (owner's decision, 2026-10-22), Seller Terms § 5 says paid sales aren't open yet;
 the decision, ideally with an accountant, goes there before the Stripe keys do (`docs/launch.md`).
 
-- [`proofs-draft.md`](proofs-draft.md): wording for approval links (MF-25), to add to the Terms
-  and the Privacy Policy once the owner approves it; proofs stay switched off until then.
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.
 - [`seller-terms.md`](seller-terms.md): Seller Terms, for makers who publish or sell designs.

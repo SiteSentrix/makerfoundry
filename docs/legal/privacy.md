@@ -26,12 +26,14 @@ Policy (stitchfoundry.app/privacy) covers it. This policy covers what MakerFound
 | Photos of your work, saved again as new images | To show on your designs. Their hidden details (location, camera) are removed when you upload them | As your designs |
 | Makes you post (a photo of what you made from a design, saved again as a new image, and your note) | To show on the design's page, with your maker name. **Public** | Until you, the design's maker or an admin take it down, or the design is deleted |
 | Comments you post (the text, when) | To show under the design, with your maker name. **Public** | Until you, the design's maker or an admin take it down, or the design is deleted |
+| Proofs you send (the design file, what reading it found, the drawing we make, photos saved again as new images, your shop's name, your note of who it's for, your message and notes) | To show them to you and to whoever has the proof's link. **Never public** | A year after the proof's last activity, or until you delete it or close your account |
+| What a shop's customer writes on a proof (the name they type, their comments, their approval or request for changes, when) | To show to the shop and the customer on the proof. It belongs to the shop that sent the proof: we keep it for them and use it for nothing else | As the proof |
 | The makers you follow | To show you their new designs. Private: a maker sees only how many people follow them | Until you unfollow or close your account |
 | Your Saved list and collections (which designs, when) | To keep them for you. Saved is private; a collection is private unless you make it **public** | Until you remove them or close your account |
 | Download counts (a number for each design, not who downloaded it) | To show how popular a design is | As the design |
 | Reports, copyright notices and counter-notices you send (what you wrote, and for notices the name, address, phone, email and signature the law asks for) | To review them and act on them. A notice may be passed to the maker concerned, and a counter-notice to whoever sent the notice, as the law expects | 3 years, for our records of what we did |
 | What admins did about reports (who, when, what) | To keep a record of takedowns, including for repeat infringers | As reports |
-| Your network address, for a short time | To limit how often things can be tried (sign-ins, sign-ups, reports). Kept in memory only, never stored | Up to 24 hours |
+| Your network address, for a short time | To limit how often things can be tried (sign-ins, sign-ups, reports, answers to proofs). Kept in memory only, never stored | Up to 24 hours |
 | Error logs | To find and fix problems. They don't contain passwords, files or photos | Up to 30 days |
 
 **Purchases and sales.** For each purchase we keep what was bought, by whom, from whom, when, the
@@ -44,6 +46,10 @@ are held by Stripe, not by us.
 **Agreements.** When you sign up, publish or set up selling, we keep which version of these
 policies and terms you agreed to, and when: as long as your account, and for 7 years after a
 sale.
+
+**If a shop sent you a proof.** You don't need an account to answer it. What you type goes to the
+shop, which decides what to do with it; to have it removed, ask the shop, or us at
+support@makerfoundry.app. We don't use it for anything else and don't contact you.
 
 **What we never get:** your password (the account service checks it), your card number, and who
 downloaded which free design.
@@ -65,7 +71,8 @@ cloudflare.com/privacypolicy and stripe.com/privacy.
 
 **What's public.** Published designs (files, photos, previews, descriptions) and maker profiles are
 public: anyone can see and download them. Drafts are seen only by you, and by our admins if a
-design is reported.
+design is reported. Proofs are never public: only the shop that sent one and whoever has its link
+can see it.
 
 We may also disclose information if the law requires it, to answer a valid copyright notice, to
 protect our users or the site from fraud or abuse, or to a buyer if the business is sold, who

@@ -30,8 +30,8 @@ reader of uploads and typed input is property-tested with random and damaged fil
 Activity page (comments, makes, sales and new followers). **MF-23** done: on a refund the seller
 bears only the card fee Stripe keeps (MakerFoundry's 10% goes back to them). **MF-24** built: sales tax with
 Stripe Tax, kept by MakerFoundry as the marketplace, off until `MF_STRIPE_TAX=yes`. **MF-25** built:
-approval links (a shop sends a customer a proof to approve), switched off until the owner approves
-its wording (`docs/legal/proofs-draft.md`) and sets `MF_PROOFS=yes`. See [`docs/plan.md`](docs/plan.md).
+approval links (a shop sends a customer a proof to approve), its wording in the Terms (§ 9) and the
+Privacy Policy; switched off until the owner sets `MF_PROOF_KEY` and `MF_PROOFS=yes`. See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.

@@ -110,7 +110,29 @@ file is broken, or isn't what the listing described, tell us within 30 days and 
 or the maker will fix it. Where the law gives you more
 rights, they apply.
 
-## 9. Disclaimers
+## 9. Proofs for your customers
+
+Any MakerFoundry account can send a **proof**: a design file and photos, sent to a customer
+through a private link, for them to see, comment on, and approve or ask for changes before you
+stitch or cut it.
+
+- **What you send.** You confirm you have the right to use the design and the photos in it, for
+  example because it's your customer's own logo and they asked you to. The rules for everyone
+  (§ 5) apply. Proofs are never public and aren't listings: the licences in § 3 don't apply to
+  them, and the customer can't download the design file.
+- **The link.** Anyone with a proof's link can see it and answer it, so share it as carefully as
+  the design itself. You can make a new link (the old one stops working), turn it off, or delete
+  the proof at any time.
+- **Your customers' answers.** The name a customer types, their comments and their approval are
+  yours: we keep them for you, show them on the proof, and use them for nothing else. We don't
+  contact your customers. An approval records the name typed, the version and the time. It is a
+  record for you and your customer; any agreement between you and them is yours, not ours.
+- **How long.** A proof, its files and its conversation are deleted a year after its last
+  activity, or sooner when you delete it or close your account.
+- **If a shop sent you a proof.** You don't need an account. What you write on it goes to the
+  shop that sent it; questions about the design or your order go to them.
+
+## 10. Disclaimers
 
 MakerFoundry is provided "as is" and "as available". Designs are made by their makers, not by us.
 To the extent the law allows, we make no promises that the site will be uninterrupted or
@@ -118,7 +140,7 @@ error-free, or that any design will be accurate, safe, legal to use for your pur
 your machine. We are not responsible for damaged fabric, materials, machines or lasers, or for
 time spent, as a result of using a design from MakerFoundry.
 
-## 10. Limitation of liability and indemnity
+## 11. Limitation of liability and indemnity
 
 To the extent the law allows:
 
@@ -135,14 +157,14 @@ a design against its licence, or your breaking these terms, you agree to cover o
 costs of that claim, including legal fees. We'll tell you promptly about any such claim, and you
 may help defend it. This doesn't apply to claims caused by our own fault.
 
-## 11. Ending things
+## 12. Ending things
 
 You can unpublish or delete your designs at any time, and close your Foundry Account as
 StitchFoundry's Terms describe. We may limit or close an account that breaks these terms, after
 warning you where reasonable. If we stop running MakerFoundry, we'll give at least 30 days'
 notice on the site and by email.
 
-## 12. Changes, governing law and contact
+## 13. Changes, governing law and contact
 
 **Changes.** We may update these terms. For important changes we'll tell you on the site or by
 email at least 14 days before they apply. If you keep using MakerFoundry after that, the new terms
