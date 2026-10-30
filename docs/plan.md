@@ -317,6 +317,11 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   `script-src 'self'` and `connect-src 'self'`; every other page keeps the old policy (tested).
   Checked in Chromium: it draws, turns, fits a phone, no console errors. Models uploaded before
   this keep their pictures only.
+- **MF-58 legal wording for 3D, drafted 2026-10-30** (#26): `docs/legal/3d-draft.md`, for the
+  owner's approval (and ideally a lawyer's read of the remix rules): Terms §§ 5 and 6 (3D models,
+  licences, remixes, imports, rebuilt files, print settings, likes, the showcase consent and
+  withdrawal) and the Privacy Policy's additions (models, likes, imports, consents). **Waiting on
+  the owner**; once merged, the launch checks (#27) and `MF_3D=yes`.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

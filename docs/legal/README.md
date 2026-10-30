@@ -16,6 +16,11 @@ it off; payouts held up to 90 days after an account is closed for breaking the t
 notices kept 3 years; makes in Terms § 4. Earlier: the fee (10%, the card fee from the seller's
 share, monthly payouts: Seller Terms § 4, § 6).
 
+**MakerFoundry 3D (MF-58), a draft for the owner, 2026-10-30:** `3d-draft.md` has the wording for
+3D models, remixes, imports, rebuilt files, print settings, likes and the opt-in showcase (Terms)
+and what 3D collects (Privacy), with three `[OWNER: …]` choices. Not yet merged: `MF_3D` stays off
+until it is.
+
 **Proofs (MF-25), approved by the owner 2026-10-30:** Terms § 9 (the later sections renumbered,
 §§ 10 to 13) and four additions to the Privacy Policy (§ 2's table, its network-address row, a
 paragraph for a shop's customers, § 3's "What's public").
