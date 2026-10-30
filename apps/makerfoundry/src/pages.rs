@@ -101,7 +101,8 @@ pub fn page_with(title: &str, body: &str, signed_in: bool, preview: Option<&Prev
 </main>
 <footer class="bottom"><p>MakerFoundry is made by <a href="https://sitesentrix.com">SiteSentrix</a>,
 the makers of <a href="https://stitchfoundry.app">StitchFoundry</a>.</p>
-<p class="links"><a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/seller-terms">Seller Terms</a> <a href="/dmca">Copyright</a></p></footer>
+<p class="links"><a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/seller-terms">Seller Terms</a> <a href="/dmca">Copyright</a></p>
+<p class="report">Found a problem, or have an idea? <a class="button secondary" href="mailto:bwattendorf@gmail.com?subject=%5BMakerFoundry%5D%20Bug%20report%3A%20&amp;body=What%20happened%3A%0A%0A%0ASteps%20to%20get%20there%3A%0A1.%20%0A2.%20%0A%0AWhat%20you%20expected%20instead%3A%0A%0A%0AThe%20page%20%28its%20address%29%3A%0A">Report a bug</a> <a class="button secondary" href="mailto:bwattendorf@gmail.com?subject=%5BMakerFoundry%5D%20Feature%20request%3A%20&amp;body=What%20you%20would%20like%20MakerFoundry%20to%20do%3A%0A%0A%0AWhy%20it%20would%20help%20you%3A%0A">Suggest a feature</a></p></footer>
 </body>
 </html>
 "#
@@ -119,5 +120,19 @@ mod tests {
             "&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;"
         );
         assert_eq!(escape("plain ✓"), "plain ✓");
+    }
+
+    #[test]
+    fn every_page_offers_a_bug_report_and_a_feature_request_by_email() {
+        let html = page("Browse designs", "<h1>Browse</h1>", false);
+        assert!(
+            html.contains("mailto:bwattendorf@gmail.com?subject=%5BMakerFoundry%5D%20Bug%20report%3A%20"),
+            "{html}"
+        );
+        assert!(
+            html.contains("mailto:bwattendorf@gmail.com?subject=%5BMakerFoundry%5D%20Feature%20request%3A%20"),
+            "{html}"
+        );
+        assert!(html.contains(">Report a bug</a>") && html.contains(">Suggest a feature</a>"));
     }
 }

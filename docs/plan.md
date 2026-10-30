@@ -141,6 +141,7 @@ Nobody may resell or share the files themselves.
 | MF-31 | More tools | previews and sending for ScreenFoundry (the owner's screen printing, DTG and sublimation software: previews show ink on fabric, not stitches), PatternFoundry and LightFoundry (laser cuts and engravings; owner, 2026-10-28). **Planned**: needs MF-26, MF-27 and those apps |
 | MF-32 | Custom domains | a Top-tier shop's own domain through Cloudflare for SaaS (100 hostnames included, then $0.10 each). **Planned**: needs MF-29 |
 | MF-33 | Live camera preview | the design on the real garment through the phone camera. **Planned**: needs MF-26 and the owner's agreement to the JavaScript it needs |
+| MF-34 | Report a bug, suggest a feature | at the foot of every page, two buttons open an email to the owner with "[MakerFoundry] Bug report: " or "[MakerFoundry] Feature request: " as the subject and a short template. **Done** (2026-10-30) |
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

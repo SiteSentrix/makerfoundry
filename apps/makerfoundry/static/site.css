@@ -186,6 +186,7 @@ address { font-style: normal; background: var(--card); border: 1px solid var(--l
 .legal th { background: var(--card); }
 .bottom .links { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin-top: -.4rem; }
 a.button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.bottom .report { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: .8rem 0 1.2rem; }
 .hero .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .search select { flex: 1 1 9rem; min-width: 0; }
 
