@@ -4,8 +4,11 @@ MakerFoundry is a marketplace by **SiteSentrix** where makers share and sell **m
 designs** (DST, PES, JEF, EXP, VP3, XXX…) and **laser-cut files** (SVG, DXF, PDF…). Free designs
 are shared openly; paid designs are sold with MakerFoundry as the broker, taking a small fee on
 each sale. Sibling products: [StitchFoundry](https://github.com/Stitchwright/StitchFoundry)
-(embroidery digitizing app, https://stitchfoundry.app) and LightFoundry (laser cutting). A later
-sibling, PatternFoundry, is reserved for sewing patterns.
+(embroidery digitizing app, https://stitchfoundry.app) and
+[LaserFoundry](https://github.com/Stitchwright/laserfoundry) (laser cutting). A later sibling,
+PatternFoundry, is reserved for sewing patterns. The whole family (with StitchBench, StitchHub and
+BuildKiosk), how each touches MakerFoundry, and how their conventions differ:
+[`docs/family.md`](docs/family.md).
 
 These rules come from the VectorCraft/StitchFoundry `CLAUDE.md` (kept for reference in
 [`docs/vectorcraft-CLAUDE.md`](docs/vectorcraft-CLAUDE.md)), adapted to a web service.
