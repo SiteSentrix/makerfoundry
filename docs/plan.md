@@ -332,6 +332,15 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   imports' drafts, files added to a model) are scanned before they're kept: a flagged one is
   refused by name; if clamd can't be reached, uploads are held, never kept unscanned. Tested
   against a stand-in clamd. **The owner's call**: running a ClamAV service on Railway (it costs).
+- **#28 Thingiverse import, built 2026-10-30, off until the app settings are set**: through
+  Thingiverse's official API and OAuth (`model3d/thingiverse.rs`): the creator signs in there
+  (a one-time state, 10 minutes, this account only), `/users/me` names them, and only things
+  whose creator is them are brought into an ordinary import, one model a thing, with its licence
+  when it maps without guessing (CC, CC0, BSD, all rights reserved; GPL left for the creator),
+  its date and its page as "Originally published on". The token is never stored. Tested against
+  a stand-in Thingiverse. **The owner's steps**: check Thingiverse's API terms allow this, register
+  the app, set `MF_THINGIVERSE_CLIENT_ID` and `MF_THINGIVERSE_CLIENT_SECRET`; the answers' field
+  names are then checked against the live API.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

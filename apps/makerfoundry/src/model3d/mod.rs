@@ -13,6 +13,7 @@ pub mod render;
 pub mod search;
 pub mod showcase;
 pub mod stl;
+pub mod thingiverse;
 pub mod threemf;
 pub mod upload;
 pub mod viewer;

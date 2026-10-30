@@ -265,7 +265,7 @@ async fn site_all(
     proofs: Option<makerfoundry::proofs::Proofs>,
     three_d: bool,
 ) -> Option<Site> {
-    site_scanned(admins, stripe, launched, proofs, three_d, None).await
+    site_scanned(admins, stripe, launched, proofs, three_d, None, None).await
 }
 
 /// The same, with a virus scanner (issue #29) at `scanner`.
@@ -276,6 +276,7 @@ async fn site_scanned(
     proofs: Option<makerfoundry::proofs::Proofs>,
     three_d: bool,
     scanner: Option<makerfoundry::scan::Scanner>,
+    thingiverse: Option<makerfoundry::model3d::thingiverse::Thingiverse>,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -295,6 +296,7 @@ async fn site_scanned(
         proofs,
         three_d,
         scanner,
+        thingiverse,
     });
     Some(Site {
         app,
@@ -592,6 +594,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         proofs: None,
         three_d: false,
         scanner: None,
+        thingiverse: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -620,6 +623,7 @@ async fn without_a_database_nobody_can_sign_in() {
         proofs: None,
         three_d: false,
         scanner: None,
+        thingiverse: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1025,6 +1029,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         proofs: None,
         three_d: false,
         scanner: None,
+        thingiverse: None,
     });
     let s = Site {
         app,
@@ -1257,6 +1262,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         proofs: None,
         three_d: false,
         scanner: None,
+        thingiverse: None,
     });
     let s = Site {
         app,
@@ -7887,7 +7893,10 @@ const TEST_VIRUS: &[u8] = b"MF-TEST-VIRUS-SIGNATURE";
 async fn scanned_site() -> Option<(Site, std::sync::Arc<std::sync::atomic::AtomicBool>)> {
     let (address, down) = makerfoundry::scan::stand_in::start(TEST_VIRUS).await.unwrap();
     let scanner = makerfoundry::scan::Scanner::new(&address);
-    Some((site_scanned(Vec::new(), None, true, None, true, scanner).await?, down))
+    Some((
+        site_scanned(Vec::new(), None, true, None, true, scanner, None).await?,
+        down,
+    ))
 }
 
 fn step_with(extra: &[u8]) -> Vec<u8> {
@@ -7971,4 +7980,239 @@ async fn off_without_the_setting_and_nothing_changes() {
         "no scanner set: not scanned, {}",
         r.body
     );
+}
+
+// ---------------------------------------------------------------- Thingiverse import (issue #28)
+
+/// A stand-in for Thingiverse's sign-in and API: Ann ("ann_makes", code "code-ann", token
+/// "tok-ann") made things 1 and 2; her list also names thing 3, which Bob made.
+async fn fake_thingiverse() -> String {
+    use axum::extract::Path as P;
+    use axum::routing::{get, post};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let b = base.clone();
+    let authorised =
+        |h: &HeaderMap| h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) == Some("Bearer tok-ann");
+    let app = Router::new()
+        .route(
+            "/login/oauth/access_token",
+            post(|body: String| async move {
+                if body.contains("code=code-ann") && body.contains("client_secret=sec") {
+                    (StatusCode::OK, "access_token=tok-ann&token_type=Bearer".to_string())
+                } else {
+                    (StatusCode::BAD_REQUEST, "error=bad_code".to_string())
+                }
+            }),
+        )
+        .route(
+            "/users/me",
+            get(move |h: HeaderMap| async move {
+                if authorised(&h) { (StatusCode::OK, json!({"name": "ann_makes"}).to_string()) } else { (StatusCode::UNAUTHORIZED, "{}".into()) }
+            }),
+        )
+        .route(
+            "/users/{name}/things",
+            get(move |h: HeaderMap, P(name): P<String>| async move {
+                if authorised(&h) && name == "ann_makes" {
+                    (StatusCode::OK, json!([{"id": 1}, {"id": 2}, {"id": 3}]).to_string())
+                } else {
+                    (StatusCode::UNAUTHORIZED, "[]".into())
+                }
+            }),
+        )
+        .route(
+            "/things/{id}",
+            get(move |h: HeaderMap, P(id): P<i64>| async move {
+                if !authorised(&h) {
+                    return (StatusCode::UNAUTHORIZED, "{}".to_string());
+                }
+                let thing = match id {
+                    1 => json!({"id": 1, "name": "Cable clip", "license": "Creative Commons - Attribution",
+                                "added": "2021-04-05T10:00:00+00:00", "public_url": "https://www.thingiverse.com/thing:1",
+                                "creator": {"name": "ann_makes"}}),
+                    2 => json!({"id": 2, "name": "Plant pot", "license": "GNU - GPL", "added": "2022-01-02T00:00:00+00:00",
+                                "public_url": "https://www.thingiverse.com/thing:2", "creator": {"name": "ann_makes"}}),
+                    _ => json!({"id": 3, "name": "Bobs boat", "license": "Creative Commons - Attribution",
+                                "public_url": "https://www.thingiverse.com/thing:3", "creator": {"name": "bob"}}),
+                };
+                (StatusCode::OK, thing.to_string())
+            }),
+        )
+        .route(
+            "/things/{id}/files",
+            get(move |h: HeaderMap, P(id): P<i64>| {
+                let b = b.clone();
+                async move {
+                    if !authorised(&h) {
+                        return (StatusCode::UNAUTHORIZED, "[]".to_string());
+                    }
+                    (StatusCode::OK, json!([{"id": id * 10, "name": format!("part{id}.stl"), "download_url": format!("{b}/download/{id}")}]).to_string())
+                }
+            }),
+        )
+        .route(
+            "/download/{id}",
+            get(move |h: HeaderMap| async move {
+                if authorised(&h) { (StatusCode::OK, stl_cube(8.0)) } else { (StatusCode::UNAUTHORIZED, Vec::new()) }
+            }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    base
+}
+
+async fn thingiverse_site() -> Option<Site> {
+    let base = fake_thingiverse().await;
+    let tv = makerfoundry::model3d::thingiverse::Thingiverse::new("app-id", "sec", Some(&base), Some(&base));
+    site_scanned(Vec::new(), None, true, None, true, None, tv).await
+}
+
+/// Signs in at the stand-in: the state from our redirect, sent back with Ann's code → the answer.
+async fn link_thingiverse(s: &Site, cookie: &str, code: &str) -> Answer {
+    let go = s.get("/3d/import/thingiverse", Some(cookie)).await;
+    assert_eq!(go.status, StatusCode::SEE_OTHER, "{}", go.body);
+    let to = url::Url::parse(go.location()).unwrap();
+    assert!(to.path().ends_with("/login/oauth/authorize"));
+    let q: std::collections::HashMap<_, _> = to.query_pairs().into_owned().collect();
+    assert_eq!(q["client_id"], "app-id");
+    assert_eq!(
+        q["redirect_uri"],
+        "https://makerfoundry.test/3d/import/thingiverse/back"
+    );
+    s.get(
+        &format!("/3d/import/thingiverse/back?code={code}&state={}", q["state"]),
+        Some(cookie),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn off_without_the_app_settings() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = s.join("ann%40example.com").await;
+    assert_eq!(
+        s.get("/3d/import/thingiverse", Some(&ann)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        !s.get("/3d/import", Some(&ann))
+            .await
+            .body
+            .contains("/3d/import/thingiverse")
+    );
+}
+
+#[tokio::test]
+async fn only_the_signed_in_accounts_own_things_are_offered() {
+    let Some(s) = thingiverse_site().await else { return };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert!(
+        s.get("/3d/import", Some(&ann))
+            .await
+            .body
+            .contains("/3d/import/thingiverse")
+    );
+    let r = link_thingiverse(&s, &ann, "code-ann").await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let iid = import_id(r.location());
+    let review = s.get(&format!("/3d/import/{iid}"), Some(&ann)).await.body;
+    assert!(
+        review.contains("Cable clip") && review.contains("Plant pot") && review.contains("2 models"),
+        "{review}"
+    );
+    assert!(
+        !review.contains("Bobs boat"),
+        "a thing someone else made isn't brought in: {review}"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_cant_be_used_by_another_account_or_twice() {
+    let Some(s) = thingiverse_site().await else { return };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bob = model_maker(&s, "bob%40example.com", "bob").await;
+    let go = s.get("/3d/import/thingiverse", Some(&ann)).await;
+    let state: String = url::Url::parse(go.location())
+        .unwrap()
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    let back = format!("/3d/import/thingiverse/back?code=code-ann&state={state}");
+    assert!(
+        s.get(&back, Some(&bob))
+            .await
+            .body
+            .contains("didn&#39;t come from here")
+    );
+    assert_eq!(s.get(&back, Some(&ann)).await.status, StatusCode::SEE_OTHER);
+    assert!(
+        s.get(&back, Some(&ann))
+            .await
+            .body
+            .contains("didn&#39;t come from here"),
+        "used once"
+    );
+    // a wrong code brings nothing in
+    let r = link_thingiverse(&s, &ann, "code-bob").await;
+    assert!(r.body.contains("didn&#39;t work"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_imports").await, 1);
+}
+
+/// A draft's title, licence and where it was first published (site, address, date).
+type OriginRow = (String, Option<String>, Option<String>, Option<String>, Option<String>);
+
+#[tokio::test]
+async fn licence_and_date_are_kept_and_the_origin_link_added() {
+    let Some(s) = thingiverse_site().await else { return };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let iid = import_id(link_thingiverse(&s, &ann, "code-ann").await.location());
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&ann)).await;
+    let rows: Vec<OriginRow> = sqlx::query_as(
+        "SELECT title, licence, original_site, original_url, to_char(original_published_at, 'YYYY-MM-DD') FROM mf_designs ORDER BY title",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (
+                "Cable clip".into(),
+                Some("cc-by".into()),
+                Some("thingiverse".into()),
+                Some("https://www.thingiverse.com/thing:1".into()),
+                Some("2021-04-05".into())
+            ),
+            (
+                "Plant pot".into(),
+                None,
+                Some("thingiverse".into()),
+                Some("https://www.thingiverse.com/thing:2".into()),
+                Some("2022-01-02".into())
+            ),
+        ],
+        "the GPL licence isn't guessed at: the creator chooses"
+    );
+}
+
+#[tokio::test]
+async fn the_token_is_never_stored() {
+    let Some(s) = thingiverse_site().await else { return };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let iid = import_id(link_thingiverse(&s, &ann, "code-ann").await.location());
+    s.post(&format!("/3d/import/{iid}/drafts"), "", Some(&ann)).await;
+    let found: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (
+            SELECT row_to_json(t)::text j FROM mf_imports t UNION ALL SELECT row_to_json(t)::text FROM mf_import_files t
+            UNION ALL SELECT row_to_json(t)::text FROM mf_designs t UNION ALL SELECT row_to_json(t)::text FROM mf_oauth_states t
+            UNION ALL SELECT row_to_json(t)::text FROM mf_sessions t) x WHERE j LIKE '%tok-ann%' OR j LIKE '%code-ann%'",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(found, 0);
 }

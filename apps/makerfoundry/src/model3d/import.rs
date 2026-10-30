@@ -139,7 +139,7 @@ fn not_found() -> Response {
 }
 
 /// The signed-in maker who may import (as for uploads), and the database; or the answer instead.
-async fn importer(state: &AppState, headers: &HeaderMap) -> Result<(User, PgPool), Response> {
+pub(crate) async fn importer(state: &AppState, headers: &HeaderMap) -> Result<(User, PgPool), Response> {
     let viewer = current_user(state, headers).await;
     match (viewer, state.db.clone()) {
         (Some(u), Some(pool)) if super::open_to(state, Some(&u)).await => Ok((u, pool)),
@@ -148,7 +148,12 @@ async fn importer(state: &AppState, headers: &HeaderMap) -> Result<(User, PgPool
     }
 }
 
-fn import_form(problem: &str) -> String {
+fn import_form(problem: &str, linked: bool) -> String {
+    let linked = if linked {
+        r#"<p>Or <a class=\"button secondary\" href=\"/3d/import/thingiverse\">bring in your Thingiverse things</a>: sign in there and we bring only the things you made, with their licence and date.</p>"#
+    } else {
+        ""
+    };
     let problem = if problem.is_empty() {
         String::new()
     } else {
@@ -163,6 +168,7 @@ fn import_form(problem: &str) -> String {
 <label>Files or ZIPs <small>(STL, 3MF, OBJ, STEP, images; up to {MAX_FILES} files or {gb} GB at once)</small><input type="file" name="files" multiple required></label>
 <button type="submit">Import</button>
 </form>
+{linked}
 <p class="muted">Only import models you made or have the right to share. You'll see how they were grouped, and each becomes a draft for you to check before publishing.</p>
 </section>"#,
         gb = MAX_BYTES / (1024 * 1024 * 1024),
@@ -173,23 +179,49 @@ pub async fn new_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
     if let Err(r) = importer(&state, &headers).await {
         return r;
     }
-    private("Import your models · MakerFoundry", &import_form(""), true)
+    private(
+        "Import your models · MakerFoundry",
+        &import_form("", state.thingiverse.is_some()),
+        true,
+    )
 }
 
 /// What one import has taken so far.
-struct Taking<'a> {
+pub(crate) struct Taking<'a> {
     storage: &'a Storage,
     pool: &'a PgPool,
     import: i64,
     count: usize,
     bytes: u64,
     stored: Vec<String>,
+    /// Where the next files were first published (address, date, licence), for a linked
+    /// account's import (`thingiverse`).
+    pub(crate) origin: Option<(Option<String>, Option<String>, Option<&'static str>)>,
 }
 
-impl Taking<'_> {
+impl<'a> Taking<'a> {
+    pub(crate) fn new(storage: &'a Storage, pool: &'a PgPool, import: i64) -> Self {
+        Taking {
+            storage,
+            pool,
+            import,
+            count: 0,
+            bytes: 0,
+            stored: Vec::new(),
+            origin: None,
+        }
+    }
+
+    /// Deletes everything this import stored (a refused import keeps nothing).
+    pub(crate) async fn forget(&self) {
+        for key in &self.stored {
+            let _ = self.storage.delete(key).await;
+        }
+    }
+
     /// Notes one file of the import: stored as pending if it's a model file or an image, else
     /// only noted with why it's left out.
-    async fn take(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), String> {
+    pub(crate) async fn take(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), String> {
         self.count += 1;
         self.bytes = self.bytes.saturating_add(bytes.len() as u64);
         if self.count > MAX_FILES {
@@ -222,8 +254,8 @@ impl Taking<'_> {
             Some(_) => None,
         };
         sqlx::query(
-            "INSERT INTO mf_import_files (import_id, path, file_key, file_bytes, image, problem, position)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO mf_import_files (import_id, path, file_key, file_bytes, image, problem, position, origin_url, origin_date, origin_licence)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10)",
         )
         .bind(self.import)
         .bind(path)
@@ -232,6 +264,9 @@ impl Taking<'_> {
         .bind(image)
         .bind(problem)
         .bind(i32::try_from(self.count).unwrap_or(i32::MAX))
+        .bind(self.origin.as_ref().and_then(|o| o.0.clone()))
+        .bind(self.origin.as_ref().and_then(|o| o.1.clone()))
+        .bind(self.origin.as_ref().and_then(|o| o.2))
         .execute(self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -280,7 +315,13 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
     let Some(storage) = state.storage.as_ref() else {
         return Redirect::to("/3d/import").into_response();
     };
-    let again = |why: &str| private("Import your models · MakerFoundry", &import_form(why), true);
+    let again = |why: &str| {
+        private(
+            "Import your models · MakerFoundry",
+            &import_form(why, state.thingiverse.is_some()),
+            true,
+        )
+    };
     if !state.limits.allow(crate::limits::IMPORT, &user.account_id.to_string()) {
         return again("You've imported a lot today. Please try again tomorrow.");
     }
@@ -295,14 +336,7 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
             return again("The import couldn't be started just now. Please try again.");
         }
     };
-    let mut taking = Taking {
-        storage,
-        pool: &pool,
-        import,
-        count: 0,
-        bytes: 0,
-        stored: Vec::new(),
-    };
+    let mut taking = Taking::new(storage, &pool, import);
     let outcome: Result<(), String> = async {
         loop {
             let mut field = match multipart.next_field().await {
@@ -905,6 +939,19 @@ async fn make_draft(
         .bind(name.chars().take(crate::listings::MAX_TITLE).collect::<String>())
         .execute(pool)
         .await;
+    // a linked account's thing: where it was first published, and its licence when it maps
+    let _ = sqlx::query(
+        "UPDATE mf_designs d SET original_site = 'thingiverse', original_url = f.origin_url, original_published_at = f.origin_date,
+                licence = coalesce(d.licence, f.origin_licence)
+         FROM (SELECT origin_url, origin_date, origin_licence FROM mf_import_files
+               WHERE import_id = $2 AND group_name = $3 AND origin_url IS NOT NULL LIMIT 1) f
+         WHERE d.id = $1",
+    )
+    .bind(design)
+    .bind(import)
+    .bind(name)
+    .execute(pool)
+    .await;
     for (fid, key) in used {
         let _ = sqlx::query("UPDATE mf_import_files SET design_id = $2, file_key = NULL WHERE id = $1")
             .bind(fid)

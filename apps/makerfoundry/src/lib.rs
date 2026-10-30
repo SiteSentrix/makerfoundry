@@ -133,6 +133,9 @@ pub struct AppState {
     /// Virus scanning of 3D uploads (issue #29: `MF_CLAMAV`, `host:port` of a ClamAV daemon);
     /// without it uploads aren't scanned.
     pub scanner: Option<scan::Scanner>,
+    /// Importing from a linked Thingiverse account (issue #28: `MF_THINGIVERSE_CLIENT_ID` and
+    /// `MF_THINGIVERSE_CLIENT_SECRET`); without them it's off.
+    pub thingiverse: Option<model3d::thingiverse::Thingiverse>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -292,6 +295,8 @@ pub fn app(state: AppState) -> Router {
             get(model3d::import::new_page).post(model3d::import::create),
         )
         .route("/3d/import/{id}/drafts", post(model3d::import::drafts))
+        .route("/3d/import/thingiverse", get(model3d::thingiverse::start))
+        .route("/3d/import/thingiverse/back", get(model3d::thingiverse::back))
         .layer(DefaultBodyLimit::max(model3d::import::BODY_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(model3d::import::BODY_LIMIT_BYTES))
         .layer(TimeoutLayer::with_status_code(

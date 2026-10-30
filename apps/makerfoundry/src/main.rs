@@ -162,6 +162,12 @@ async fn main() -> ExitCode {
             .collect(),
         proofs,
         three_d: std::env::var("MF_3D").is_ok_and(|v| v.trim() == "yes"),
+        thingiverse: makerfoundry::model3d::thingiverse::Thingiverse::new(
+            &std::env::var("MF_THINGIVERSE_CLIENT_ID").unwrap_or_default(),
+            &std::env::var("MF_THINGIVERSE_CLIENT_SECRET").unwrap_or_default(),
+            std::env::var("THINGIVERSE_WWW_URL").ok().as_deref(),
+            std::env::var("THINGIVERSE_API_URL").ok().as_deref(),
+        ),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
