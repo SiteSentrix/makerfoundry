@@ -1,6 +1,9 @@
 //! MakerFoundry 3D (MF-35…): printable models, their categories, and (in the modules beside this
 //! one) the readers for the files makers upload. See docs/3d-hub-plan.md.
 
+pub mod mesh;
+pub mod stl;
+
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Response};

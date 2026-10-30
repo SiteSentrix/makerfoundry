@@ -13,6 +13,8 @@ use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, RgbImage};
 use lopdf::{Document, Object, Stream, dictionary};
+use makerfoundry::model3d::mesh::{self, Mesh};
+use makerfoundry::model3d::stl;
 use makerfoundry::{convert, embroidery, laser, money, photos, sizes, stripe};
 use proptest::prelude::*;
 use sf_core::{Cmd, Pattern, Point, Rgb, Thread};
@@ -383,6 +385,66 @@ fn photo_sample(format: ImageFormat) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
     picture.write_to(&mut out, format).unwrap();
     out.into_inner()
+}
+
+/// What a 3D reader accepted is within the limits.
+fn check_mesh(m: &Mesh) {
+    assert!(!m.triangles.is_empty() && m.triangles.len() <= mesh::MAX_TRIANGLES);
+    assert!(m.total >= m.triangles.len() as u64);
+    assert!(m.triangles.iter().flatten().flatten().all(|n| n.is_finite()));
+    assert!(m.size_mm().iter().all(|s| s.is_finite() && *s <= mesh::MAX_SIZE_MM));
+}
+
+/// A small STL: a tetrahedron, binary or ASCII.
+fn stl_sample(ascii: bool) -> Vec<u8> {
+    let p = [[0.0f32, 0.0, 0.0], [20.0, 0.0, 0.0], [0.0, 20.0, 0.0], [0.0, 0.0, 20.0]];
+    let tris = [
+        [p[0], p[1], p[2]],
+        [p[0], p[1], p[3]],
+        [p[1], p[2], p[3]],
+        [p[0], p[2], p[3]],
+    ];
+    if ascii {
+        let mut out = String::from("solid t\n");
+        for t in tris {
+            out.push_str("facet normal 0 0 0\nouter loop\n");
+            for v in t {
+                out.push_str(&format!("vertex {} {} {}\n", v[0], v[1], v[2]));
+            }
+            out.push_str("endloop\nendfacet\n");
+        }
+        out.push_str("endsolid t\n");
+        return out.into_bytes();
+    }
+    let mut out = vec![0u8; 80];
+    out.extend(4u32.to_le_bytes());
+    for t in tris {
+        out.extend([0u8; 12]);
+        for n in t.iter().flatten() {
+            out.extend(n.to_le_bytes());
+        }
+        out.extend([0u8; 2]);
+    }
+    out
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+
+    #[test]
+    fn stl_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..4096), solid in any::<bool>()) {
+        let bytes = if solid { [b"solid ".as_slice(), &bytes].concat() } else { bytes };
+        if let Ok(m) = stl::read(&bytes) {
+            check_mesh(&m);
+        }
+    }
+
+    #[test]
+    fn stl_damaged(ascii in any::<bool>(), ds in damages()) {
+        if let Ok(m) = stl::read(&damaged(&stl_sample(ascii), &ds)) {
+            check_mesh(&m);
+        }
+    }
 }
 
 proptest! {

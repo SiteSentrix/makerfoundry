@@ -165,6 +165,11 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   rights reserved), each linked to its official text, never offered on an embroidery or laser
   design (`licences::for_kind`, `find_for`); `/3d` for admins until `MF_3D=yes`, kept out of
   robots and the sitemap until then.
+- **MF-36 STL, built 2026-10-30** (#4): our own binary and ASCII reader (`model3d/stl.rs`) on a
+  shared mesh with the hub's limits (`model3d/mesh.rs`: 100 MB a file, 5 million triangles kept,
+  5000 mm a side, every number finite); a binary count must match the file's size, checked before
+  anything is allocated; property tests with random and damaged files (20,000 cases under a 3 GB
+  cap pass).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
