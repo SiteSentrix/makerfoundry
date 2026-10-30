@@ -155,8 +155,19 @@ fn read_svg(bytes: &[u8]) -> Result<(Shapes, Vec<String>), String> {
     if lower.contains("<!entity") {
         return Err("this SVG declares XML entities, which MakerFoundry doesn't read".into());
     }
-    let tree =
-        usvg::Tree::from_str(text, &usvg::Options::default()).map_err(|_| "this SVG couldn't be read".to_string())?;
+    // parsed once here, checked, then handed to usvg as it is (what `usvg::Tree::from_str` does,
+    // with the check between)
+    let options = usvg::roxmltree::ParsingOptions {
+        allow_dtd: true,
+        ..Default::default()
+    };
+    let doc = usvg::roxmltree::Document::parse_with_options(text, options)
+        .map_err(|_| "this SVG couldn't be read".to_string())?;
+    if !svg_numbers_in_range(&doc) {
+        return Err("this SVG has numbers too large to be a design (check its units)".into());
+    }
+    let tree = usvg::Tree::from_xmltree(&doc, &usvg::Options::default())
+        .map_err(|_| "this SVG couldn't be read".to_string())?;
     let mut shapes = Shapes::default();
     let mut counts = BTreeMap::new();
     svg_group(tree.root(), &mut shapes, &mut counts)?;
@@ -172,6 +183,104 @@ fn read_svg(bytes: &[u8]) -> Result<(Shapes, Vec<String>), String> {
         not_drawn.push(format!("{n} embedded picture{}", if *n == 1 { "" } else { "s" }));
     }
     Ok((shapes, not_drawn))
+}
+
+/// The largest number an SVG may give in its drawing (coordinates, lengths, radii, transforms):
+/// far beyond any laser bed in any unit. usvg turns arcs into curves before our own limits are
+/// checked, and an arc with a radius like 1e30 made it allocate gigabytes (found by the property
+/// tests, `tests/untrusted_input.rs`; `docs/debug-logs/2026-10-30-svg-arc-memory.md`), so such
+/// files are refused before usvg sees them.
+pub const MAX_SVG_NUMBER: f64 = 1e7;
+
+/// The attributes usvg reads geometry from (and `style`, which can carry the same as CSS).
+const SVG_GEOMETRY: &[&str] = &[
+    "d",
+    "points",
+    "x",
+    "y",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "cx",
+    "cy",
+    "fx",
+    "fy",
+    "r",
+    "rx",
+    "ry",
+    "width",
+    "height",
+    "viewBox",
+    "transform",
+    "gradientTransform",
+    "patternTransform",
+    "stroke-width",
+    "refX",
+    "refY",
+    "markerWidth",
+    "markerHeight",
+    "style",
+];
+
+/// Whether every number in the drawing's attributes, and in `<style>` sheets, is within
+/// `MAX_SVG_NUMBER`. Ids, links and editors' own attributes (in their namespaces) aren't drawing
+/// and aren't checked.
+fn svg_numbers_in_range(doc: &usvg::roxmltree::Document) -> bool {
+    doc.descendants().all(|node| {
+        let attributes = node.attributes().all(|a| {
+            a.namespace().is_some() || !SVG_GEOMETRY.contains(&a.name()) || numbers_within(a.value(), MAX_SVG_NUMBER)
+        });
+        let sheet = !node.has_tag_name("style")
+            || node
+                .children()
+                .filter_map(|c| c.text())
+                .all(|t| numbers_within(t, MAX_SVG_NUMBER));
+        attributes && sheet
+    })
+}
+
+/// Whether every number written in `text` (`12`, `-3.5`, `.5e2`, `1e30`) is at most `max` in size
+/// and finite.
+fn numbers_within(text: &str, max: f64) -> bool {
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let starts = b.get(i).is_some_and(u8::is_ascii_digit)
+            || (b.get(i) == Some(&b'.') && b.get(i + 1).is_some_and(u8::is_ascii_digit));
+        if !starts {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if b.get(i) == Some(&b'.') {
+            i += 1;
+            while b.get(i).is_some_and(u8::is_ascii_digit) {
+                i += 1;
+            }
+        }
+        // an exponent only when digits follow it (`1em` is a number and a unit)
+        if matches!(b.get(i), Some(b'e' | b'E')) {
+            let sign = usize::from(matches!(b.get(i + 1), Some(b'+' | b'-')));
+            if b.get(i + 1 + sign).is_some_and(u8::is_ascii_digit) {
+                i += 1 + sign;
+                while b.get(i).is_some_and(u8::is_ascii_digit) {
+                    i += 1;
+                }
+            }
+        }
+        let ok = text
+            .get(start..i)
+            .and_then(|n| n.parse::<f64>().ok())
+            .is_some_and(|v| v.is_finite() && v.abs() <= max);
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 fn svg_rgb(paint: &usvg::Paint) -> (u8, u8, u8) {
@@ -732,6 +841,40 @@ fn preview_svg(shapes: &[Shape], (x0, y0, w, h): (f64, f64, f64, f64)) -> String
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn numbers_in_text_are_found_and_measured() {
+        assert!(numbers_within("M0 0L10 10 A5 5 0 0 1 20 20Z", 1e7));
+        assert!(numbers_within("translate(-12.5 .5e2) scale(2)", 1e7));
+        assert!(numbers_within("stroke-width:1em;fill:#123456", 1e7));
+        assert!(numbers_within("", 1e7));
+        assert!(!numbers_within("M0 0 A1e30 1e30 0 0 1 1 1", 1e7));
+        assert!(!numbers_within("M0 0L20000000 0", 1e7));
+        assert!(!numbers_within("scale(1E+8)", 1e7));
+        assert!(!numbers_within("x 1e999", 1e7), "infinite");
+        assert!(numbers_within("1e-30", 1e7), "tiny is fine");
+    }
+
+    #[test]
+    fn an_svg_with_huge_numbers_is_refused_before_usvg_reads_it() {
+        let svg = |body: &str| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="100mm" viewBox="0 0 100 100">{body}</svg>"#
+            )
+        };
+        let huge = svg(r#"<g transform="scale(2)"><path d="M0 0 A1e30 1e30 0 1 1 1e30 0" stroke="red"/></g>"#);
+        assert_eq!(
+            read(huge.as_bytes(), "SVG").map(|_| ()),
+            Err("this SVG has numbers too large to be a design (check its units)".to_string())
+        );
+        let styled = svg(r#"<style>path { stroke-width: 1e30 }</style><path d="M0 0L10 10" stroke="red"/>"#);
+        assert!(read(styled.as_bytes(), "SVG").is_err());
+        // ids, links and editors' attributes aren't drawing
+        let fine = svg(
+            r#"<path id="path20231231" inkscape:label="layer 20231231" d="M0 0L10 10 A5 5 0 0 1 20 20" stroke="red"/>"#,
+        );
+        assert!(read(fine.as_bytes(), "SVG").is_ok());
+    }
     use super::*;
     use std::f64::consts::PI;
 
