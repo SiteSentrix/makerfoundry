@@ -357,7 +357,9 @@ PrusaSlicer 3MF, broken 3MF, oversized uploads, and draft to publish.
 7. **Thingiverse import (P2):** registering an app and confirming its API terms allow it.
 8. ~~**Get this printed**~~: **decided 2026-10-30: off for now.** Who prints and where the
    button goes are decided later.
-9. **The showcase:** the consent wording, the caption template, and the Terms and Privacy text.
+9. ~~**The showcase**~~: **approach agreed 2026-10-30** (§ 9: the unticked box's wording, a
+   caption crediting only the chosen display name, Terms and Privacy text drafted in #26). The
+   drafted legal text still comes back to the owner before it goes into the Terms.
 10. **Founding creators:** how many invites, and sample 3MF files from Nick (Bambu, with AMS
     colours) and others (PrusaSlicer, Cura), to build the parsers against real files.
 11. **The section's name** (for example "MakerFoundry 3D") and its categories.
