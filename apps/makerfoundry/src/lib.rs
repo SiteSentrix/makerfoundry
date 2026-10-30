@@ -25,6 +25,7 @@ pub mod limits;
 pub mod listings;
 pub mod makers;
 pub mod makes;
+pub mod model3d;
 pub mod moderation;
 pub mod money;
 pub mod overview;
@@ -115,6 +116,8 @@ pub struct AppState {
     /// Approval links (MF-25: `MF_PROOF_KEY`, and `MF_PROOFS=yes` for everyone, admins before);
     /// without the key there are none.
     pub proofs: Option<proofs::Proofs>,
+    /// MakerFoundry 3D (MF-35: `MF_3D=yes` for everyone, admins before).
+    pub three_d: bool,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -199,6 +202,7 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/orders", get(selling::orders))
         .route("/admin/orders/{order}/refund", post(selling::refund))
         .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
+        .route("/3d", get(model3d::landing))
         .route("/founding", get(founding::page).post(founding::apply))
         .route("/admin/founding", get(founding::admin))
         .route("/admin/founding/{account}/{action}", post(founding::decide))
@@ -346,7 +350,8 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
 async fn robots(State(state): State<AppState>) -> Response {
     let text = if state.launched {
         format!(
-            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nDisallow: /api/\nDisallow: /proofs\nDisallow: /p/\nSitemap: {}/sitemap.xml\n",
+            "User-agent: *\nDisallow: /account\nDisallow: /admin\nDisallow: /designs\nDisallow: /library\nDisallow: /preview\nDisallow: /signin\nDisallow: /signup\nDisallow: /forgot\nDisallow: /d/*/download\nDisallow: /d/*/report\nDisallow: /api/\nDisallow: /proofs\nDisallow: /p/\n{}Sitemap: {}/sitemap.xml\n",
+            if state.three_d { "" } else { "Disallow: /3d\n" },
             state.public_url
         )
     } else {
@@ -372,6 +377,9 @@ async fn sitemap(State(state): State<AppState>) -> Response {
         .iter()
         .map(|p| format!("{base}{p}"))
         .collect();
+    if state.three_d {
+        urls.push(format!("{base}/3d"));
+    }
     if let Some(pool) = &state.db {
         let designs: Vec<(i64, String)> = sqlx::query_as(
             "SELECT id, title FROM mf_designs WHERE status = 'published' ORDER BY published_at DESC LIMIT 40000",
@@ -406,7 +414,7 @@ async fn sitemap(State(state): State<AppState>) -> Response {
         .into_response()
 }
 
-async fn not_found() -> (StatusCode, Html<String>) {
+pub(crate) async fn not_found() -> (StatusCode, Html<String>) {
     (
         StatusCode::NOT_FOUND,
         Html(page(

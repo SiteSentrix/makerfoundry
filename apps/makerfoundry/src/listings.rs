@@ -15,7 +15,7 @@ use sqlx::{PgPool, Row};
 use crate::AppState;
 use crate::accounts::{User, current_user, forbidden, private, same_origin};
 use crate::designs::{self, DesignRow};
-use crate::licences::{self, LICENCES};
+use crate::licences;
 use crate::makers;
 use crate::money::dollars;
 use crate::pages::{escape, page};
@@ -890,8 +890,8 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
     } else {
         format!(r#"<p class="problem" role="alert">{}</p>"#, escape(problem))
     };
-    let choices: String = LICENCES
-        .iter()
+    let choices: String = licences::for_kind(kind)
+        .into_iter()
         .map(|l| {
             format!(
                 r#"<label class="choice"><input type="radio" name="licence" value="{id}"{checked}> <span><strong>{name}</strong><br><span class="muted">{plain}</span></span></label>"#,
@@ -1043,7 +1043,7 @@ pub async fn save(
     if description.chars().count() > MAX_DESCRIPTION {
         return again(&format!("The description can be up to {MAX_DESCRIPTION} characters."));
     }
-    if licences::find(&f.licence).is_none() {
+    if licences::find_for(&d.kind, &f.licence).is_none() {
         return again("Choose a licence.");
     }
     let price = match selling::check_price(&f.price) {

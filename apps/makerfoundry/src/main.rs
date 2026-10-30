@@ -161,6 +161,7 @@ async fn main() -> ExitCode {
             .filter(|o| !o.is_empty())
             .collect(),
         proofs,
+        three_d: std::env::var("MF_3D").is_ok_and(|v| v.trim() == "yes"),
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)

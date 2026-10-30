@@ -146,6 +146,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `MF_TAX_CODE` | no (`txcd_10505001`) | the Stripe tax code designs are sold under: Digital Finished Artwork, downloaded, with permanent rights |
 | `MF_PROOF_KEY` | for approval links | the key proofs' customer links are made with (MF-25): 64 hex digits, `openssl rand -hex 32`. A secret: whoever has it can open any proof. Without it there are no proofs. A new key ends every customer link (shops then send their links again) |
 | `MF_PROOFS` | no (admins only) | `yes` lets every account send proofs (their wording is in the Terms § 9 and the Privacy Policy since 2026-10-30) |
+| `MF_3D` | no (admins only) | `yes` opens MakerFoundry 3D (`/3d`, MF-35 onwards) to everyone, after its launch checks (MF-59) |
 | `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |
 | `STRIPE_API_URL` | no | a stand-in for Stripe's API (local tests) |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |

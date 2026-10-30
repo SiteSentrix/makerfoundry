@@ -241,7 +241,7 @@ async fn site_full(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe
 
 /// The test site, open to everyone (`launched`) or not.
 async fn site_opts(admins: Vec<i64>, stripe: Option<makerfoundry::stripe::Stripe>, launched: bool) -> Option<Site> {
-    site_all(admins, stripe, launched, None).await
+    site_all(admins, stripe, launched, None, false).await
 }
 
 /// The key the test sites make proof links with.
@@ -250,7 +250,12 @@ const PROOF_KEY: [u8; 32] = [9; 32];
 /// The test site with approval links (MF-25), for everyone (`open`) or for `admins` only.
 async fn site_with_proofs(admins: Vec<i64>, open: bool) -> Option<Site> {
     let proofs = makerfoundry::proofs::Proofs::new(&PROOF_KEY, open).unwrap();
-    site_all(admins, None, false, Some(proofs)).await
+    site_all(admins, None, false, Some(proofs), false).await
+}
+
+/// The test site, open to everyone, with MakerFoundry 3D (MF-35) switched on or not.
+async fn site_3d(admins: Vec<i64>, three_d: bool) -> Option<Site> {
+    site_all(admins, None, true, None, three_d).await
 }
 
 async fn site_all(
@@ -258,6 +263,7 @@ async fn site_all(
     stripe: Option<makerfoundry::stripe::Stripe>,
     launched: bool,
     proofs: Option<makerfoundry::proofs::Proofs>,
+    three_d: bool,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -275,6 +281,7 @@ async fn site_all(
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs,
+        three_d,
     });
     Some(Site {
         app,
@@ -570,6 +577,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
+        three_d: false,
     });
     let s = Site {
         stored: Arc::default(),
@@ -596,6 +604,7 @@ async fn without_a_database_nobody_can_sign_in() {
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
+        three_d: false,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -999,6 +1008,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
+        three_d: false,
     });
     let s = Site {
         app,
@@ -1229,6 +1239,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
+        three_d: false,
     });
     let s = Site {
         app,
@@ -4909,4 +4920,69 @@ async fn there_are_never_more_than_100_founding_creators() {
             .await,
         100
     );
+}
+
+#[tokio::test]
+async fn the_3d_section_is_for_admins_until_switched_on() {
+    let Some(s) = site_3d(vec![1000], false).await else {
+        return;
+    };
+    let join = |email: &'static str| {
+        let s = &s;
+        async move {
+            s.post(
+                "/signup",
+                &format!("email={email}&password=fire+truck+1&again=fire+truck+1&agree=yes"),
+                None,
+            )
+            .await
+            .cookie()
+        }
+    };
+    let admin = join("admin%40example.com").await;
+    let maker = join("maker%40example.com").await;
+    assert_eq!(s.get("/3d", None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get("/3d", Some(&maker)).await.status, StatusCode::NOT_FOUND);
+    let page = s.get("/3d", Some(&admin)).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("MakerFoundry 3D"));
+    assert!(page.body.contains("Tools &amp; workshop"), "the categories are listed");
+    let robots = s.get("/robots.txt", None).await.body;
+    assert!(robots.contains("Disallow: /3d\n"), "{robots}");
+    assert!(!s.get("/sitemap.xml", None).await.body.contains("/3d<"));
+
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let page = s.get("/3d", None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("3D printer parts &amp; upgrades"));
+    assert!(!s.get("/robots.txt", None).await.body.contains("/3d"));
+    assert!(
+        s.get("/sitemap.xml", None)
+            .await
+            .body
+            .contains("https://makerfoundry.test/3d<")
+    );
+}
+
+#[tokio::test]
+async fn a_3d_licence_is_refused_on_an_embroidery_design() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("maker%40example.com").await;
+    let id = add_design(&s, &cookie, sf_formats::Format::Pes, "rose.pes").await;
+    let form = s.get(&format!("/designs/{id}/edit"), Some(&cookie)).await.body;
+    assert!(form.contains("value=\"cc-by\""));
+    assert!(
+        !form.contains("gpl-3.0-or-later"),
+        "only the embroidery licences are offered"
+    );
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Rose&licence=gpl-3.0-or-later",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("Choose a licence."), "{}", r.body);
 }

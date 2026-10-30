@@ -157,6 +157,15 @@ an opt-in social showcase, and Get this printed. The comparison with Thingiverse
 order; P2 and P3 `claude-proposed`). Off until `MF_3D=yes`; selling, approval links and the
 StitchShop ordering work stay as they are.
 
+Progress (test-first, from `docs/3d-hub-test-plan.md`):
+- **MF-35 foundation, built 2026-10-30** (#3): designs may be `model3d` (migration 0022: a
+  category, print settings, and where an imported model was first posted); the 14 categories
+  (`model3d/mod.rs`); 15 more licences for 3D models only (CC BY-SA, BY-NC-SA, BY-ND, BY-NC-ND,
+  GPL 2/3 or later, LGPL 2.1/3 or later, BSD 3-Clause, Apache 2.0, MIT, CERN-OHL-S/W/P 2.0, all
+  rights reserved), each linked to its official text, never offered on an embroidery or laser
+  design (`licences::for_kind`, `find_for`); `/3d` for admins until `MF_3D=yes`, kept out of
+  robots and the sitemap until then.
+
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
   also from the seller's share, payouts monthly** (research: `docs/research/marketplace-fees.md`).
