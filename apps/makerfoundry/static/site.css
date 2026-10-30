@@ -76,11 +76,11 @@ main { flex: 1; }
 .api-keys li { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; }
 .api-keys form { margin: 0; }
 .form label small { font-weight: 400; color: var(--muted); }
-.form input {
+.form input, .form select {
   font: inherit; font-weight: 400; color: var(--fg); background: var(--card);
   border: 1px solid var(--line); border-radius: .5rem; padding: .65rem .75rem; width: 100%;
 }
-.form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.form input:focus, .form select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 button {
   font: inherit; font-weight: 600; cursor: pointer; justify-self: start;
   background: var(--accent); color: var(--on-accent); border: 0; border-radius: .5rem; padding: .7rem 1.2rem;

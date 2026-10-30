@@ -300,6 +300,7 @@ async fn site_scanned(
         social: None,
         notices: None,
         step: None,
+        scad: None,
     });
     Some(Site {
         app,
@@ -601,6 +602,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         social: None,
         notices: None,
         step: None,
+        scad: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -633,6 +635,7 @@ async fn without_a_database_nobody_can_sign_in() {
         social: None,
         notices: None,
         step: None,
+        scad: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1042,6 +1045,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         social: None,
         notices: None,
         step: None,
+        scad: None,
     });
     let s = Site {
         app,
@@ -1278,6 +1282,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         social: None,
         notices: None,
         step: None,
+        scad: None,
     });
     let s = Site {
         app,
@@ -8237,7 +8242,7 @@ async fn the_token_is_never_stored() {
 async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
     let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
     let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
-    Some((services_site(social, None, None).await?, calls))
+    Some((services_site(social, None, None, None).await?, calls))
 }
 
 /// A 3D site with the outside services given.
@@ -8245,6 +8250,7 @@ async fn services_site(
     social: Option<makerfoundry::model3d::social::Social>,
     notices: Option<makerfoundry::notices::Notices>,
     step: Option<makerfoundry::model3d::step::Converter>,
+    scad: Option<makerfoundry::model3d::scad::Renderer>,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -8268,6 +8274,7 @@ async fn services_site(
         social,
         notices,
         step,
+        scad,
     });
     Some(Site {
         app,
@@ -8390,7 +8397,11 @@ async fn notices_site() -> Option<(
 )> {
     let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
     let notices = makerfoundry::notices::Notices::new("re_test_key", None, Some(&base)).unwrap();
-    Some((services_site(None, Some(notices.clone()), None).await?, notices, sent))
+    Some((
+        services_site(None, Some(notices.clone()), None, None).await?,
+        notices,
+        sent,
+    ))
 }
 
 /// The digests sent, by recipient: (to, text).
@@ -8614,7 +8625,7 @@ async fn notices_are_in_the_data_download_and_go_with_the_data() {
 async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloaded() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter).await else {
+    let Some(s) = services_site(None, None, converter, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8665,7 +8676,7 @@ async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloa
 async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter).await else {
+    let Some(s) = services_site(None, None, converter, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8691,7 +8702,7 @@ async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     );
     // without a converter, nothing is sent and STEP files have no preview, as before
     drop(s);
-    let Some(s) = services_site(None, None, None).await else {
+    let Some(s) = services_site(None, None, None, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8887,4 +8898,200 @@ async fn before_3d_opens_only_admin_keys_answer_and_keys_are_rate_limited() {
     }
     let (st, body) = api_get(&s, "/api/v1/models/1", Some(&key)).await;
     assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{body}");
+}
+
+// ---------------------------------------------------------------- parametric models (issue #35)
+
+const PARAMETRIC: &str = "// Size of the box (mm)\nsize = 40; // [10:5:100]\n// Lid\nlid = \"snap\"; // [snap, slide]\nfail = false;\n/* [Hidden] */\nsecret = 1;\nmodule box() { cube(size); }\nbox();\n";
+
+/// A free published model with an STL and a parametric `.scad` → its id and the `.scad`'s id.
+async fn parametric_model(s: &Site, cookie: &str, price: &str) -> (i64, i64) {
+    let r = upload_model(
+        s,
+        cookie,
+        &[("box.stl", stl_cube(5.0)), ("box.scad", PARAMETRIC.as_bytes().to_vec())],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let id = design_id(r.location());
+    s.post(
+        &format!("/designs/{id}/edit"),
+        &format!("title=Box&category=household&licence=cc-by&price={price}"),
+        Some(cookie),
+    )
+    .await;
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let file: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND format = 'scad'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    (id, file)
+}
+
+#[tokio::test]
+async fn a_parametric_model_is_customized_and_downloaded_as_a_checked_stl() {
+    let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
+    let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
+    let Some(s) = services_site(None, None, None, scad).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let (id, file) = parametric_model(&s, &ann, "0").await;
+    let model = s.get(&format!("/d/{id}/box"), None).await.body;
+    assert!(model.contains(&format!("/d/{id}/customize/{file}")), "{model}");
+    let page = s.get(&format!("/d/{id}/customize/{file}"), None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(
+        page.body
+            .contains(r#"name="p_size" value="40" min="10" max="100" step="5""#)
+            && page.body.contains(r#"<option value="slide">slide</option>"#)
+            && page.body.contains("Size of the box (mm)")
+            && !page.body.contains("p_secret"),
+        "{}",
+        page.body
+    );
+    s.dump_page("customize", &page.body, None).await;
+    // signing in first
+    let r = s.post(&format!("/d/{id}/customize/{file}"), "p_size=55", None).await;
+    assert!(r.location().starts_with("/signin"), "{}", r.location());
+    let bea = s.join("bea%40example.com").await;
+    let r = s
+        .post(
+            &format!("/d/{id}/customize/{file}"),
+            "p_size=55&p_lid=slide&p_secret=9",
+            Some(&bea),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.headers[header::CONTENT_TYPE], "model/stl");
+    assert!(
+        r.headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("box-custom.stl")
+    );
+    {
+        let log = calls.lock().unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0]["scad"], PARAMETRIC);
+        assert_eq!(log[0]["parameters"]["size"], 55.0);
+        assert_eq!(log[0]["parameters"]["lid"], "slide");
+        assert!(
+            log[0]["parameters"].get("secret").is_none(),
+            "hidden values aren't sent"
+        );
+    }
+    // out of range, not a choice, or a render that fails: the form again, saying why
+    let r = s
+        .post(&format!("/d/{id}/customize/{file}"), "p_size=500", Some(&bea))
+        .await;
+    assert!(r.body.contains("size is out of its range"), "{}", r.body);
+    let r = s
+        .post(&format!("/d/{id}/customize/{file}"), "p_lid=hinge", Some(&bea))
+        .await;
+    assert!(r.body.contains("lid isn&#39;t one of its choices"), "{}", r.body);
+    let r = s
+        .post(&format!("/d/{id}/customize/{file}"), "p_fail=true", Some(&bea))
+        .await;
+    assert!(r.body.contains("couldn&#39;t be made"), "{}", r.body);
+    assert_eq!(calls.lock().unwrap().len(), 2);
+    // a file that isn't the model's .scad, or another model's
+    assert_eq!(
+        s.get(&format!("/d/{id}/customize/{}", file - 1), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/d/{}/customize/{file}", id + 1), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // a form from elsewhere
+    let mut req = Request::post(format!("/d/{id}/customize/{file}")).header(header::HOST, HOST);
+    req = req
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &bea)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+    assert_eq!(
+        s.send(req.body(Body::from("p_size=20")).unwrap()).await.status,
+        StatusCode::FORBIDDEN
+    );
+    // rate limited: 30 an hour
+    // (two renders so far; values refused before rendering aren't counted)
+    for _ in 0..28 {
+        s.post(&format!("/d/{id}/customize/{file}"), "p_size=20", Some(&bea))
+            .await;
+    }
+    let r = s
+        .post(&format!("/d/{id}/customize/{file}"), "p_size=20", Some(&bea))
+        .await;
+    assert!(r.body.contains("a lot of models this hour"), "{}", r.body);
+}
+
+#[tokio::test]
+async fn customizing_is_off_without_the_service_and_for_models_for_sale() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let (id, file) = parametric_model(&s, &ann, "0").await;
+    assert!(!s.get(&format!("/d/{id}/box"), None).await.body.contains("/customize/"));
+    assert_eq!(
+        s.get(&format!("/d/{id}/customize/{file}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    drop(s);
+    let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
+    let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
+    let Some(s) = services_site(None, None, None, scad).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    // a paid model can't be published without selling set up, so a draft stands in: not public
+    let r = upload_model(
+        &s,
+        &ann,
+        &[("box.stl", stl_cube(5.0)), ("box.scad", PARAMETRIC.as_bytes().to_vec())],
+        &[],
+    )
+    .await;
+    let draft = design_id(r.location());
+    let draft_file: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND format = 'scad'")
+        .bind(draft)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let bea = s.join("bea%40example.com").await;
+    assert_eq!(
+        s.get(&format!("/d/{draft}/customize/{draft_file}"), Some(&bea))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // its maker may try it before publishing
+    assert_eq!(
+        s.get(&format!("/d/{draft}/customize/{draft_file}"), Some(&ann))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    sqlx::query("UPDATE mf_designs SET status = 'published', price_cents = 500 WHERE id = $1")
+        .bind(draft)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(&format!("/d/{draft}/customize/{draft_file}"), Some(&bea))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let r = s
+        .post(&format!("/d/{draft}/customize/{draft_file}"), "p_size=20", Some(&bea))
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    assert!(calls.lock().unwrap().is_empty());
 }

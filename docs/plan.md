@@ -374,6 +374,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   revocable) and 1,000 requests an hour a key; only admins' keys answer until `MF_3D=yes`. In the
   data download and deleted with the data. Documented in `docs/api.md`. Publishing from slicers is
   for later.
+- **#35 parametric models, built 2026-10-30, off until a render service exists**: a model's `.scad`
+  file's Customizer parameters are read by our own reader of the syntax in OpenSCAD's manual
+  (numbers with ranges, dropdowns, checkboxes, text, vectors, groups; hidden ones left out; nothing
+  but literals), shown as a form at `/d/{id}/customize/{file}` for anyone who may download the
+  model; signed-in members (30 an hour) get an STL made by the owner's sandboxed OpenSCAD service
+  from values each checked against its declaration, read again by our own STL reader before it's
+  sent. Tested against a stand-in service. **The owner's steps**: decide on cost; deploy OpenSCAD
+  as its own Railway service (GPL: a separate program, never linked or copied; caps on time,
+  memory and output; no network), set `MF_SCAD_SERVICE` (and a key); check it's fast and reliable
+  before switching on, as the issue asks.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

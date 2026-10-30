@@ -147,6 +147,9 @@ pub struct AppState {
     /// STEP previews through a converter service (issue #32: `MF_STEP_CONVERTER`, and
     /// `MF_STEP_CONVERTER_KEY`); without it STEP files have no preview.
     pub step: Option<model3d::step::Converter>,
+    /// Parametric models through a sandboxed OpenSCAD service (issue #35: `MF_SCAD_SERVICE`, and
+    /// `MF_SCAD_SERVICE_KEY`); without it there's no customizing.
+    pub scad: Option<model3d::scad::Renderer>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -183,6 +186,10 @@ pub fn app(state: AppState) -> Router {
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
         .route("/d/{id}/like", post(model3d::likes::like))
+        .route(
+            "/d/{id}/customize/{file}",
+            get(model3d::scad::page).post(model3d::scad::make),
+        )
         .route("/makes/{mid}/delete", post(makes::delete))
         .route(
             "/makes/{mid}/report",

@@ -30,6 +30,7 @@ fn app() -> axum::Router {
         social: None,
         notices: None,
         step: None,
+        scad: None,
     })
 }
 

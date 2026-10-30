@@ -11,6 +11,7 @@ pub mod origin;
 pub mod profile;
 pub mod remix;
 pub mod render;
+pub mod scad;
 pub mod search;
 pub mod showcase;
 pub mod social;

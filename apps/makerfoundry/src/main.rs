@@ -182,6 +182,9 @@ async fn main() -> ExitCode {
         step: std::env::var("MF_STEP_CONVERTER").ok().and_then(|u| {
             makerfoundry::model3d::step::Converter::new(&u, std::env::var("MF_STEP_CONVERTER_KEY").ok().as_deref())
         }),
+        scad: std::env::var("MF_SCAD_SERVICE").ok().and_then(|u| {
+            makerfoundry::model3d::scad::Renderer::new(&u, std::env::var("MF_SCAD_SERVICE_KEY").ok().as_deref())
+        }),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
