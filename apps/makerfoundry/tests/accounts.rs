@@ -7709,3 +7709,39 @@ async fn withdrawal_removes_from_the_queue_and_flags_posted_items_until_taken_do
             .contains(&format!("/admin/showcase/{cid2}/posted"))
     );
 }
+
+// ---------------------------------------------------------------- Also by this maker (MF-57)
+
+#[tokio::test]
+async fn also_by_this_maker_lists_only_published_designs_of_other_kinds() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (ann, rose, coaster, gear) = creator_with_three_kinds(&s).await;
+    // a draft embroidery design never shows
+    let draft = add_design(&s, &ann, sf_formats::Format::Pes, "tulip.pes").await;
+    let page = s.get(&format!("/d/{gear}/gear"), None).await.body;
+    assert!(page.contains("Also by this maker"), "{page}");
+    assert!(
+        page.contains(&format!("/d/{rose}/")) && page.contains(&format!("/d/{coaster}/")),
+        "{page}"
+    );
+    assert!(!page.contains(&format!("/d/{draft}/")), "{page}");
+    assert!(page.contains(r#"href="/makers/ann""#), "{page}");
+    assert!(
+        !page.contains("Get this printed"),
+        "no print orders yet (the owner's decision)"
+    );
+}
+
+#[tokio::test]
+async fn none_when_the_maker_has_no_other_kinds() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    licensed_model(&s, &ann, "Wheel", "cc-by").await;
+    let page = s.get(&format!("/d/{gear}/gear"), None).await.body;
+    assert!(!page.contains("Also by this maker"), "{page}");
+}

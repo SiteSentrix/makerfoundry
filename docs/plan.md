@@ -305,6 +305,9 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   post's address (`mf_showcase_posts`, migration 0031). A withdrawn consent, or a model taken
   down, takes the item off the queue and flags its posts ("Take these down") until marked taken
   down.
+- **MF-57 Also by this maker, built 2026-10-30** (#25): a 3D model's page lists a few of its
+  maker's published embroidery and laser designs, with a link to all their work; nothing when
+  they have none. No "Get this printed" button (the owner's decision: off for now).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

@@ -467,6 +467,33 @@ pub fn fits_text(d: &DesignRow) -> Option<String> {
     }
 }
 
+/// "Also by this maker" on a 3D model's page (MF-57): the same maker's published embroidery and
+/// laser designs, a few of each, and a link to all their work.
+async fn also_by(pool: &PgPool, account: i64, handle: Option<&str>) -> String {
+    let mut cards = Vec::new();
+    for kind in ["embroidery", "laser"] {
+        cards.extend(
+            find(
+                pool,
+                &Filter {
+                    account: Some(account),
+                    kind: Some(kind.to_string()),
+                    ..Filter::default()
+                },
+                4,
+            )
+            .await,
+        );
+    }
+    if cards.is_empty() {
+        return String::new();
+    }
+    let all = handle
+        .map(|h| format!(r#"<p><a href="/makers/{h}">All their work</a></p>"#, h = escape(h)))
+        .unwrap_or_default();
+    format!(r#"<h2>Also by this maker</h2>{}{all}"#, cards_html(&cards))
+}
+
 /// Whether `viewer` may see design `d`: anyone once it's published; otherwise (a draft, or taken
 /// down) only its maker and the admins.
 pub fn visible(d: &DesignRow, viewer: Option<&User>, admins: &[i64]) -> bool {
@@ -643,8 +670,9 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         let files = crate::model3d::upload::model_files(pool, id).await;
         let profiles = crate::model3d::upload::profiles(pool, id).await;
         format!(
-            "{}{}{}",
+            "{}{}{}{}",
             crate::model3d::remix::section(pool, id).await,
+            also_by(pool, d.account_id, maker.as_ref().map(|m| m.handle.as_str())).await,
             crate::model3d::upload::profiles_html(id, &profiles, may_download),
             crate::model3d::upload::public_files_html(id, &files, may_download)
         )
