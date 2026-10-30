@@ -4,6 +4,7 @@
 pub mod files;
 pub mod mesh;
 pub mod obj;
+pub mod render;
 pub mod stl;
 pub mod threemf;
 pub mod zip;

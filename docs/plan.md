@@ -189,6 +189,11 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   ISO 10303-21 text (header, `HEADER;`, end line, no NUL bytes), `.mtl`, `.scad`, `.txt` and
   `.md` checked to be text of at most 5 MB; every other extension refused. STEP and the text
   companions are only ever downloads (`attachment_only`).
+- **MF-40 thumbnails, built 2026-10-30** (#8): our own renderer (`model3d/render.rs`):
+  orthographic, depth-buffered, flat-shaded, PNG with a clear background; a hero view and front,
+  side and top views (each slightly turned so faces shade apart); at most 300,000 triangles drawn
+  (an even sample beyond) and 400 million pixels visited, so any mesh draws in bounded time; a
+  3MF's own thumbnail is preferred for the main picture (`render::hero`).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
