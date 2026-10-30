@@ -105,7 +105,16 @@ pub fn slicer_of(application: Option<&str>) -> &'static str {
 fn number(v: &serde_json::Value) -> Option<f64> {
     match v {
         serde_json::Value::Number(n) => n.as_f64(),
-        serde_json::Value::String(s) => s.trim().trim_end_matches('%').trim().parse().ok(),
+        // ("0.4,0.4": one per extruder, as PrusaSlicer writes them)
+        serde_json::Value::String(s) => s
+            .split([',', ';'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches('%')
+            .trim()
+            .parse()
+            .ok(),
         serde_json::Value::Array(list) => list.first().and_then(number),
         _ => None,
     }
@@ -148,48 +157,128 @@ fn colour(c: &str) -> Option<String> {
 /// The most filament slots read.
 const MAX_SLOTS: usize = 32;
 
-/// Reads a project's profile from the settings files it kept (name, text) and what wrote it.
-pub fn read(settings: &[(String, String)], application: Option<&str>) -> Option<Profile> {
-    let find = |name: &str| {
-        settings
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|(_, t)| t.as_str())
-    };
-    let slicer = slicer_of(application);
-    let project = find("Metadata/project_settings.config");
-    if project.is_none() && slicer == "unknown" {
-        return None;
+/// A slicer's names for the settings read.
+struct Keys {
+    printer: &'static [&'static str],
+    nozzle: &'static str,
+    layer: &'static str,
+    infill: &'static str,
+    walls: &'static str,
+    supports: &'static str,
+    types: &'static str,
+    colours: &'static str,
+    /// The settings file saying which filament slot each object and part uses.
+    model: &'static str,
+}
+
+/// Bambu Studio and OrcaSlicer (`Metadata/project_settings.config`, JSON).
+const BAMBU_KEYS: Keys = Keys {
+    printer: &["printer_model", "printer_settings_id"],
+    nozzle: "nozzle_diameter",
+    layer: "layer_height",
+    infill: "sparse_infill_density",
+    walls: "wall_loops",
+    supports: "enable_support",
+    types: "filament_type",
+    colours: "filament_colour",
+    model: "Metadata/model_settings.config",
+};
+
+/// PrusaSlicer (`Metadata/Slic3r_PE.config`, `; key = value` lines).
+const PRUSA_KEYS: Keys = Keys {
+    printer: &["printer_model", "printer_settings_id"],
+    nozzle: "nozzle_diameter",
+    layer: "layer_height",
+    infill: "fill_density",
+    walls: "perimeters",
+    supports: "support_material",
+    types: "filament_type",
+    colours: "filament_colour",
+    model: "Metadata/Slic3r_PE_model.config",
+};
+
+/// Cura (the `.cfg` files under `Cura/`, `key = value` lines in sections).
+const CURA_KEYS: Keys = Keys {
+    printer: &["name"],
+    nozzle: "machine_nozzle_size",
+    layer: "layer_height",
+    infill: "infill_sparse_density",
+    walls: "wall_line_count",
+    supports: "support_enable",
+    types: "material_type",
+    colours: "material_colour",
+    model: "",
+};
+
+/// `key = value` lines (`;` before a key, as PrusaSlicer writes them, and `[section]` lines
+/// ignored) → the first value of each key.
+fn ini(text: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    for line in text.lines().take(100_000) {
+        let line = line.trim().trim_start_matches(';').trim();
+        if let Some((k, v)) = line.split_once('=') {
+            let k = k.trim();
+            if !k.is_empty() && k.len() <= 64 && !map.contains_key(k) {
+                map.insert(k.to_string(), serde_json::Value::String(v.trim().to_string()));
+            }
+        }
     }
-    let mut p = Profile {
-        slicer,
-        ..Profile::default()
-    };
-    let Some(json) = project.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()) else {
-        // a slicer's project whose settings can't be read: still a profile, saying so
-        return Some(p);
-    };
-    let Some(map) = json.as_object() else {
-        return Some(p);
-    };
+    map
+}
+
+/// Which filament slots the model's objects and parts use (`extruder` metadata), and how many
+/// plates, from a slicer's model settings (XML).
+fn slots_used(xml: &str) -> Option<(Vec<usize>, i32)> {
+    let doc = Document::parse_with_options(
+        xml,
+        ParsingOptions {
+            allow_dtd: false,
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    let mut slots: Vec<usize> = Vec::new();
+    let mut plates = 0;
+    for node in doc.descendants() {
+        match node.tag_name().name() {
+            "plate" => plates += 1,
+            "metadata" if node.attribute("key") == Some("extruder") => {
+                if let Some(n) = node.attribute("value").and_then(|v| v.trim().parse::<usize>().ok())
+                    && (1..=MAX_SLOTS).contains(&n)
+                    && !slots.contains(&n)
+                {
+                    slots.push(n);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some((slots, plates))
+}
+
+/// Fills `p` from a slicer's settings (`map`, by its `keys`) and model settings (`model`).
+fn fill(p: &mut Profile, map: &serde_json::Map<String, serde_json::Value>, keys: &Keys, model: Option<&str>) {
     p.readable = true;
     let get = |k: &str| map.get(k);
-    p.printer = get("printer_model")
-        .or_else(|| get("printer_settings_id"))
-        .and_then(|v| v.as_str())
+    p.printer = keys
+        .printer
+        .iter()
+        .find_map(|k| get(k).and_then(|v| v.as_str()))
         .map(|s| s.chars().filter(|c| !c.is_control()).take(80).collect::<String>())
         .filter(|s| !s.trim().is_empty());
     p.printers = p.printer.as_deref().and_then(badge).into_iter().collect();
-    p.nozzle_mm = within(get("nozzle_diameter").and_then(number), 0.1, 2.0);
-    p.layer_mm = within(get("layer_height").and_then(number), 0.01, 1.0);
-    p.infill_percent = within(get("sparse_infill_density").and_then(number), 0.0, 100.0);
-    p.walls = within(get("wall_loops").and_then(number), 0.0, 50.0).map(|n| n.round() as i32);
-    p.supports = get("enable_support").and_then(|v| match v {
+    p.nozzle_mm = within(get(keys.nozzle).and_then(number), 0.1, 2.0);
+    p.layer_mm = within(get(keys.layer).and_then(number), 0.01, 1.0);
+    p.infill_percent = within(get(keys.infill).and_then(number), 0.0, 100.0);
+    p.walls = within(get(keys.walls).and_then(number), 0.0, 50.0).map(|n| n.round() as i32);
+    p.supports = get(keys.supports).and_then(|v| match v {
         serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) if s.trim().eq_ignore_ascii_case("true") => Some(true),
+        serde_json::Value::String(s) if s.trim().eq_ignore_ascii_case("false") => Some(false),
         _ => number(v).filter(|n| *n == 0.0 || *n == 1.0).map(|n| n == 1.0),
     });
-    let types = strings(get("filament_type"));
-    let colours = strings(get("filament_colour"));
+    let types = strings(get(keys.types));
+    let colours = strings(get(keys.colours));
     let slots: Vec<Option<Filament>> = types
         .iter()
         .take(MAX_SLOTS)
@@ -201,35 +290,7 @@ pub fn read(settings: &[(String, String)], application: Option<&str>) -> Option<
             })
         })
         .collect();
-    // which slots the model's objects and parts use, and how many plates (model_settings.config)
-    let used = find("Metadata/model_settings.config").and_then(|xml| {
-        let doc = Document::parse_with_options(
-            xml,
-            ParsingOptions {
-                allow_dtd: false,
-                ..Default::default()
-            },
-        )
-        .ok()?;
-        let mut slots: Vec<usize> = Vec::new();
-        let mut plates = 0;
-        for node in doc.descendants() {
-            match node.tag_name().name() {
-                "plate" => plates += 1,
-                "metadata" if node.attribute("key") == Some("extruder") => {
-                    if let Some(n) = node.attribute("value").and_then(|v| v.trim().parse::<usize>().ok())
-                        && (1..=MAX_SLOTS).contains(&n)
-                        && !slots.contains(&n)
-                    {
-                        slots.push(n);
-                    }
-                }
-                _ => {}
-            }
-        }
-        Some((slots, plates))
-    });
-    let (used_slots, plates) = used.unwrap_or_default();
+    let (used_slots, plates) = model.and_then(slots_used).unwrap_or_default();
     p.plates = (plates > 0).then_some(plates).filter(|n| *n <= 200);
     p.filaments = if used_slots.is_empty() {
         slots.into_iter().flatten().collect()
@@ -241,6 +302,61 @@ pub fn read(settings: &[(String, String)], application: Option<&str>) -> Option<
             .filter_map(|n| slots.get(n - 1).cloned().flatten())
             .collect()
     };
+}
+
+/// Reads a project's profile from the settings files it kept (name, text) and what wrote it:
+/// `None` for a 3MF from no slicer we know with no settings we read.
+pub fn read(settings: &[(String, String)], application: Option<&str>) -> Option<Profile> {
+    let find = |name: &str| {
+        settings
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, t)| t.as_str())
+    };
+    let mut slicer = slicer_of(application);
+    let bambu = find("Metadata/project_settings.config");
+    let prusa = find("Metadata/Slic3r_PE.config");
+    let cura: Vec<&str> = settings
+        .iter()
+        .filter(|(n, _)| n.to_ascii_lowercase().starts_with("cura/") && n.to_ascii_lowercase().ends_with(".cfg"))
+        .map(|(_, t)| t.as_str())
+        .collect();
+    if slicer == "unknown" {
+        slicer = if prusa.is_some() {
+            "prusa"
+        } else if !cura.is_empty() {
+            "cura"
+        } else if bambu.is_some() {
+            "unknown"
+        } else {
+            return None;
+        };
+    }
+    let mut p = Profile {
+        slicer,
+        ..Profile::default()
+    };
+    if let Some(text) = bambu {
+        // a JSON object, or a profile marked unreadable
+        if let Some(map) = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .as_ref()
+            .and_then(|v| v.as_object())
+        {
+            fill(&mut p, map, &BAMBU_KEYS, find(BAMBU_KEYS.model));
+        }
+    } else if let Some(text) = prusa {
+        fill(&mut p, &ini(text), &PRUSA_KEYS, find(PRUSA_KEYS.model));
+    } else if !cura.is_empty() {
+        let mut map = serde_json::Map::new();
+        for text in cura {
+            for (k, v) in ini(text) {
+                map.entry(k).or_insert(v);
+            }
+        }
+        fill(&mut p, &map, &CURA_KEYS, None);
+    }
+    // (a known slicer's project without settings we can read: a profile saying so)
     Some(p)
 }
 
@@ -421,6 +537,78 @@ mod tests {
             )
             .is_some_and(|p| !p.readable)
         );
+    }
+
+    #[test]
+    fn a_prusaslicer_3mf_reads() {
+        let config = "; generated by PrusaSlicer 2.8.1\n; printer_model = MK4S\n; printer_settings_id = Original Prusa MK4S 0.4 nozzle\n\
+; nozzle_diameter = 0.4\n; layer_height = 0.15\n; fill_density = 20%\n; perimeters = 3\n; support_material = 0\n\
+; filament_type = PETG;PLA\n; filament_colour = #FF8000;#3030FF\n; start_gcode = M862.3 P \"MK4S\"\n";
+        let model = r#"<?xml version="1.0"?><config><object id="1" instances_count="1"><metadata type="object" key="extruder" value="2"/></object></config>"#;
+        let p = read(
+            &files(&[
+                ("Metadata/Slic3r_PE.config", config),
+                ("Metadata/Slic3r_PE_model.config", model),
+            ]),
+            Some("PrusaSlicer-2.8.1+linux-x64"),
+        )
+        .unwrap();
+        assert_eq!(p.slicer, "prusa");
+        assert_eq!((p.printer.as_deref(), p.printers.clone()), (Some("MK4S"), vec!["mk4s"]));
+        assert_eq!(
+            (p.nozzle_mm, p.layer_mm, p.infill_percent, p.walls, p.supports),
+            (Some(0.4), Some(0.15), Some(20.0), Some(3), Some(false))
+        );
+        assert_eq!(
+            p.filaments,
+            [Filament {
+                kind: "PLA".into(),
+                colour: "#3030FF".into()
+            }],
+            "slot 2 is used"
+        );
+        assert_eq!(p.plates, None);
+        // found by its settings file even when the application isn't named
+        assert_eq!(
+            read(&files(&[("Metadata/Slic3r_PE.config", config)]), None)
+                .unwrap()
+                .slicer,
+            "prusa"
+        );
+    }
+
+    #[test]
+    fn a_cura_3mf_reads_what_it_can() {
+        let global = "[general]\nversion = 4\nname = Creality Ender-3 Pro\n\n[metadata]\ntype = machine\n\n[values]\nlayer_height = 0.28\ninfill_sparse_density = 10\nsupport_enable = True\nwall_line_count = 2\n";
+        let extruder = "[general]\nname = Extruder 1\n[values]\nmachine_nozzle_size = 0.6\nmaterial_type = PLA\n";
+        let p = read(
+            &files(&[("Cura/global.cfg", global), ("Cura/extruder_0.cfg", extruder)]),
+            Some("Cura 5.7"),
+        )
+        .unwrap();
+        assert_eq!(p.slicer, "cura");
+        assert_eq!(p.printers, ["ender-3"]);
+        assert_eq!(
+            (p.nozzle_mm, p.layer_mm, p.infill_percent, p.walls, p.supports),
+            (Some(0.6), Some(0.28), Some(10.0), Some(2), Some(true))
+        );
+        assert_eq!(
+            p.filaments,
+            [Filament {
+                kind: "PLA".into(),
+                colour: String::new()
+            }]
+        );
+    }
+
+    #[test]
+    fn an_unknown_slicer_is_geometry_only() {
+        assert!(read(&[], Some("Autodesk Fusion")).is_none());
+        assert!(read(&[], None).is_none());
+        assert!(read(&files(&[("Metadata/notes.config", "hello")]), Some("Some CAD")).is_none());
+        // a known slicer that kept no settings: a profile saying they can't be read
+        let p = read(&[], Some("PrusaSlicer-2.8")).unwrap();
+        assert!(!p.readable);
     }
 
     #[test]

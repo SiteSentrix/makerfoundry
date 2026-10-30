@@ -6317,3 +6317,46 @@ async fn a_bambu_project_upload_keeps_its_print_profile() {
     assert_eq!(rows[0].4, serde_json::json!([{"type": "PETG", "colour": "#FFFFFF"}]));
     assert!(rows[0].5 && !rows[1].5, "the broken one is kept, marked unreadable");
 }
+
+#[tokio::test]
+async fn a_broken_settings_file_never_fails_the_upload() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let garbage = String::from_utf8_lossy(&[0u8, 159, 146, 150, 0, 1, 2]).into_owned();
+    let prusa = "; printer_model = MK4\n; layer_height = 0.2\n; filament_type = PLA\n";
+    let r = upload_model(
+        &s,
+        &cookie,
+        &[
+            (
+                "broken.3mf",
+                project_3mf_with("PrusaSlicer-2.8.1", &[("Metadata/Slic3r_PE.config", &garbage)]),
+            ),
+            (
+                "good.3mf",
+                project_3mf_with("PrusaSlicer-2.8.1", &[("Metadata/Slic3r_PE.config", prusa)]),
+            ),
+            ("cad.3mf", project_3mf_with("Autodesk Fusion", &[])),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT f.file_name, p.name, p.readable FROM mf_print_profiles p JOIN mf_model_files f ON f.id = p.file_id ORDER BY f.position",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("broken.3mf".to_string(), "Print settings".to_string(), false),
+            ("good.3mf".to_string(), "0.2 mm layers, PLA, MK4".to_string(), true),
+        ],
+        "the CAD program's 3MF has no profile, only geometry"
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_model_files").await, 3);
+}

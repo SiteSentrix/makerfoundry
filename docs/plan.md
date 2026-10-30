@@ -243,6 +243,12 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   settings that can't be read keep the geometry and a profile marked unreadable. To be checked
   against real files from our creators (locally, never committed). Multi-colour painting on the
   mesh itself isn't counted yet.
+- **MF-44 PrusaSlicer and Cura, built 2026-10-30** (#12): the same profile from PrusaSlicer's
+  `Metadata/Slic3r_PE.config` (`; key = value`) and `Slic3r_PE_model.config` (slots used), and
+  from Cura's `Cura/*.cfg` (layer height, infill, walls, supports, nozzle, material type,
+  printer name), each slicer's own key names mapped onto the same checked fields. A 3MF from a
+  program that isn't a slicer is geometry only; a slicer's settings that can't be read never
+  fail an upload.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
