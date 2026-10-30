@@ -51,3 +51,34 @@ pages; published designs stay up.
    `/terms`, sign up a test account, publish a free design, and check `/robots.txt`.
 7. **Tell people**: StitchFoundry's site and app can link to makerfoundry.app (MF-7 adds publishing
    from the app).
+
+## Opening MakerFoundry 3D (MF-59)
+
+MakerFoundry 3D is built (MF-35 to MF-58) and switched off: until `MF_3D=yes`, only admins and
+approved founding creators see `/3d`, upload, import and publish models; 3D models stay out of
+browsing, the home page, the sitemap and makers' pages for everyone else, and `/robots.txt`
+disallows `/3d`.
+
+**Checked 2026-10-30, before opening** (to repeat after any big change to the readers):
+- the whole suite green against Postgres (`cargo xtask ci`), the selling, refund, tax, proofs and
+  founding tests included;
+- every reader of uploads (STL, OBJ, ZIP, 3MF, print settings, and the embroidery, SVG, DXF, PDF
+  and photo readers) at 20,000 property-test cases each under a 3 GB memory cap:
+  `ulimit -v 3000000; PROPTEST_CASES=20000 cargo test --release -p makerfoundry --test untrusted_input`;
+- every 3D page at phone (390 px) and desktop (1280 px) width with no sideways scrolling: `/3d`,
+  the upload and import forms, the import review, a model's page (with its viewer, print
+  profiles, remixes), its maker's page, the remix tree, `/account/showcase` and
+  `/admin/showcase`;
+- 3D search with 100,000 generated models: every filtered page under 6 ms on the test database.
+
+**The owner's steps, in order:**
+1. **Approve the wording** in `docs/legal/3d-draft.md` (issue #26), deciding its three
+   `[OWNER: …]` choices, ideally after a lawyer's read of the remix rules; then it's merged into
+   the Terms and the Privacy Policy as new versions.
+2. **Try it as a founding creator**: Nick (or any approved founding creator) imports their own
+   models with `/3d/import` and checks the groups, print profiles and pages; sample 3MFs from
+   Bambu Studio, OrcaSlicer and PrusaSlicer are checked locally against the readers (never
+   committed).
+3. **Open it**: set `MF_3D=yes` in Railway; check `/3d` signed out, `/robots.txt` (no
+   `Disallow: /3d`) and `/sitemap.xml` (has `/3d`).
+4. **Tell people**: the founding creators first, then the Facebook page.

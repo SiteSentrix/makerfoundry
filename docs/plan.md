@@ -322,6 +322,11 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   licences, remixes, imports, rebuilt files, print settings, likes, the showcase consent and
   withdrawal) and the Privacy Policy's additions (models, likes, imports, consents). **Waiting on
   the owner**; once merged, the launch checks (#27) and `MF_3D=yes`.
+- **MF-59 launch checks, done 2026-10-30** (#27): the whole suite green; all 30 property tests
+  at 20,000 cases each under a 3 GB memory cap (45 s in release); every 3D page checked at 390
+  and 1280 px with no sideways scrolling. The owner's steps to open it are in `docs/launch.md`
+  (Opening MakerFoundry 3D): approve the wording (#26), try it as a founding creator, then
+  `MF_3D=yes`.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

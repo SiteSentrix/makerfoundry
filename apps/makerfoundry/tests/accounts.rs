@@ -6765,6 +6765,7 @@ async fn the_tree_stops_at_ten_generations() {
         !tree.contains("Model 00<"),
         "eleven generations back isn't shown: {tree}"
     );
+    s.dump_page("tree", &tree, Some(&ann)).await;
     let tree = s.get(&format!("/3d/{}/tree", ids[0]), Some(&ann)).await.body;
     assert!(tree.contains("Model 10 by") && !tree.contains("Model 11 by"), "{tree}");
 }
@@ -7425,6 +7426,7 @@ async fn consent_is_off_by_default_and_nothing_stored() {
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
     let form = s.get("/3d/new", Some(&ann)).await.body;
+    s.dump_page("upload-3d", &form, Some(&ann)).await;
     assert!(
         form.contains(SHOWCASE_BOX) && form.contains("Feature my project on MakerFoundry"),
         "{form}"
@@ -7532,7 +7534,9 @@ async fn withdrawn_keeps_its_time_and_is_no_longer_active() {
             .await,
         1
     );
-    assert!(s.get("/account/showcase", Some(&ann)).await.body.contains("Withdrawn"));
+    let settings = s.get("/account/showcase", Some(&ann)).await.body;
+    assert!(settings.contains("Withdrawn"));
+    s.dump_page("account-showcase", &settings, Some(&ann)).await;
 }
 
 #[tokio::test]
