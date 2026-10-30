@@ -109,6 +109,29 @@ Add:
 > likes, imports and showcase consents are in your data download, and deleting your data
 > deletes your likes and imports and withdraws every consent.
 
+## Before switching on each outside service (issues #28 to #36)
+Each of these is built switched off. When the owner switches one on, the Privacy Policy needs its
+line first (a new version of the document). Drafts:
+
+- **Email notices (`MF_RESEND_KEY`), § 2 and § 3:** "If you turn on email notices, we keep which
+  comments, makes, remixes and follows to tell you about until your daily email goes (and 30 days
+  after), and send it through **Resend**, our email provider, which receives your email address and
+  the email's text."
+- **Thingiverse import (`MF_THINGIVERSE_CLIENT_ID`), § 2:** "If you import from Thingiverse, you
+  sign in there and Thingiverse sends us your Thingiverse user name and your things' files and
+  details. We don't keep the access it gives us after the import."
+- **Posting to our social pages (`MF_FACEBOOK_PAGE_ID`), § 3:** "Projects you asked us to feature
+  are sent to **Meta** (Facebook, Instagram) when we post them" (adds to the showcase line above).
+- **Virus scanning (`MF_CLAMAV`), STEP previews (`MF_STEP_CONVERTER`) and customizing
+  (`MF_SCAD_SERVICE`), § 3:** "Uploaded files are checked for viruses, and STEP and OpenSCAD files
+  are converted, by programs we run on our own hosting (Railway); they aren't shared with anyone
+  else." [OWNER: true only if these run as MakerFoundry's own Railway services.]
+- **API keys, § 2:** "API keys you make: their name, when made and last used. We keep only a
+  fingerprint of each key, never the key."
+- **Contests, § 2:** "Your contest entries and votes. Votes are counted, never shown by name."
+- **Points (`MF_POINTS`), § 2:** nothing new is collected (points are counted from makes and likes
+  already listed).
+
 ## After approval
 
 1. Merge the wording into `docs/legal/terms.md` and `docs/legal/privacy.md` (new versions).

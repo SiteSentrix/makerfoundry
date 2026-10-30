@@ -364,6 +364,9 @@ pub fn app(state: AppState) -> Router {
         .layer(header_layer(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(header_layer(header::REFERRER_POLICY, "strict-origin-when-cross-origin"))
         .layer(header_layer(header::X_FRAME_OPTIONS, "DENY"))
+        // HTTPS only, remembered for a year; not includeSubDomains, since other services may share
+        // the domain (release audit, issue #40)
+        .layer(header_layer(header::STRICT_TRANSPORT_SECURITY, "max-age=31536000"))
 }
 
 fn header_layer(name: HeaderName, value: &'static str) -> SetResponseHeaderLayer<HeaderValue> {

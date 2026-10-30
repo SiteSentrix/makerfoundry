@@ -107,6 +107,8 @@ async fn every_response_carries_the_security_headers() {
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{path}");
         assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{path}");
         assert!(headers.contains_key(header::REFERRER_POLICY), "{path}");
+        // HTTPS only, remembered for a year (no includeSubDomains: other services may share the domain)
+        assert_eq!(headers[header::STRICT_TRANSPORT_SECURITY], "max-age=31536000", "{path}");
     }
 }
 

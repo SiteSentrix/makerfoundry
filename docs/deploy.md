@@ -156,6 +156,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `MF_3D` | no (admins only) | `yes` opens MakerFoundry 3D (`/3d`, MF-35 onwards) to everyone, after its launch checks (MF-59) |
 | `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |
 | `STRIPE_API_URL` | no | a stand-in for Stripe's API (local tests) |
+| `THINGIVERSE_WWW_URL`, `THINGIVERSE_API_URL`, `META_GRAPH_URL`, `RESEND_API_URL` | no | stand-ins for Thingiverse's sign-in and API, Meta's Graph API and Resend's API (local tests); leave unset in production |
 | `STORAGE_ENDPOINT` | no | an S3-compatible address in place of R2's (local tests) |
 | `STITCHFOUNDRY_CLOUD_URL` | no (default `https://cloud.stitchfoundry.app`) | StitchFoundry's account service, which MakerFoundry's accounts are |
 | `MF_END_SESSIONS_BEFORE` | after a breach | sessions made before this UTC time (`2026-10-22T09:00:00Z`, a date, or Unix seconds) end when the service starts: everyone signs in again (see below) |

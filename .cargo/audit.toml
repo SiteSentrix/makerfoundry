@@ -1,0 +1,6 @@
+# cargo audit settings (release audit, issue #40).
+[advisories]
+# RUSTSEC-2023-0071 (rsa, Marvin timing attack; no fixed release): rsa is only in Cargo.lock through
+# sqlx-mysql, which sqlx lists but MakerFoundry never builds (Postgres only: `cargo tree -i
+# sqlx-mysql` prints nothing). Check again if MySQL support is ever turned on.
+ignore = ["RUSTSEC-2023-0071"]
