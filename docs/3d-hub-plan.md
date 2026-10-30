@@ -36,6 +36,11 @@ site. A 3D model is a design of a new kind, `model3d`, so these work for it with
 and the StitchShop order work (issues #1, #2) are untouched, and their tests run on every change.
 The hub is off until `MF_3D=yes`, so nothing shows until it's ready.
 
+**Its name is "MakerFoundry 3D"** (the owner's decision, 2026-10-30), at `/3d`. **Its categories**
+(the same decision; a fixed list in code): Household; Tools & workshop; Organisers & storage;
+Toys & games; Cosplay & props; Miniatures & tabletop; Art & decor; Fashion & jewellery; Gadgets &
+tech mounts; Education; Garden & outdoor; Automotive; 3D printer parts & upgrades; Other.
+
 ## 2. Data model
 
 New tables and columns (migrations from 0021). Sketch; each issue settles its own details.
@@ -118,7 +123,7 @@ ALTER TABLE mf_makers ADD COLUMN founding BOOLEAN NOT NULL DEFAULT false;
 Uploads are untrusted (CLAUDE.md). Every file is read by our own Rust code under limits, and
 property-tested with random and damaged input, as the embroidery and laser readers are.
 
-| Check | Limit (proposed; the owner's call because storage costs) |
+| Check | Limit (the owner's decision, 2026-10-30) |
 |---|---|
 | One model file | 100 MB |
 | One model, all files | 300 MB, up to 30 files and 12 images |
@@ -174,16 +179,12 @@ files from our creators before each parser is written):
 - **Thumbnails (P1, no JavaScript):** drawn on the server by our own small software renderer
   (orthographic, z-buffered, shaded triangles, written to PNG with the `image` crate we already
   use), from a mesh reduced to a triangle budget: one hero image and three side views.
-- **Viewer (P1, needs the owner's agreement):** CLAUDE.md allows JavaScript only where a page
-  can't work without it and the owner agrees, and an interactive 3D view can't be done without it.
-  The page sets a Content-Security-Policy with no scripts today. Options:
-  1. **Our own small WebGL viewer** (recommended): a few hundred lines of plain JavaScript,
-     MIT OR Apache-2.0, served from our own domain (`script-src 'self'`) on model pages only,
-     loading a compact binary mesh the server makes. Smallest, ours, no dependency to track.
-  2. **three.js** (MIT), vendored and served from our domain: quickest to build, about 600 KB.
-  3. **No viewer:** the four server-drawn views only.
-  With any of them the page works without JavaScript (the images), and the viewer is an
-  enhancement on top.
+- **Viewer (P1): our own small WebGL viewer** (the owner agreed to its JavaScript, 2026-10-30, as
+  CLAUDE.md asks: an interactive 3D view can't be done without it). A few hundred lines of plain
+  JavaScript, MIT OR Apache-2.0, served from our own domain (`script-src 'self'`) on model pages
+  only, loading a compact binary mesh the server makes: no third-party code, no dependency to
+  track. The page works without JavaScript (the server-drawn images); the viewer enhances it.
+  (Considered: three.js, vendored; or images only.)
 
 ## 6. Licences and remixes
 
@@ -281,7 +282,7 @@ checked by a test with generated rows. No outside search service.
 ## 10. Founding creators
 
 Accounts are Foundry Accounts (StitchFoundry's account service), so MakerFoundry can't create
-them; instead an admin makes **invite links** (one use, expiring, kept as a hash). Signing up or
+them; instead an admin makes **invite links** (about 10 to start: the owner's decision, 2026-10-30) (one use, expiring, kept as a hash). Signing up or
 in through one marks the maker **founding** (a small "Founding creator" badge on their page and
 models) and lets them publish before the hub opens to everyone. Nick is one of the first, importing
 his MakerWorld models with the bulk import.
@@ -345,21 +346,22 @@ PrusaSlicer 3MF, broken 3MF, oversized uploads, and draft to publish.
 
 ## 14. Decisions for the owner
 
-1. **The viewer's JavaScript:** our own WebGL viewer (recommended), three.js, or images only.
-2. **Size limits** (section 3) and the storage they cost.
+1. ~~**The viewer's JavaScript**~~: **decided 2026-10-30: our own WebGL viewer** (§ 5).
+2. ~~**Size limits**~~: **decided 2026-10-30: as proposed** (§ 3).
 3. ~~**Sliced G-code inside 3MF files**~~: **decided 2026-10-30: dropped** (printers run it).
-4. **ClamAV** scanning now (a Railway service, its memory cost) or later (P2).
+4. ~~**ClamAV**~~: **decided 2026-10-30: later** (P2, #29).
 5. ~~**Licences**~~: **decided 2026-10-30: like Thingiverse's and Printables'** (§ 6). Still open:
-   the remix rules' confirmation, ideally by a lawyer, and the section's name and categories (11).
-6. **Ownership of imported files:** the creator's confirmation and the takedown process (P1 as
-   planned), or also a check such as a code placed on their profile there (MakerFoundry would then
-   fetch that one page, which those sites' terms may not allow).
+   the remix rules' confirmation, ideally by a lawyer, before launch.
+6. ~~**Ownership of imported files**~~: **decided 2026-10-30: the creator's confirmation and the
+   takedown process** (§ 8); nothing fetched from other sites.
 7. **Thingiverse import (P2):** registering an app and confirming its API terms allow it.
 8. ~~**Get this printed**~~: **decided 2026-10-30: off for now.** Who prints and where the
    button goes are decided later.
 9. ~~**The showcase**~~: **approach agreed 2026-10-30** (§ 9: the unticked box's wording, a
    caption crediting only the chosen display name, Terms and Privacy text drafted in #26). The
    drafted legal text still comes back to the owner before it goes into the Terms.
-10. **Founding creators:** how many invites, and sample 3MF files from Nick (Bambu, with AMS
-    colours) and others (PrusaSlicer, Cura), to build the parsers against real files.
-11. **The section's name** (for example "MakerFoundry 3D") and its categories.
+10. **Founding creators:** about 10 invites (decided 2026-10-30). **Still needed:** sample 3MF
+    files: two or three of Nick's own Bambu Studio 3MFs (one with AMS multi-colour) and a
+    PrusaSlicer or Cura 3MF, with permission to keep them in the repository as test samples.
+11. ~~**The section's name and categories**~~: **decided 2026-10-30: "MakerFoundry 3D"** and the
+    categories in § 1.
