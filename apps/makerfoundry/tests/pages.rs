@@ -1,1 +1,139 @@
+//! The pages answer, with the headers every page must carry.
 
+// The helpers below are test code too, but outside `#[test]` functions, where clippy.toml's
+// allow-unwrap-in-tests does not reach.
+#![allow(clippy::unwrap_used)]
+
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
+use http_body_util::BodyExt;
+use tower::ServiceExt;
+
+/// The site without a database or a reachable account service: the pages that need neither.
+fn app() -> axum::Router {
+    let cloud = makerfoundry::cloud::Cloud::new("http://127.0.0.1:9").unwrap();
+    makerfoundry::app(makerfoundry::AppState {
+        cloud,
+        db: None,
+        storage: None,
+        publishers: makerfoundry::listings::Publishers::Only(Vec::new()),
+        admins: Vec::new(),
+        limits: std::sync::Arc::default(),
+        stripe: None,
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
+        three_d: false,
+    })
+}
+
+async fn get(path: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+    let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+    let response = app().oneshot(request).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+#[tokio::test]
+async fn health_answers_ok_with_the_version() {
+    let (status, headers, body) = get("/health").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, format!("ok {}\n", makerfoundry::VERSION));
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+}
+
+#[tokio::test]
+async fn health_answers_head() {
+    let request = Request::builder()
+        .method(Method::HEAD)
+        .uri("/health")
+        .body(Body::empty())
+        .unwrap();
+    let response = app().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn home_page_is_html_and_links_the_stylesheet() {
+    let (status, headers, body) = get("/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/html"));
+    assert!(body.starts_with("<!doctype html>"));
+    assert!(body.contains("<title>MakerFoundry</title>"));
+    assert!(body.contains(r#"href="/static/site.css""#));
+}
+
+#[tokio::test]
+async fn stylesheet_is_css() {
+    let (status, headers, body) = get("/static/site.css").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers[header::CONTENT_TYPE].to_str().unwrap().starts_with("text/css"));
+    assert!(body.contains(":root"));
+}
+
+#[tokio::test]
+async fn favicon_is_a_standalone_svg() {
+    let (status, headers, body) = get("/favicon.svg").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/svg+xml");
+    assert!(body.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+    assert!(!body.contains("currentColor"));
+}
+
+#[tokio::test]
+async fn unknown_paths_get_the_404_page() {
+    let (status, _, body) = get("/no/such/page").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.contains("Page not found"));
+}
+
+#[tokio::test]
+async fn every_response_carries_the_security_headers() {
+    for path in ["/", "/health", "/static/site.css", "/favicon.svg", "/missing"] {
+        let (_, headers, _) = get(path).await;
+        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("default-src 'none'"), "{path}: {csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{path}: {csp}");
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{path}");
+        assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{path}");
+        assert!(headers.contains_key(header::REFERRER_POLICY), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn oversized_bodies_are_refused() {
+    let big = vec![b'x'; 1024 * 1024];
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/")
+        .header(header::CONTENT_LENGTH, big.len())
+        .body(Body::from(big))
+        .unwrap();
+    let response = app().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn every_page_links_the_legal_pages_which_wait_for_the_launch() {
+    let (_, _, home) = get("/").await;
+    for link in ["/terms", "/privacy", "/seller-terms", "/dmca"] {
+        assert!(home.contains(&format!(r#"href="{link}""#)), "{link}");
+    }
+    let (status, _, terms) = get("/terms").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(terms.contains("hasn't opened yet"));
+}
+
+#[test]
+fn commit_ids_are_shortened_and_checked() {
+    assert_eq!(
+        makerfoundry::short_commit("E82F8691dc91fbdfd74427f84f8d7b259801b99d").as_deref(),
+        Some("e82f869")
+    );
+    for bad in ["", "abc", "e82f869x", "../../etc", "ééééééé"] {
+        assert_eq!(makerfoundry::short_commit(bad), None, "{bad}");
+    }
+}

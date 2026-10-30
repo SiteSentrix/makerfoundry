@@ -41,6 +41,7 @@ fn ci() -> Result<(), String> {
     // whose features would otherwise hide a missing one (MF-7's axum `json`)
     cargo(&["build", "-p", "makerfoundry", "--bins", "--locked"])?;
     assets()?;
+    test_files()?;
     eprintln!("xtask: ci passed");
     Ok(())
 }
@@ -61,6 +62,35 @@ fn cargo(args: &[&str]) -> Result<(), String> {
 }
 
 /// The workspace root: the folder above this crate's.
+/// Every file in `apps/*/tests` has tests in it. (A script once emptied `tests/pages.rs` by
+/// opening it to write before reading it; an empty test file runs nothing and passes, so it went
+/// unnoticed for a day.)
+fn test_files() -> Result<(), String> {
+    let apps = root().join("apps");
+    let mut problems = Vec::new();
+    let mut count = 0;
+    for app in std::fs::read_dir(&apps).map_err(|e| format!("{}: {e}", apps.display()))? {
+        let dir = app.map_err(|e| e.to_string())?.path().join("tests");
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                count += 1;
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                if !text.contains("#[test]") && !text.contains("#[tokio::test]") && !text.contains("proptest!") {
+                    problems.push(format!("{} has no tests in it", path.display()));
+                }
+            }
+        }
+    }
+    if problems.is_empty() {
+        eprintln!("xtask: test files ok ({count} files)");
+        Ok(())
+    } else {
+        Err(format!("test files:\n  {}", problems.join("\n  ")))
+    }
+}
+
 fn root() -> PathBuf {
     let here = Path::new(env!("CARGO_MANIFEST_DIR"));
     here.parent().unwrap_or(here).to_path_buf()
