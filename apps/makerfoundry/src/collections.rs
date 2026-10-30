@@ -328,6 +328,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(cid): 
         pool,
         &Filter {
             collection: Some(cid),
+            three_d: state.three_d,
             ..Filter::default()
         },
         MAX_ITEMS,

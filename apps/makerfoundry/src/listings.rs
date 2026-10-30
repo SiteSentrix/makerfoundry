@@ -581,7 +581,13 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         &licence.map(|l| escape(l.name)).unwrap_or_default(),
     )
     .await;
-    let save = if d.status == "published" {
+    let save = if d.status == "published" && d.kind == "model3d" {
+        format!(
+            "{}{}",
+            crate::model3d::likes::html(pool, viewer.as_ref(), id).await,
+            crate::collections::save_html(pool, viewer.as_ref(), id).await
+        )
+    } else if d.status == "published" {
         crate::collections::save_html(pool, viewer.as_ref(), id).await
     } else {
         String::new()

@@ -3,6 +3,7 @@
 
 pub mod files;
 pub mod import;
+pub mod likes;
 pub mod mesh;
 pub mod obj;
 pub mod origin;

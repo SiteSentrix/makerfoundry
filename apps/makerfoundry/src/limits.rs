@@ -58,6 +58,9 @@ pub const MODEL_UPLOAD: Rule = rule("model-upload", 100, 24 * 60);
 /// Bulk imports (MF-52) started by one account a day.
 pub const IMPORT: Rule = rule("import", 20, 24 * 60);
 
+/// Likes and unlikes by one account an hour (MF-48).
+pub const LIKE: Rule = rule("like", 300, 60);
+
 /// The most designs one account may keep.
 pub const MAX_DESIGNS: i64 = 500;
 

@@ -156,6 +156,7 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
+        .route("/d/{id}/like", post(model3d::likes::like))
         .route("/makes/{mid}/delete", post(makes::delete))
         .route(
             "/makes/{mid}/report",

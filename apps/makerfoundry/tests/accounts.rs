@@ -6790,3 +6790,117 @@ async fn a_taken_down_parent_stays_named_without_a_link() {
         "{tree}"
     );
 }
+
+// ---------------------------------------------------------------- likes and community on 3D (MF-48)
+
+#[tokio::test]
+async fn likes_count_once_per_account() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = s.join("bea%40example.com").await;
+    let cal = s.join("cal%40example.com").await;
+    assert_eq!(
+        s.post(&format!("/d/{gear}/like"), "like=yes", None).await.location(),
+        format!("/signin?next=/d/{gear}")
+    );
+    let page = s.get(&format!("/d/{gear}/gear"), Some(&bea)).await.body;
+    assert!(
+        page.contains(&format!(r#"action="/d/{gear}/like""#)) && page.contains(">Like<"),
+        "{page}"
+    );
+    s.post(&format!("/d/{gear}/like"), "like=yes", Some(&bea)).await;
+    s.post(&format!("/d/{gear}/like"), "like=yes", Some(&bea)).await;
+    let r = s.post(&format!("/d/{gear}/like"), "like=yes", Some(&cal)).await;
+    assert_eq!(r.location(), format!("/d/{gear}/gear"));
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_likes").await, 2);
+    let page = s.get(&format!("/d/{gear}/gear"), Some(&bea)).await.body;
+    assert!(page.contains("2 likes") && page.contains("Liked"), "{page}");
+    s.post(&format!("/d/{gear}/like"), "like=no", Some(&bea)).await;
+    assert!(s.get(&format!("/d/{gear}/gear"), None).await.body.contains("1 like"));
+    // a draft can't be liked
+    let draft = detailed_model(&s, &ann, "Draft", "cc0").await;
+    assert_eq!(
+        s.post(&format!("/d/{draft}/like"), "like=yes", Some(&bea)).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn makes_collections_follows_and_comments_work_on_3d_models() {
+    let Some(s) = site_3d(vec![1000], true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    // a make
+    let r = s
+        .send(multipart(
+            &format!("/d/{gear}/makes"),
+            &[
+                ("photo", "print.jpg", photo_with_location()),
+                ("note", "", b"Printed in PETG".to_vec()),
+                ("confirm", "", b"yes".to_vec()),
+            ],
+            &bea,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert!(
+        s.get(&format!("/d/{gear}/gear"), None)
+            .await
+            .body
+            .contains("Printed in PETG")
+    );
+    // a collection
+    s.post(&format!("/d/{gear}/save"), "", Some(&bea)).await;
+    let saved: i64 = sqlx::query_scalar("SELECT collection_id FROM mf_collection_items WHERE design_id = $1")
+        .bind(gear)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let list = s.get(&format!("/collections/{saved}"), Some(&bea)).await.body;
+    assert!(list.contains("Gear") && list.contains("3D model"), "{list}");
+    // following its maker shows their new models
+    s.post("/makers/ann/follow", "", Some(&bea)).await;
+    let wheel = licensed_model(&s, &ann, "Wheel", "cc-by").await;
+    let feed = s.get("/following", Some(&bea)).await.body;
+    assert!(feed.contains(&format!("/d/{wheel}/wheel")), "{feed}");
+    // a comment, reported, reaches the admins' queue
+    s.post(&format!("/d/{gear}/comments"), "body=Nice+gear", Some(&bea))
+        .await;
+    let cid: i64 = sqlx::query_scalar("SELECT id FROM mf_comments")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let cal = s.join("cal%40example.com").await;
+    let r = s
+        .post(&format!("/comments/{cid}/report"), "reason=spam", Some(&cal))
+        .await;
+    assert!(
+        r.status == StatusCode::OK || r.status == StatusCode::SEE_OTHER,
+        "{}",
+        r.body
+    );
+    let queue = s.get("/admin", Some(&ann)).await.body;
+    assert!(queue.contains("Nice gear"), "{queue}");
+}
+
+#[tokio::test]
+async fn likes_are_in_the_data_download_and_go_with_the_data() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = s.join("bea%40example.com").await;
+    s.post(&format!("/d/{gear}/like"), "like=yes", Some(&bea)).await;
+    let data = s.get("/account/data.json", Some(&bea)).await.body;
+    let v: serde_json::Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(v["likes"][0]["design_id"], gear, "{data}");
+    s.post("/account/data/delete", "confirm=DELETE", Some(&bea)).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_likes").await, 0);
+}

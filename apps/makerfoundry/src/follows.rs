@@ -132,6 +132,7 @@ pub async fn following(State(state): State<AppState>, headers: HeaderMap) -> Res
             pool,
             &Filter {
                 followed_by: Some(user.account_id),
+                three_d: state.three_d,
                 ..Filter::default()
             },
             SHOWN,

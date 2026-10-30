@@ -264,6 +264,12 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   always remix their own. No cycles; up to 20 parents. A model's page shows "Remix of" and its
   remixes; `/3d/<id>/tree` shows ten generations each way, a taken-down model named without a
   link. The rules are still to be confirmed by the owner, ideally with a lawyer.
+- **MF-48 likes and community on 3D, built 2026-10-30** (#16): likes on published 3D models
+  (`mf_likes`, migration 0028; one an account, 300 an hour), counted on the page, in the data
+  download and deleted with the account's data (which now also lists the creator's imports).
+  Makes, collections, follows and comments work on 3D models as on designs; collections and the
+  Following feed show 3D models once `MF_3D` is on; a reported comment on a model reaches the
+  admins' queue.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
