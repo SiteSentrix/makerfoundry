@@ -281,11 +281,13 @@ checked by a test with generated rows. No outside search service.
 
 ## 10. Founding creators
 
-Accounts are Foundry Accounts (StitchFoundry's account service), so MakerFoundry can't create
-them; instead an admin makes **invite links** (about 10 to start: the owner's decision, 2026-10-30) (one use, expiring, kept as a hash). Signing up or
-in through one marks the maker **founding** (a small "Founding creator" badge on their page and
-models) and lets them publish before the hub opens to everyone. Nick is one of the first, importing
-his MakerWorld models with the bulk import.
+**Built on `main` as MF-54 (2026-10-30)**, for everyone, not only 3D (the owner's decisions:
+**100 founding creators**, chosen **by application**, with a **numbered badge**): makers apply at
+`/founding`, admins approve up to 100 at `/admin/founding`, and "Founding creator #7" shows on
+their maker page, designs and account page. The original idea of invite links is replaced by
+that. What's left for the hub (#22): founding creators use MakerFoundry 3D before `MF_3D` is on
+for everyone, and the badge shows on 3D models too. Nick is one of the first, importing his
+MakerWorld models with the bulk import.
 
 ## 11. Cross-sell
 
@@ -327,7 +329,7 @@ imports, likes, comments and reports.
 | MF-51 | Moderation and DMCA for 3D models, upload rate limits | [#19](https://github.com/SiteSentrix/makerfoundry/issues/19) | MF-42 |
 | MF-52 | Bulk import: many files or a ZIP into a batch, grouped automatically | [#20](https://github.com/SiteSentrix/makerfoundry/issues/20) | MF-41 |
 | MF-53 | Bulk import review: fix groups, drafts, origin, confirmation, bulk publish | [#21](https://github.com/SiteSentrix/makerfoundry/issues/21) | MF-52, MF-42 |
-| MF-54 | Founding creators: invite links and the badge | [#22](https://github.com/SiteSentrix/makerfoundry/issues/22) | MF-35 |
+| MF-54 | Founding creators' early access to MakerFoundry 3D (the rest built on `main`) | [#22](https://github.com/SiteSentrix/makerfoundry/issues/22) | MF-35 |
 | MF-55 | Showcase consent on uploads, makes and imports; withdrawing from settings | [#23](https://github.com/SiteSentrix/makerfoundry/issues/23) | MF-42, MF-48 |
 | MF-56 | Admin Showcase queue: list, draft caption, posted, takedown flags | [#24](https://github.com/SiteSentrix/makerfoundry/issues/24) | MF-55 |
 | MF-57 | Cross-sell: Also by this maker (Get this printed is off for now) | [#25](https://github.com/SiteSentrix/makerfoundry/issues/25) | MF-42 |
@@ -360,7 +362,8 @@ PrusaSlicer 3MF, broken 3MF, oversized uploads, and draft to publish.
 9. ~~**The showcase**~~: **approach agreed 2026-10-30** (§ 9: the unticked box's wording, a
    caption crediting only the chosen display name, Terms and Privacy text drafted in #26). The
    drafted legal text still comes back to the owner before it goes into the Terms.
-10. **Founding creators:** about 10 invites (decided 2026-10-30). **Still needed:** sample 3MF
+10. **Founding creators:** 100, by application, numbered badge (decided and built 2026-10-30).
+    **Still needed:** sample 3MF
     files: two or three of Nick's own Bambu Studio 3MFs (one with AMS multi-colour) and a
     PrusaSlicer or Cura 3MF, with permission to keep them in the repository as test samples.
 11. ~~**The section's name and categories**~~: **decided 2026-10-30: "MakerFoundry 3D"** and the
