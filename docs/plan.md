@@ -234,6 +234,15 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   Printables or Thingiverse, the creator's own page there (https, on that site's own host, never
   fetched) and the date (from 2000 to today), shown on its page as "Originally published on
   MakerWorld, 12 March 2025" with a `nofollow` link.
+- **MF-43 Bambu Studio / OrcaSlicer settings, built 2026-10-30** (#11): a 3MF project's
+  print profile (`model3d/profile.rs`, `mf_print_profiles`, migration 0026): the slicer (from the
+  model's `Application` metadata), printer and its badge (X1 Carbon, A1 mini, H2D, MK4…),
+  nozzle, layer height, infill, walls, supports, plates, and the filaments the model's parts
+  actually use (`model_settings.config` extruder slots; every loaded one when that isn't known),
+  from `project_settings.config`. Only these fields are kept; numbers out of range are left out;
+  settings that can't be read keep the geometry and a profile marked unreadable. To be checked
+  against real files from our creators (locally, never committed). Multi-colour painting on the
+  mesh itself isn't counted yet.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

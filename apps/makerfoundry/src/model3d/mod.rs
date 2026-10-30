@@ -6,6 +6,7 @@ pub mod import;
 pub mod mesh;
 pub mod obj;
 pub mod origin;
+pub mod profile;
 pub mod render;
 pub mod stl;
 pub mod threemf;

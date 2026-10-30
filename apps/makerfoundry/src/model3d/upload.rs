@@ -171,6 +171,7 @@ struct Prepared {
     hero: Option<(Vec<u8>, &'static str)>,
     views: Vec<Vec<u8>>,
     dropped: Vec<String>,
+    profile: Option<super::profile::Profile>,
 }
 
 fn prepare(name: String, bytes: &[u8]) -> Result<Prepared, String> {
@@ -197,6 +198,7 @@ fn prepare(name: String, bytes: &[u8]) -> Result<Prepared, String> {
         hero,
         views,
         dropped: checked.dropped,
+        profile: checked.profile,
     })
 }
 
@@ -299,6 +301,7 @@ async fn keep(
             thumb: Option<(String, &'static str)>,
             views: Vec<String>,
             dropped: Vec<String>,
+            profile: Option<super::profile::Profile>,
         }
         let mut rows = Vec::new();
         for p in prepared {
@@ -333,6 +336,7 @@ async fn keep(
                 thumb,
                 views,
                 dropped: p.dropped,
+                profile: p.profile,
             });
         }
         let mut photo_keys = Vec::new();
@@ -373,9 +377,9 @@ async fn keep(
         .await
         .map_err(|e| e.to_string())?;
         for (position, r) in rows.iter().enumerate() {
-            sqlx::query(
+            let file_id: i64 = sqlx::query_scalar(
                 "INSERT INTO mf_model_files (design_id, role, format, file_name, file_key, file_bytes, triangles, size_mm, thumb_key, thumb_type, view_keys, dropped, position)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
             )
             .bind(id)
             .bind(r.role.as_str())
@@ -390,9 +394,12 @@ async fn keep(
             .bind(&r.views)
             .bind(&r.dropped)
             .bind(i32::try_from(position).unwrap_or(i32::MAX))
-            .execute(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
+            if let Some(p) = &r.profile {
+                save_profile(&mut tx, id, file_id, p).await.map_err(|e| e.to_string())?;
+            }
         }
         for (position, (photo_key, thumb_key, w, h)) in photo_keys.iter().enumerate() {
             sqlx::query("INSERT INTO mf_design_photos (design_id, photo_key, thumb_key, width, height, position) VALUES ($1, $2, $3, $4, $5, $6)")
@@ -417,6 +424,36 @@ async fn keep(
         }
     }
     result
+}
+
+/// Notes a project file's print profile.
+async fn save_profile(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    design: i64,
+    file: i64,
+    p: &super::profile::Profile,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO mf_print_profiles (design_id, file_id, name, slicer, printer, printers, nozzle_mm, layer_mm, infill_percent, walls, supports, plates, filaments, readable)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+    )
+    .bind(design)
+    .bind(file)
+    .bind(p.name())
+    .bind(p.slicer)
+    .bind(&p.printer)
+    .bind(p.printers.iter().map(|b| b.to_string()).collect::<Vec<_>>())
+    .bind(p.nozzle_mm)
+    .bind(p.layer_mm)
+    .bind(p.infill_percent)
+    .bind(p.walls)
+    .bind(p.supports)
+    .bind(p.plates)
+    .bind(serde_json::to_value(&p.filaments).unwrap_or_default())
+    .bind(p.readable)
+    .execute(&mut **tx)
+    .await
+    .map(|_| ())
 }
 
 /// Every stored key of these designs' model files and their pictures (for deleting them).

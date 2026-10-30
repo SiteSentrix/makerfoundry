@@ -51,6 +51,8 @@ pub struct Checked {
     pub pictures: Vec<(String, Vec<u8>)>,
     /// The parts a 3MF lost in its rebuild, to tell the maker.
     pub dropped: Vec<String>,
+    /// What a 3MF's slicer settings say (`profile`).
+    pub profile: Option<super::profile::Profile>,
 }
 
 /// The extensions taken, with their format and role.
@@ -99,13 +101,16 @@ pub fn check(name: &str, bytes: &[u8]) -> Result<Checked, String> {
         settings: Vec::new(),
         pictures: Vec::new(),
         dropped: Vec::new(),
+        profile: None,
     };
     match format {
         "stl" => Ok(plain(Some(stl::read(bytes)?))),
         "obj" => Ok(plain(Some(obj::read(bytes)?))),
         "3mf" => {
             let t = threemf::read(bytes)?;
+            let profile = super::profile::read(&t.settings, t.application.as_deref());
             Ok(Checked {
+                profile,
                 format,
                 role,
                 mesh: Some(t.mesh),

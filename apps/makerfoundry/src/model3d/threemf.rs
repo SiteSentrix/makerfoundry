@@ -50,6 +50,9 @@ pub struct ThreeMf {
     pub settings: Vec<(String, String)>,
     /// Pictures kept (name, PNG or JPEG as written again), the package thumbnail first.
     pub pictures: Vec<(String, Vec<u8>)>,
+    /// What wrote it, from the root model's `Application` metadata (`BambuStudio-02.00.00.00`),
+    /// at most 100 characters.
+    pub application: Option<String>,
 }
 
 /// A row-vector affine transform, as 3MF writes it: `m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31
@@ -118,6 +121,7 @@ enum Object {
 /// One model part: its objects by id, its build items, and how many millimetres its unit is.
 struct Part {
     scale: f64,
+    application: Option<String>,
     objects: HashMap<u32, Object>,
     build: Vec<(Option<String>, u32, Transform)>,
 }
@@ -181,8 +185,16 @@ fn parse_part(xml: &[u8], counts: &mut Counts) -> Result<Part, String> {
         "meter" => 1000.0,
         _ => return Err("the model's unit isn't one 3MF has".into()),
     };
+    let application = children(model, "metadata")
+        .find(|m| {
+            m.attribute("name")
+                .is_some_and(|n| n.eq_ignore_ascii_case("Application"))
+        })
+        .and_then(|m| m.text())
+        .map(|t| t.trim().chars().filter(|c| !c.is_control()).take(100).collect());
     let mut part = Part {
         scale,
+        application,
         objects: HashMap::new(),
         build: Vec::new(),
     };
@@ -513,6 +525,7 @@ fn read_with(bytes: &[u8], max_placed: u64) -> Result<ThreeMf, String> {
         dropped,
         settings,
         pictures,
+        application: root_part.application.clone(),
     })
 }
 

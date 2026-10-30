@@ -14,7 +14,7 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat, RgbImage};
 use lopdf::{Document, Object, Stream, dictionary};
 use makerfoundry::model3d::mesh::{self, Mesh};
-use makerfoundry::model3d::{obj, stl, threemf, zip};
+use makerfoundry::model3d::{obj, profile, stl, threemf, zip};
 use makerfoundry::{convert, embroidery, laser, money, photos, sizes, stripe};
 use proptest::prelude::*;
 use sf_core::{Cmd, Pattern, Point, Rgb, Thread};
@@ -577,6 +577,29 @@ proptest! {
     fn threemf_generated(xml in model_pieces()) {
         if let Ok(t) = threemf::read(&threemf_sample(&xml)) {
             check_mesh(&t.mesh);
+        }
+    }
+
+    #[test]
+    fn print_settings_never_panic(
+        text in ".{0,400}",
+        numbers in prop::collection::vec(prop_oneof![Just("1e308".to_string()), Just("-5".to_string()), Just("NaN".to_string()), Just("\"40%\"".to_string()), any::<i64>().prop_map(|n| n.to_string())], 0..8),
+        xml in ".{0,200}",
+    ) {
+        let keys = ["nozzle_diameter", "layer_height", "sparse_infill_density", "wall_loops", "enable_support", "filament_type", "filament_colour", "printer_model"];
+        let json = format!("{{{}}}", keys.iter().zip(&numbers).map(|(k, v)| format!("\"{k}\": {v}")).collect::<Vec<_>>().join(", "));
+        for project in [text.as_str(), json.as_str()] {
+            let files = vec![
+                ("Metadata/project_settings.config".to_string(), project.to_string()),
+                ("Metadata/model_settings.config".to_string(), xml.clone()),
+            ];
+            if let Some(p) = profile::read(&files, Some("BambuStudio")) {
+                assert!(p.nozzle_mm.is_none_or(|n| (0.1..=2.0).contains(&n)));
+                assert!(p.layer_mm.is_none_or(|n| (0.01..=1.0).contains(&n)));
+                assert!(p.infill_percent.is_none_or(|n| (0.0..=100.0).contains(&n)));
+                assert!(p.filaments.len() <= 32);
+                let _ = p.name();
+            }
         }
     }
 

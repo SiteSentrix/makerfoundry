@@ -6235,3 +6235,85 @@ async fn draft_to_publish_end_to_end() {
     assert!(page.body.contains("hook.stl") && page.body.contains("Household"));
     s.dump_page("import-done", &review, Some(&cookie)).await;
 }
+
+// ---------------------------------------------------------------- print profiles (MF-43)
+
+/// A project 3MF written by `application`, with these settings files in place of the fixture's.
+fn project_3mf_with(application: &str, settings: &[(&str, &str)]) -> Vec<u8> {
+    let base = project_3mf(None);
+    let a = makerfoundry::model3d::zip::Archive::open(&base).unwrap();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    for e in a.entries() {
+        let mut data = a.read(e).unwrap();
+        if e.name.ends_with(".config") {
+            continue;
+        }
+        if e.name == "3D/3dmodel.model" {
+            let xml = String::from_utf8(data).unwrap().replacen(
+                "<resources>",
+                &format!(r#"<metadata name="Application">{application}</metadata><resources>"#),
+                1,
+            );
+            data = xml.into_bytes();
+        }
+        files.push((e.name.clone(), data));
+    }
+    files.extend(settings.iter().map(|(n, t)| (n.to_string(), t.as_bytes().to_vec())));
+    makerfoundry::model3d::zip::write(&files).unwrap()
+}
+
+/// A print profile as kept: name, slicer, badges, layer height, filaments, readable.
+type ProfileRow = (String, String, Vec<String>, Option<f64>, serde_json::Value, bool);
+
+#[tokio::test]
+async fn a_bambu_project_upload_keeps_its_print_profile() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let settings = r##"{"printer_model": "Bambu Lab A1 mini", "nozzle_diameter": ["0.4"], "layer_height": "0.16",
+        "filament_type": ["PLA", "PETG"], "filament_colour": ["#FF0000", "#FFFFFF"], "machine_start_gcode": "G28"}"##;
+    let model = r#"<config><object id="2"><metadata key="extruder" value="2"/></object><plate/></config>"#;
+    let r = upload_model(
+        &s,
+        &cookie,
+        &[
+            ("cube.stl", stl_cube(10.0)),
+            (
+                "cube.3mf",
+                project_3mf_with(
+                    "BambuStudio-02.00.00.00",
+                    &[
+                        ("Metadata/project_settings.config", settings),
+                        ("Metadata/model_settings.config", model),
+                    ],
+                ),
+            ),
+            (
+                "broken.3mf",
+                project_3mf_with(
+                    "BambuStudio-02.00.00.00",
+                    &[("Metadata/project_settings.config", "{ nope")],
+                ),
+            ),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let rows: Vec<ProfileRow> = sqlx::query_as(
+        "SELECT p.name, p.slicer, p.printers, p.layer_mm, p.filaments, p.readable
+         FROM mf_print_profiles p JOIN mf_model_files f ON f.id = p.file_id ORDER BY f.position",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "one for each project, none for the STL");
+    assert_eq!(rows[0].0, "0.16 mm layers, PETG, A1 mini");
+    assert_eq!(
+        (rows[0].1.as_str(), rows[0].2.clone(), rows[0].3),
+        ("bambu", vec!["a1-mini".to_string()], Some(0.16))
+    );
+    assert_eq!(rows[0].4, serde_json::json!([{"type": "PETG", "colour": "#FFFFFF"}]));
+    assert!(rows[0].5 && !rows[1].5, "the broken one is kept, marked unreadable");
+}
