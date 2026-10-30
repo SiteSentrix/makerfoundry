@@ -301,6 +301,7 @@ async fn site_scanned(
         notices: None,
         step: None,
         scad: None,
+        points: false,
     });
     Some(Site {
         app,
@@ -603,6 +604,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         notices: None,
         step: None,
         scad: None,
+        points: false,
     });
     let s = Site {
         stored: Arc::default(),
@@ -636,6 +638,7 @@ async fn without_a_database_nobody_can_sign_in() {
         notices: None,
         step: None,
         scad: None,
+        points: false,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1046,6 +1049,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         notices: None,
         step: None,
         scad: None,
+        points: false,
     });
     let s = Site {
         app,
@@ -1283,6 +1287,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         notices: None,
         step: None,
         scad: None,
+        points: false,
     });
     let s = Site {
         app,
@@ -8242,7 +8247,7 @@ async fn the_token_is_never_stored() {
 async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
     let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
     let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
-    Some((services_site(social, None, None, None).await?, calls))
+    Some((services_site(social, None, None, None, false).await?, calls))
 }
 
 /// A 3D site with the outside services given.
@@ -8251,6 +8256,7 @@ async fn services_site(
     notices: Option<makerfoundry::notices::Notices>,
     step: Option<makerfoundry::model3d::step::Converter>,
     scad: Option<makerfoundry::model3d::scad::Renderer>,
+    points: bool,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -8275,6 +8281,7 @@ async fn services_site(
         notices,
         step,
         scad,
+        points,
     });
     Some(Site {
         app,
@@ -8398,7 +8405,7 @@ async fn notices_site() -> Option<(
     let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
     let notices = makerfoundry::notices::Notices::new("re_test_key", None, Some(&base)).unwrap();
     Some((
-        services_site(None, Some(notices.clone()), None, None).await?,
+        services_site(None, Some(notices.clone()), None, None, false).await?,
         notices,
         sent,
     ))
@@ -8625,7 +8632,7 @@ async fn notices_are_in_the_data_download_and_go_with_the_data() {
 async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloaded() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter, None).await else {
+    let Some(s) = services_site(None, None, converter, None, false).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8676,7 +8683,7 @@ async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloa
 async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter, None).await else {
+    let Some(s) = services_site(None, None, converter, None, false).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8702,7 +8709,7 @@ async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     );
     // without a converter, nothing is sent and STEP files have no preview, as before
     drop(s);
-    let Some(s) = services_site(None, None, None, None).await else {
+    let Some(s) = services_site(None, None, None, None, false).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8937,7 +8944,7 @@ async fn parametric_model(s: &Site, cookie: &str, price: &str) -> (i64, i64) {
 async fn a_parametric_model_is_customized_and_downloaded_as_a_checked_stl() {
     let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
     let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, None, scad).await else {
+    let Some(s) = services_site(None, None, None, scad, false).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9046,7 +9053,7 @@ async fn customizing_is_off_without_the_service_and_for_models_for_sale() {
     drop(s);
     let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
     let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, None, scad).await else {
+    let Some(s) = services_site(None, None, None, scad, false).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9359,4 +9366,108 @@ async fn contests_are_hidden_while_3d_is_closed() {
         s.get(&format!("/contests/{slug}"), Some(&admin)).await.status,
         StatusCode::OK
     );
+}
+
+// ---------------------------------------------------------------- points (issue #34)
+
+async fn make_of(s: &Site, cookie: &str, model: i64) {
+    let r = s
+        .send(multipart(
+            &format!("/d/{model}/makes"),
+            &[
+                ("photo", "print.jpg", photo_with_location()),
+                ("confirm", "", b"yes".to_vec()),
+            ],
+            cookie,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+}
+
+#[tokio::test]
+async fn points_come_only_from_what_others_do_with_your_work() {
+    let Some(s) = services_site(None, None, None, None, true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let ann_id: i64 = sqlx::query_scalar("SELECT account_id FROM mf_makers WHERE handle = 'ann'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let tally = || makerfoundry::model3d::points::tally(&s.pool, ann_id);
+    // uploading, even many copies, earns nothing; nor do her own makes and likes
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let _copy = licensed_model(&s, &ann, "Gear again", "cc-by").await;
+    make_of(&s, &ann, gear).await;
+    s.post(&format!("/d/{gear}/like"), "", Some(&ann)).await;
+    assert_eq!(tally().await.total(), 0);
+    // Bea makes it twice (counted once), Cal makes it: 10 for the model, 3 a maker
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    let cal = model_maker(&s, "cal%40example.com", "cal").await;
+    make_of(&s, &bea, gear).await;
+    make_of(&s, &bea, gear).await;
+    make_of(&s, &cal, gear).await;
+    let t = tally().await;
+    assert_eq!((t.models, t.made_by_others, t.makes), (1, 2, 0));
+    assert_eq!(t.total(), 16);
+    // a model liked by three others counts too
+    let vase = licensed_model(&s, &ann, "Vase", "cc-by").await;
+    for (n, who) in [&bea, &cal].iter().enumerate() {
+        s.post(&format!("/d/{vase}/like"), "", Some(who)).await;
+        assert_eq!(tally().await.models, 1, "{n}");
+    }
+    let dee = model_maker(&s, "dee%40example.com", "dee").await;
+    s.post(&format!("/d/{vase}/like"), "", Some(&dee)).await;
+    assert_eq!(tally().await.models, 2);
+    // her makes of others' models: 2 each model, once
+    let shelf = licensed_model(&s, &bea, "Shelf", "cc-by").await;
+    make_of(&s, &ann, shelf).await;
+    make_of(&s, &ann, shelf).await;
+    assert_eq!(tally().await.makes, 1);
+    assert_eq!(tally().await.total(), 20 + 6 + 2);
+    // unpublished: it stops counting
+    s.post(&format!("/designs/{gear}/unpublish"), "", Some(&ann)).await;
+    assert_eq!(tally().await.total(), 10 + 2);
+    let page = s.get("/account/points", Some(&ann)).await.body;
+    assert!(
+        page.contains("<strong>12</strong> points") && page.contains("How points are counted"),
+        "{page}"
+    );
+    s.dump_page("points", &page, Some(&ann)).await;
+    assert!(s.get("/makers/ann", None).await.body.contains("12 points"));
+}
+
+#[tokio::test]
+async fn makes_of_others_models_count_up_to_twenty_a_month() {
+    let Some(s) = services_site(None, None, None, None, true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    let bea_id: i64 = sqlx::query_scalar("SELECT account_id FROM mf_makers WHERE handle = 'bea'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    // 22 makes of Ann's models: rows stand in for photos, to keep the test quick
+    for n in 0..22 {
+        let m = licensed_model(&s, &ann, &format!("M{n}"), "cc-by").await;
+        sqlx::query("INSERT INTO mf_makes (design_id, account_id, photo_key, thumb_key, width, height) VALUES ($1, $2, 'k', 'k', 1, 1)")
+            .bind(m)
+            .bind(bea_id)
+            .execute(&s.pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(makerfoundry::model3d::points::tally(&s.pool, bea_id).await.makes, 20);
+    let _ = bea;
+}
+
+#[tokio::test]
+async fn points_are_off_unless_switched_on() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert_eq!(s.get("/account/points", Some(&ann)).await.status, StatusCode::NOT_FOUND);
+    assert!(!s.get("/account", Some(&ann)).await.body.contains("/account/points"));
 }

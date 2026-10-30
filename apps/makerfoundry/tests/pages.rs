@@ -31,6 +31,7 @@ fn app() -> axum::Router {
         notices: None,
         step: None,
         scad: None,
+        points: false,
     })
 }
 

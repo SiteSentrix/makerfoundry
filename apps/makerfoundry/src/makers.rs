@@ -230,6 +230,10 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
         b if b.is_empty() => b,
         b => format!("<p>{b}</p>"),
     };
+    let badge = format!(
+        "{badge}{}",
+        crate::model3d::points::profile_html(&state, pool, account_id).await
+    );
     let list = if sections.is_empty() {
         r#"<p class="muted">Nothing published yet.</p>"#.to_string()
     } else {

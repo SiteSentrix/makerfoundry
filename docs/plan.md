@@ -394,6 +394,14 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   while MakerFoundry 3D is open. In the data download, deleted with the data. **The owner's
   steps**: prizes and each contest's rules (legal wording: `docs/legal/contest-rules-draft.md` is a
   starting point), then an admin opens one.
+- **#34 points, built 2026-10-30, off unless `MF_POINTS=yes`, with no rewards**: points are
+  counted afresh from what others do with a member's work, never awarded for an action itself, so
+  re-uploads and self-made activity earn nothing and anything taken down or unpublished stops
+  counting: 10 for each published model someone else has made or 3 others have liked, 3 for each
+  member who's made one of their models, 2 for each of someone else's models they've made (up to
+  20 a month). Shown at Account › Your points and on maker profiles. **The owner's steps**:
+  decide whether MakerFoundry wants points at all, what (if anything) they're exchanged for and
+  the budget; then set `MF_POINTS=yes`.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

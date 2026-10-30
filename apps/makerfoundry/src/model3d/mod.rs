@@ -9,6 +9,7 @@ pub mod likes;
 pub mod mesh;
 pub mod obj;
 pub mod origin;
+pub mod points;
 pub mod profile;
 pub mod remix;
 pub mod render;

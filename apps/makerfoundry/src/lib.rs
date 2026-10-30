@@ -150,6 +150,8 @@ pub struct AppState {
     /// Parametric models through a sandboxed OpenSCAD service (issue #35: `MF_SCAD_SERVICE`, and
     /// `MF_SCAD_SERVICE_KEY`); without it there's no customizing.
     pub scad: Option<model3d::scad::Renderer>,
+    /// Points (issue #34: `MF_POINTS=yes`), with no rewards until the owner decides on them.
+    pub points: bool,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -229,6 +231,7 @@ pub fn app(state: AppState) -> Router {
         .route("/account/showcase", get(model3d::showcase::page))
         .route("/account/showcase/{id}/withdraw", post(model3d::showcase::withdraw))
         .route("/account/notices", get(notices::page).post(notices::save))
+        .route("/account/points", get(model3d::points::page))
         .route("/account/api-keys", get(model3d::api::page).post(model3d::api::make))
         .route("/account/api-keys/{id}/revoke", post(model3d::api::revoke))
         .route(

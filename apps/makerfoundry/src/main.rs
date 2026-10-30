@@ -185,6 +185,7 @@ async fn main() -> ExitCode {
         scad: std::env::var("MF_SCAD_SERVICE").ok().and_then(|u| {
             makerfoundry::model3d::scad::Renderer::new(&u, std::env::var("MF_SCAD_SERVICE_KEY").ok().as_deref())
         }),
+        points: std::env::var("MF_POINTS").is_ok_and(|v| v.trim() == "yes"),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),

@@ -453,6 +453,11 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
     } else {
         ""
     };
+    let points = if state.points {
+        r#"<p><a href="/account/points">Your points</a>: from what others make and like of your models.</p>"#
+    } else {
+        ""
+    };
     let notices = if state.notices.is_some() {
         r#"<p><a href="/account/notices">Email notices</a>: a daily email about comments, makes, remixes and new followers.</p>"#
     } else {
@@ -477,6 +482,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <p><a href="/account/showcase">Featuring your projects</a>: what you've said MakerFoundry may feature on its social pages.</p>
 {notices}
 {api_keys}
+{points}
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
 </section>"#,
             email = escape(&user.email)

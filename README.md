@@ -31,8 +31,14 @@ Activity page (comments, makes, sales and new followers). **MF-23** done: on a r
 bears only the card fee Stripe keeps (MakerFoundry's 10% goes back to them). **MF-24** built: sales tax with
 Stripe Tax, kept by MakerFoundry as the marketplace, off until `MF_STRIPE_TAX=yes`. **MF-25** built:
 approval links (a shop sends a customer a proof to approve), its wording in the Terms (§ 9) and the
-Privacy Policy; switched off until the owner sets `MF_PROOF_KEY` and `MF_PROOFS=yes`. **Next:** a 3D printing hub (MF-35 onwards), planned in
-[`docs/3d-hub-plan.md`](docs/3d-hub-plan.md). See [`docs/plan.md`](docs/plan.md).
+Privacy Policy; switched off until the owner sets `MF_PROOF_KEY` and `MF_PROOFS=yes`. **MakerFoundry 3D** (MF-35 to MF-59, issues #3 to #36) built: STL, 3MF, OBJ and STEP models with
+our own readers, rebuilt 3MFs, server-drawn pictures and a 3D viewer, print profiles, remixes with
+licence rules, likes, search, bulk import, the opt-in showcase, founding creators, contests, a
+public API; switched off for everyone but admins and founding creators until the owner approves
+its wording ([`docs/legal/3d-draft.md`](docs/legal/3d-draft.md)) and sets `MF_3D=yes`. Its
+outside services (Thingiverse import, virus scanning, social posting, email notices, STEP
+previews, OpenSCAD customizing) and points are built and tested against stand-ins, each off until
+the owner sets it up ([`docs/deploy.md`](docs/deploy.md)). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.
