@@ -5,7 +5,8 @@ the legal pages are approved (2026-10-22) for a free-only soft open (`docs/launc
 email, admins, then `MF_LAUNCHED=yes`; the DMCA agent the week after; Stripe keys and sales tax
 before paid sales). MF-7's app side is StitchFoundry's
 (`docs/api.md`). Next after the soft open: the Preview & Approval Hub, MF-25 to MF-33 (planned
-2026-10-28, starting with approval links). Later, each needing the owner's decision: bundles,
+2026-10-28, starting with approval links), and the 3D printing hub, MF-35 to MF-59 (planned
+2026-10-30, `docs/3d-hub-plan.md`). Later, each needing the owner's decision: bundles,
 discount codes, pay-what-you-want. Owner: Bruce Wattendorf (SiteSentrix).
 
 ## What it is
@@ -142,6 +143,18 @@ Nobody may resell or share the files themselves.
 | MF-32 | Custom domains | a Top-tier shop's own domain through Cloudflare for SaaS (100 hostnames included, then $0.10 each). **Planned**: needs MF-29 |
 | MF-33 | Live camera preview | the design on the real garment through the phone camera. **Planned**: needs MF-26 and the owner's agreement to the JavaScript it needs |
 | MF-34 | Report a bug, suggest a feature | at the foot of every page, two buttons open an email to the owner with "[MakerFoundry] Bug report: " or "[MakerFoundry] Feature request: " as the subject and a short template. **Done** (2026-10-30) |
+
+## The 3D printing hub (MF-35 onwards, planned 2026-10-30)
+A section for 3D-printing models (`/3d`), built on the same engine as the designs: model pages
+with several files and images, server-drawn thumbnails, Bambu Studio/OrcaSlicer print profiles
+(PrusaSlicer and Cura at a basic level), remixes with their licences enforced, likes, makes,
+collections, follows, comments, search with print-profile filters, moderation and DMCA, a bulk
+import of a creator's own files (MakerWorld, Printables, Thingiverse), founding-creator invites,
+an opt-in social showcase, and Get this printed. The comparison with Thingiverse and Printables is
+`docs/3d-hub-feature-matrix.md`; the plan, its data model and the owner's decisions are
+`docs/3d-hub-plan.md`; the work is the GitHub issues labelled `3d-hub` (P1 `claude-queue`, in
+order; P2 and P3 `claude-proposed`). Off until `MF_3D=yes`; selling, approval links and the
+StitchShop ordering work stay as they are.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

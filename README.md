@@ -31,7 +31,8 @@ Activity page (comments, makes, sales and new followers). **MF-23** done: on a r
 bears only the card fee Stripe keeps (MakerFoundry's 10% goes back to them). **MF-24** built: sales tax with
 Stripe Tax, kept by MakerFoundry as the marketplace, off until `MF_STRIPE_TAX=yes`. **MF-25** built:
 approval links (a shop sends a customer a proof to approve), its wording in the Terms (§ 9) and the
-Privacy Policy; switched off until the owner sets `MF_PROOF_KEY` and `MF_PROOFS=yes`. See [`docs/plan.md`](docs/plan.md).
+Privacy Policy; switched off until the owner sets `MF_PROOF_KEY` and `MF_PROOFS=yes`. **Next:** a 3D printing hub (MF-35 onwards), planned in
+[`docs/3d-hub-plan.md`](docs/3d-hub-plan.md). See [`docs/plan.md`](docs/plan.md).
 
 ## Develop
 - `cargo run -p makerfoundry`, then open <http://localhost:8080>.
