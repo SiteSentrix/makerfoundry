@@ -174,17 +174,24 @@ async fn main() -> ExitCode {
             &std::env::var("MF_INSTAGRAM_USER_ID").unwrap_or_default(),
             std::env::var("META_GRAPH_URL").ok().as_deref(),
         ),
+        notices: makerfoundry::notices::Notices::new(
+            &std::env::var("MF_RESEND_KEY").unwrap_or_default(),
+            std::env::var("MF_NOTICE_FROM").ok().as_deref(),
+            std::env::var("RESEND_API_URL").ok().as_deref(),
+        ),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)
-    let (sweep_limits, sweep_db, sweep_stripe, sweep_storage) = (
+    let (sweep_limits, sweep_db, sweep_stripe, sweep_storage, sweep_notices, sweep_url) = (
         state.limits.clone(),
         state.db.clone(),
         state.stripe.clone(),
         state.storage.clone(),
+        state.notices.clone(),
+        state.public_url.clone(),
     );
     tokio::spawn(async move {
         let mut every = tokio::time::interval(std::time::Duration::from_secs(600));
@@ -223,6 +230,12 @@ async fn main() -> ExitCode {
                 && let Err(e) = makerfoundry::model3d::import::forget_old(pool, sweep_storage.as_ref()).await
             {
                 eprintln!("imports: {e}");
+            }
+            // issue #31: daily digests of email notices
+            if let (Some(pool), Some(notices)) = (&sweep_db, &sweep_notices)
+                && let Err(e) = makerfoundry::notices::send_digests(pool, notices, &sweep_url).await
+            {
+                eprintln!("notices: {e}");
             }
             if let (Some(pool), Some(stripe)) = (&sweep_db, &sweep_stripe)
                 && let Err(e) = makerfoundry::selling::withhold_taxes(stripe, pool).await

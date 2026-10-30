@@ -1370,6 +1370,7 @@ pub async fn publish(
             if state.launched {
                 crate::legal::agree(&pool, user.account_id, &[&crate::legal::SELLER_TERMS]).await;
             }
+            crate::notices::remix(&state, &pool, id, user.account_id).await;
             Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response()
         }
         Err(e) => {

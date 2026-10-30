@@ -781,6 +781,7 @@ pub async fn publish(
         .is_ok()
         {
             published += 1;
+            crate::notices::remix(&state, &pool, did, user.account_id).await;
             if f.showcase == "yes" {
                 super::showcase::give(&pool, user.account_id, Some(did), None).await;
             }

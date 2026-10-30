@@ -28,6 +28,7 @@ pub mod makes;
 pub mod model3d;
 pub mod moderation;
 pub mod money;
+pub mod notices;
 pub mod overview;
 pub mod pages;
 pub mod photos;
@@ -140,6 +141,9 @@ pub struct AppState {
     /// `MF_FACEBOOK_PAGE_ID`, `MF_FACEBOOK_PAGE_TOKEN`, `MF_INSTAGRAM_USER_ID`); without them
     /// admins post by hand.
     pub social: Option<model3d::social::Social>,
+    /// Email notices, a daily digest each member chooses (issue #31: `MF_RESEND_KEY`); without it
+    /// there are none.
+    pub notices: Option<notices::Notices>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -203,6 +207,11 @@ pub fn app(state: AppState) -> Router {
         .route("/account/data", get(data::page))
         .route("/account/showcase", get(model3d::showcase::page))
         .route("/account/showcase/{id}/withdraw", post(model3d::showcase::withdraw))
+        .route("/account/notices", get(notices::page).post(notices::save))
+        .route(
+            "/notices/unsubscribe/{account}/{token}",
+            get(notices::unsubscribe_page).post(notices::unsubscribe),
+        )
         .route("/account/data.json", get(data::download))
         .route("/account/data/delete", post(data::delete))
         .route("/account/maker", get(makers::edit_page).post(makers::save))

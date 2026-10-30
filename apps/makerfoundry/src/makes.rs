@@ -264,7 +264,12 @@ pub async fn post(
         Ok::<(), String>(())
     };
     match kept.await {
-        Ok(()) => Redirect::to(&format!("/d/{id}/{}", slug(&title))).into_response(),
+        Ok(()) => {
+            if let Some(owner) = crate::notices::owner(pool, id).await {
+                crate::notices::record(&state, pool, owner, user.account_id, "make", Some(id)).await;
+            }
+            Redirect::to(&format!("/d/{id}/{}", slug(&title))).into_response()
+        }
         Err(e) => {
             eprintln!("makes: {id}: {e}");
             problem(

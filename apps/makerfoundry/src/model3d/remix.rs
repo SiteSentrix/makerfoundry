@@ -331,6 +331,8 @@ pub async fn add_parent(
         .await
     {
         eprintln!("remix {id} ← {pid}: {e}");
+    } else {
+        crate::notices::remix(&state, &pool, id, user.account_id).await;
     }
     Redirect::to(&format!("/designs/{id}")).into_response()
 }

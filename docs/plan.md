@@ -349,6 +349,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   stay flagged for the admins. YouTube takes video, so it stays by hand. Tested against a
   stand-in Graph API. **The owner's steps**: a Meta app with page-posting permission (Meta's app
   review), then the three settings.
+- **#31 email notices, built 2026-10-30, off until a sending key**: with `MF_RESEND_KEY`, Account ›
+  Email notices lets each member turn on a daily digest (off unless they do) of comments and makes
+  on their designs, remixes of their models (once the remix is published) and new followers.
+  Notices are noted only for members who turned it on, a remix or a follow once, never their own
+  doing; a digest goes at most once a day and names people by maker name only. Every email has a
+  one-click unsubscribe (RFC 8058 headers, and a link with an HMAC token that works without
+  signing in; looking at the link doesn't unsubscribe). Turning it off deletes waiting notices;
+  sent ones go after 30 days; both are in the data download and deleted with the data. Tested
+  against a stand-in Resend. **The owner's steps**: a Resend account, the sending domain verified,
+  `MF_RESEND_KEY` set; the Privacy Policy then names Resend as a processor.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

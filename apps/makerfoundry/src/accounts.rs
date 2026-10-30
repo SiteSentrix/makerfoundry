@@ -448,6 +448,11 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
         Some(pool) => crate::activity::link_html(pool, user.account_id).await,
         None => String::new(),
     };
+    let notices = if state.notices.is_some() {
+        r#"<p><a href="/account/notices">Email notices</a>: a daily email about comments, makes, remixes and new followers.</p>"#
+    } else {
+        ""
+    };
     private(
         "Your account · MakerFoundry",
         &format!(
@@ -465,6 +470,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 <p>To change your password, <a href="/forgot">ask for a reset link</a>.</p>
 <p><a href="/account/data">Your data</a>: download a copy of it, or delete it.</p>
 <p><a href="/account/showcase">Featuring your projects</a>: what you've said MakerFoundry may feature on its social pages.</p>
+{notices}
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
 </section>"#,
             email = escape(&user.email)

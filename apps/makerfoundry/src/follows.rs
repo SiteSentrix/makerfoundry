@@ -94,11 +94,17 @@ async fn change(state: &AppState, headers: &HeaderMap, handle: &str, on: bool) -
         if count >= MAX_FOLLOWS {
             return Redirect::to(&back).into_response();
         }
-        sqlx::query("INSERT INTO mf_follows (follower_account, maker_account) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-            .bind(user.account_id)
-            .bind(maker)
-            .execute(pool)
-            .await
+        let done = sqlx::query(
+            "INSERT INTO mf_follows (follower_account, maker_account) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(user.account_id)
+        .bind(maker)
+        .execute(pool)
+        .await;
+        if done.is_ok() {
+            crate::notices::record(state, pool, maker, user.account_id, "follow", None).await;
+        }
+        done
     } else {
         sqlx::query("DELETE FROM mf_follows WHERE follower_account = $1 AND maker_account = $2")
             .bind(user.account_id)

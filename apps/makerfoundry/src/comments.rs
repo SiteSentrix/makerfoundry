@@ -161,7 +161,12 @@ pub async fn post(
             .fetch_one(pool)
             .await;
     match saved {
-        Ok(cid) => Redirect::to(&format!("/d/{id}/{}#c{cid}", slug(&title))).into_response(),
+        Ok(cid) => {
+            if let Some(owner) = crate::notices::owner(pool, id).await {
+                crate::notices::record(&state, pool, owner, user.account_id, "comment", Some(id)).await;
+            }
+            Redirect::to(&format!("/d/{id}/{}#c{cid}", slug(&title))).into_response()
+        }
         Err(e) => {
             eprintln!("comments: {id}: {e}");
             problem(id, "The comment couldn't be posted just now. Please try again.")

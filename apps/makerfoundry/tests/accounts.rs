@@ -298,6 +298,7 @@ async fn site_scanned(
         scanner,
         thingiverse,
         social: None,
+        notices: None,
     });
     Some(Site {
         app,
@@ -597,6 +598,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         scanner: None,
         thingiverse: None,
         social: None,
+        notices: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -627,6 +629,7 @@ async fn without_a_database_nobody_can_sign_in() {
         scanner: None,
         thingiverse: None,
         social: None,
+        notices: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1034,6 +1037,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         scanner: None,
         thingiverse: None,
         social: None,
+        notices: None,
     });
     let s = Site {
         app,
@@ -1268,6 +1272,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         scanner: None,
         thingiverse: None,
         social: None,
+        notices: None,
     });
     let s = Site {
         app,
@@ -8227,6 +8232,14 @@ async fn the_token_is_never_stored() {
 async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
     let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
     let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
+    Some((services_site(social, None).await?, calls))
+}
+
+/// A 3D site with the outside services given.
+async fn services_site(
+    social: Option<makerfoundry::model3d::social::Social>,
+    notices: Option<makerfoundry::notices::Notices>,
+) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
     let storage_kept = storage.clone();
@@ -8247,17 +8260,15 @@ async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in:
         scanner: None,
         thingiverse: None,
         social,
+        notices,
     });
-    Some((
-        Site {
-            app,
-            pool,
-            fake,
-            stored,
-            storage: Some(storage_kept),
-        },
-        calls,
-    ))
+    Some(Site {
+        app,
+        pool,
+        fake,
+        stored,
+        storage: Some(storage_kept),
+    })
 }
 
 #[tokio::test]
@@ -8361,4 +8372,231 @@ async fn withdrawal_after_posting_deletes_or_flags() {
         "{queue}"
     );
     assert!(!queue.contains("facebook.com/111_"), "{queue}");
+}
+
+// ---------------------------------------------------------------- email notices (issue #31)
+
+async fn notices_site() -> Option<(
+    Site,
+    makerfoundry::notices::Notices,
+    makerfoundry::notices::stand_in::Sent,
+)> {
+    let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
+    let notices = makerfoundry::notices::Notices::new("re_test_key", None, Some(&base)).unwrap();
+    Some((services_site(None, Some(notices.clone())).await?, notices, sent))
+}
+
+/// The digests sent, by recipient: (to, text).
+fn digests(sent: &makerfoundry::notices::stand_in::Sent) -> Vec<(String, String)> {
+    sent.lock()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["to"][0].as_str().unwrap().to_string(),
+                v["text"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn notices_are_off_without_a_key_and_until_a_member_turns_them_on() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    assert_eq!(
+        s.get("/account/notices", Some(&ann)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!s.get("/account", Some(&ann)).await.body.contains("/account/notices"));
+    drop(s);
+    let Some((s, notices, sent)) = notices_site().await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    assert!(s.get("/account", Some(&ann)).await.body.contains("/account/notices"));
+    let page = s.get("/account/notices", Some(&ann)).await.body;
+    assert!(
+        page.contains("Email me a daily update") && !page.contains("checked"),
+        "{page}"
+    );
+    s.dump_page("notices", &page, Some(&ann)).await;
+    // not turned on: nothing is noted
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    say(&s, gear, &bea, "Lovely").await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_notices").await, 0);
+    makerfoundry::notices::send_digests(&s.pool, &notices, "https://makerfoundry.test")
+        .await
+        .unwrap();
+    assert!(digests(&sent).is_empty());
+    assert_eq!(
+        s.get("/account/notices", None).await.location(),
+        "/signin?next=/account/notices"
+    );
+}
+
+#[tokio::test]
+async fn comments_makes_remixes_and_followers_go_in_one_daily_digest() {
+    let Some((s, notices, sent)) = notices_site().await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let r = s.post("/account/notices", "digest=yes", Some(&ann)).await;
+    assert_eq!(r.location(), "/account/notices");
+    assert!(s.get("/account/notices", Some(&ann)).await.body.contains("checked"));
+    let gear = licensed_model(&s, &ann, "Gear", "cc-by").await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    say(&s, gear, &bea, "Lovely").await;
+    // her own comment isn't news to her
+    say(&s, gear, &ann, "Thanks").await;
+    let r = s
+        .send(multipart(
+            &format!("/d/{gear}/makes"),
+            &[
+                ("photo", "print.jpg", photo_with_location()),
+                ("confirm", "", b"yes".to_vec()),
+            ],
+            &bea,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    // following twice, and naming a parent of a draft, are noted once, when it's published
+    s.post("/makers/ann/follow", "", Some(&bea)).await;
+    s.post("/makers/ann/unfollow", "", Some(&bea)).await;
+    s.post("/makers/ann/follow", "", Some(&bea)).await;
+    let remix = detailed_model(&s, &bea, "Big gear", "cc-by").await;
+    let r = add_parent(&s, &bea, remix, &gear.to_string()).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_notices WHERE kind = 'remix'").await,
+        0
+    );
+    s.post(&format!("/designs/{remix}/publish"), "confirm=yes", Some(&bea))
+        .await;
+    s.post(&format!("/designs/{remix}/unpublish"), "", Some(&bea)).await;
+    s.post(&format!("/designs/{remix}/publish"), "confirm=yes", Some(&bea))
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_notices").await, 4);
+    makerfoundry::notices::send_digests(&s.pool, &notices, "https://makerfoundry.test")
+        .await
+        .unwrap();
+    let sent_now = digests(&sent);
+    assert_eq!(sent_now.len(), 1, "{sent_now:?}");
+    let (to, text) = &sent_now[0];
+    assert_eq!(to, "ann@example.com");
+    assert!(
+        text.contains(&format!(
+            "bea commented on Gear: https://makerfoundry.test/d/{gear}/gear"
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains("bea posted a make of Gear") && text.contains("bea started following you"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "bea published a remix: Big gear: https://makerfoundry.test/d/{remix}/big-gear"
+        )),
+        "{text}"
+    );
+    assert!(
+        !text.contains("bea@example.com"),
+        "never someone else's address: {text}"
+    );
+    let headers = sent.lock().unwrap()[0]["headers"].clone();
+    assert_eq!(headers["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click");
+    // at most once a day
+    say(&s, gear, &bea, "Again").await;
+    makerfoundry::notices::send_digests(&s.pool, &notices, "https://makerfoundry.test")
+        .await
+        .unwrap();
+    assert_eq!(digests(&sent).len(), 1);
+    sqlx::query("UPDATE mf_notice_prefs SET last_sent_at = now() - interval '25 hours'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::notices::send_digests(&s.pool, &notices, "https://makerfoundry.test")
+        .await
+        .unwrap();
+    let all = digests(&sent);
+    assert_eq!(all.len(), 2);
+    assert!(
+        all[1].1.contains("commented on Gear") && !all[1].1.contains("started following"),
+        "{}",
+        all[1].1
+    );
+}
+
+#[tokio::test]
+async fn one_click_unsubscribes_without_signing_in() {
+    let Some((s, notices, sent)) = notices_site().await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    s.post("/account/notices", "digest=yes", Some(&ann)).await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    s.post("/makers/ann/follow", "", Some(&bea)).await;
+    makerfoundry::notices::send_digests(&s.pool, &notices, "https://makerfoundry.test")
+        .await
+        .unwrap();
+    let text = digests(&sent)[0].1.clone();
+    let link = text
+        .lines()
+        .find_map(|l| l.strip_prefix("To stop these emails: https://makerfoundry.test"))
+        .unwrap()
+        .to_string();
+    let (_, account_and_token) = link.split_at("/notices/unsubscribe/".len());
+    let account = account_and_token.split('/').next().unwrap();
+    // a wrong token, or another account's, does nothing
+    assert_eq!(
+        s.post(&format!("/notices/unsubscribe/{account}/00"), "", None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let other: i64 = account.parse::<i64>().unwrap() + 1;
+    let token = link.rsplit('/').next().unwrap();
+    assert_eq!(
+        s.post(&format!("/notices/unsubscribe/{other}/{token}"), "", None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    // looking at the link doesn't unsubscribe; the button does
+    let page = s.get(&link, None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_notice_prefs WHERE digest").await, 1);
+    let r = s.post(&link, "", None).await;
+    assert!(r.body.contains("Unsubscribed"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_notice_prefs WHERE digest").await, 0);
+    let cal = model_maker(&s, "cal%40example.com", "cal").await;
+    s.post("/makers/ann/follow", "", Some(&cal)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_notices WHERE sent_at IS NULL").await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn notices_are_in_the_data_download_and_go_with_the_data() {
+    let Some((s, ..)) = notices_site().await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    s.post("/account/notices", "digest=yes", Some(&ann)).await;
+    let bea = model_maker(&s, "bea%40example.com", "bea").await;
+    s.post("/makers/ann/follow", "", Some(&bea)).await;
+    let data = s.get("/account/data.json", Some(&ann)).await.body;
+    assert!(
+        data.contains("\"notice_prefs\"") && data.contains("\"follow\""),
+        "{data}"
+    );
+    let r = s.post("/account/data/delete", "confirm=DELETE", Some(&ann)).await;
+    assert!(r.body.contains("Your MakerFoundry data is deleted"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_notices").await, 0);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_notice_prefs").await, 0);
 }
