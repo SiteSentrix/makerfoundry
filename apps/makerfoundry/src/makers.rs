@@ -11,7 +11,7 @@ use sqlx::PgPool;
 
 use crate::AppState;
 use crate::accounts::{current_user, forbidden, private, same_origin};
-use crate::listings::{cards, paragraphs};
+use crate::listings::paragraphs;
 use crate::pages::{escape, page};
 
 /// A maker as others see them.
@@ -167,21 +167,77 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     let Some((account_id, name, bio)) = row else {
         return not_found();
     };
-    let designs = cards(pool, account_id, 200).await;
+    // each kind of work in its own section (3D models once MakerFoundry 3D is open to the viewer)
+    let three_d = crate::model3d::open_to(&state, viewer.as_ref());
+    let mut sections = String::new();
+    for (kind, heading) in [
+        ("embroidery", "Embroidery designs"),
+        ("laser", "Laser designs"),
+        ("model3d", "3D models"),
+    ] {
+        if kind == "model3d" && !three_d {
+            continue;
+        }
+        let found = crate::listings::find(
+            pool,
+            &crate::listings::Filter {
+                account: Some(account_id),
+                kind: Some(kind.to_string()),
+                three_d,
+                ..crate::listings::Filter::default()
+            },
+            200,
+        )
+        .await;
+        if !found.is_empty() {
+            sections.push_str(&format!("<h2>{heading}</h2>{}", crate::listings::cards_html(&found)));
+        }
+    }
+    let counts: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE kind <> 'model3d'), count(*) FILTER (WHERE kind = 'model3d'),
+                coalesce((SELECT count(*) FROM mf_likes l JOIN mf_designs m ON m.id = l.design_id
+                          WHERE m.account_id = $1 AND m.status = 'published' AND $2), 0),
+                coalesce(sum(downloads), 0)::bigint
+         FROM mf_designs WHERE account_id = $1 AND status = 'published' AND (kind <> 'model3d' OR $2)",
+    )
+    .bind(account_id)
+    .bind(three_d)
+    .fetch_one(pool)
+    .await
+    .unwrap_or((0, 0, 0, 0));
+    let plural = |n: i64, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {many}")),
+    };
+    let counts: Vec<String> = [
+        plural(counts.0, "design", "designs"),
+        plural(counts.1, "model", "models"),
+        plural(counts.2, "like", "likes"),
+        plural(counts.3, "download", "downloads"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let counts = if counts.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<p class="byline">{}</p>"#, counts.join(" · "))
+    };
     let collections = crate::collections::public_html(pool, account_id).await;
     let follow = crate::follows::button_html(pool, viewer.as_ref(), account_id, &handle).await;
     let badge = match crate::founding::badge_for(pool, account_id).await {
         b if b.is_empty() => b,
         b => format!("<p>{b}</p>"),
     };
-    let list = if designs.is_empty() {
-        r#"<p class="muted">No designs published yet.</p>"#.to_string()
+    let list = if sections.is_empty() {
+        r#"<p class="muted">Nothing published yet.</p>"#.to_string()
     } else {
-        designs
+        sections
     };
     let url = format!("{}/makers/{handle}", state.public_url);
     let description = if bio.trim().is_empty() {
-        format!("Embroidery and laser designs by {name} on MakerFoundry")
+        format!("Designs and models by {name} on MakerFoundry")
     } else {
         crate::pages::summary(&bio, 200)
     };
@@ -194,7 +250,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     Html(crate::pages::page_with(
         &format!("{} · MakerFoundry", escape(&name)),
         &format!(
-            r#"<section class="design"><h1>{}</h1>{badge}{follow}{}<h2>Designs</h2>{list}{collections}</section>"#,
+            r#"<section class="design"><h1>{}</h1>{badge}{counts}{follow}{}{list}{collections}</section>"#,
             escape(&name),
             paragraphs(&bio)
         ),

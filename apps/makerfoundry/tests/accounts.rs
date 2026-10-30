@@ -6558,6 +6558,7 @@ async fn model_maker(s: &Site, email: &str, handle: &str) -> String {
 /// A model with its details given (not published) → id.
 async fn detailed_model(s: &Site, cookie: &str, title: &str, licence: &str) -> i64 {
     let r = upload_model(s, cookie, &[("part.stl", stl_cube(5.0))], &[]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
     let id = design_id(r.location());
     let r = s
         .post(
@@ -7095,4 +7096,126 @@ async fn a_filtered_page_under_100ms_with_100000_models() {
         println!("3D search {query:?}: {} models in {took:?}", ids.len());
         assert!(took < std::time::Duration::from_millis(100), "{query}: {took:?}");
     }
+}
+
+// ---------------------------------------------------------------- creator profiles (MF-50)
+
+const LASER_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50"><rect x="1" y="1" width="98" height="48" fill="none" stroke="red"/></svg>"#;
+
+/// Ann (handle `ann`) with a published embroidery design, laser design and 3D model → her
+/// cookie and the three ids.
+async fn creator_with_three_kinds(s: &Site) -> (String, i64, i64, i64) {
+    let ann = model_maker(s, "ann%40example.com", "ann").await;
+    let rose = published(s, &ann, "ann", "Rose").await;
+    let r = s
+        .send(multipart(
+            "/designs/new",
+            &[("file", "coaster.svg", LASER_SVG.as_bytes().to_vec())],
+            &ann,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let coaster = design_id(r.location());
+    s.post(
+        &format!("/designs/{coaster}/edit"),
+        "title=Coaster&licence=commercial&price=0",
+        Some(&ann),
+    )
+    .await;
+    let r = s
+        .post(&format!("/designs/{coaster}/publish"), "confirm=yes", Some(&ann))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let gear = licensed_model(s, &ann, "Gear", "cc-by").await;
+    (ann, rose, coaster, gear)
+}
+
+#[tokio::test]
+async fn a_creator_with_all_three_kinds() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, rose, coaster, gear) = creator_with_three_kinds(&s).await;
+    let page = s.get("/makers/ann", None).await.body;
+    for text in [
+        "Embroidery designs",
+        "Laser designs",
+        "3D models",
+        &format!("/d/{rose}/"),
+        &format!("/d/{coaster}/"),
+        &format!("/d/{gear}/"),
+    ] {
+        assert!(page.contains(text), "{text}: {page}");
+    }
+    let (emb, laser, models) = (
+        page.find("Embroidery designs").unwrap(),
+        page.find("Laser designs").unwrap(),
+        page.find("3D models</h2>").unwrap(),
+    );
+    assert!(page[models..].contains(&format!("/d/{gear}/")) && !page[emb..laser].contains(&format!("/d/{gear}/")));
+    s.dump_page("creator", &page, None).await;
+    // while MakerFoundry 3D is off, others don't see the models section (Ann, an admin, made it)
+    let Some(s) = site_3d(vec![1000], false).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    published(&s, &ann, "ann", "Rose").await;
+    let model = detailed_model(&s, &ann, "Hidden", "cc0").await;
+    sqlx::query("UPDATE mf_designs SET status = 'published', published_at = now() WHERE id = $1")
+        .bind(model)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get("/makers/ann", None).await.body;
+    assert!(!page.contains("3D models") && !page.contains("Hidden"), "{page}");
+}
+
+#[tokio::test]
+async fn counts_are_right() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, _, _, gear) = creator_with_three_kinds(&s).await;
+    licensed_model(&s, &creator_cookie(&s).await, "Wheel", "cc0").await;
+    for who in ["bea%40example.com", "cal%40example.com"] {
+        let c = s.join(who).await;
+        s.post(&format!("/d/{gear}/like"), "like=yes", Some(&c)).await;
+        s.get(&format!("/d/{gear}/download"), Some(&c)).await;
+    }
+    let page = s.get("/makers/ann", None).await.body;
+    assert!(page.contains("2 designs · 2 models · 2 likes · 2 downloads"), "{page}");
+}
+
+/// Ann's cookie again (signing in).
+async fn creator_cookie(s: &Site) -> String {
+    s.post("/signin", "email=ann%40example.com&password=fire+truck+1", None)
+        .await
+        .cookie()
+}
+
+#[tokio::test]
+async fn drafts_never_shown_on_a_profile() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (ann, ..) = creator_with_three_kinds(&s).await;
+    detailed_model(&s, &ann, "Unfinished", "cc0").await;
+    let page = s.get("/makers/ann", None).await.body;
+    assert!(!page.contains("Unfinished") && page.contains("1 model"), "{page}");
+}
+
+#[tokio::test]
+async fn the_founding_badge_shows_only_when_set() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    creator_with_three_kinds(&s).await;
+    model_maker(&s, "bea%40example.com", "bea").await;
+    assert!(!s.get("/makers/ann", None).await.body.contains("Founding creator"));
+    sqlx::query("INSERT INTO mf_founding (account_id, name, status, number) VALUES (1000, 'Ann', 'approved', 7)")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert!(s.get("/makers/ann", None).await.body.contains("Founding creator #7"));
+    assert!(!s.get("/makers/bea", None).await.body.contains("Founding creator"));
 }

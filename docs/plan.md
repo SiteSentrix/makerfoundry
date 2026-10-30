@@ -277,6 +277,10 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   refreshed whenever its files change) and indexed; popularity (likes and makes of the last 30
   days, plus downloads) is refreshed by the 10-minute sweep. With 100,000 models every filtered
   page took under 6 ms on the test database (the test asserts under 100 ms).
+- **MF-50 creator profiles, built 2026-10-30** (#18): a maker's page shows their embroidery
+  designs, laser designs and 3D models in sections of their own (models once MakerFoundry 3D is
+  open to the viewer), with counts of published designs and models, likes and downloads; drafts
+  never show; the founding badge only when set.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
