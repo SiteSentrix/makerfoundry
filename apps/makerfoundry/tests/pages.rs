@@ -29,6 +29,7 @@ fn app() -> axum::Router {
         thingiverse: None,
         social: None,
         notices: None,
+        step: None,
     })
 }
 

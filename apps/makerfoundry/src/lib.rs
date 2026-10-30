@@ -144,6 +144,9 @@ pub struct AppState {
     /// Email notices, a daily digest each member chooses (issue #31: `MF_RESEND_KEY`); without it
     /// there are none.
     pub notices: Option<notices::Notices>,
+    /// STEP previews through a converter service (issue #32: `MF_STEP_CONVERTER`, and
+    /// `MF_STEP_CONVERTER_KEY`); without it STEP files have no preview.
+    pub step: Option<model3d::step::Converter>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.

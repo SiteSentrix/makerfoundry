@@ -188,9 +188,16 @@ struct Prepared {
     profile: Option<super::profile::Profile>,
 }
 
-fn prepare(name: String, bytes: &[u8]) -> Result<Prepared, String> {
-    let checked = files::check(&name, bytes)?;
-    let drawn = matches!(checked.role, Role::Mesh | Role::Project);
+fn prepare(name: String, bytes: &[u8], preview: Option<Vec<u8>>) -> Result<Prepared, String> {
+    let mut checked = files::check(&name, bytes)?;
+    // a STEP file's preview (issue #32): the converter's STL, read like any upload; one that
+    // can't be read leaves the file without a preview
+    if checked.format == "step"
+        && let Some(stl) = preview
+    {
+        checked.mesh = super::stl::read(&stl).ok();
+    }
+    let drawn = matches!(checked.role, Role::Mesh | Role::Project) || checked.format == "step";
     let viewer = match (&checked.mesh, drawn) {
         (Some(mesh), true) => Some(super::viewer::encode(mesh)),
         _ => None,
@@ -201,8 +208,13 @@ fn prepare(name: String, bytes: &[u8]) -> Result<Prepared, String> {
             let views = [View::Front, View::Side, View::Top]
                 .into_iter()
                 .map(|v| render::render(mesh, v, VIEW_SIDE))
-                .collect::<Result<Vec<_>, _>>()?;
-            (hero, views)
+                .collect::<Result<Vec<_>, _>>();
+            match views {
+                Ok(views) => (hero, views),
+                // (a preview that can't be drawn is no reason to refuse a STEP file)
+                Err(_) if checked.format == "step" => (None, Vec::new()),
+                Err(why) => return Err(why),
+            }
         }
         _ => (None, Vec::new()),
     };
@@ -275,7 +287,8 @@ pub async fn add(
     for (name, bytes) in model_files {
         let name = clean_name(&name);
         let shown: String = name.chars().take(80).collect();
-        match tokio::task::spawn_blocking(move || prepare(name, &bytes)).await {
+        let preview = step_preview(state, &name, &bytes).await;
+        match tokio::task::spawn_blocking(move || prepare(name, &bytes, preview)).await {
             Ok(Ok(p)) => prepared.push(p),
             Ok(Err(why)) => return Err(Refused::Bad(format!("{shown}: {why}."))),
             Err(_) => return Err(Refused::Bad(format!("{shown} couldn't be read. Please try again."))),
@@ -298,6 +311,21 @@ pub async fn add(
         eprintln!("model3d: {why}");
         Refused::Failed
     })
+}
+
+/// A STEP file's preview as an STL from the converter service, when there is one (issue #32).
+async fn step_preview(state: &AppState, name: &str, bytes: &[u8]) -> Option<Vec<u8>> {
+    let converter = state.step.as_ref()?;
+    if files::kind_of(name).map(|(f, _)| f) != Some("step") {
+        return None;
+    }
+    match converter.to_stl(bytes).await {
+        Ok(stl) => Some(stl),
+        Err(e) => {
+            eprintln!("model3d: STEP preview: {e}");
+            None
+        }
+    }
 }
 
 /// Scans every file and image with the virus scanner, when there is one (issue #29): a flagged
@@ -662,6 +690,9 @@ pub fn files_html(id: i64, list: &[ModelFile], owner: bool) -> String {
             }
             if let Some(t) = f.triangles {
                 facts.push(format!("{t} triangles"));
+            }
+            if f.role == "source" && f.has_thumb {
+                facts.push("preview drawn from the STEP file".into());
             }
             facts.push(bytes(f.file_bytes));
             let views: String = ["front", "side", "top"]
@@ -1201,7 +1232,8 @@ pub async fn add_files(
     let mut prepared = Vec::new();
     for (name, bytes) in new_files {
         let shown: String = name.chars().take(80).collect();
-        match tokio::task::spawn_blocking(move || prepare(name, &bytes)).await {
+        let preview = step_preview(&state, &name, &bytes).await;
+        match tokio::task::spawn_blocking(move || prepare(name, &bytes, preview)).await {
             Ok(Ok(p)) => prepared.push(p),
             Ok(Err(why)) => return again(format!("{shown}: {why}.")).await,
             Err(_) => return again(format!("{shown} couldn't be read. Please try again.")).await,

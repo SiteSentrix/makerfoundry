@@ -359,6 +359,15 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   sent ones go after 30 days; both are in the data download and deleted with the data. Tested
   against a stand-in Resend. **The owner's steps**: a Resend account, the sending domain verified,
   `MF_RESEND_KEY` set; the Privacy Policy then names Resend as a processor.
+- **#32 STEP previews, built 2026-10-30, off until a converter service exists**: with
+  `MF_STEP_CONVERTER`, each uploaded or imported STEP file is sent to the service, whose STL
+  answer is read by our own STL reader with its limits and drawn like any mesh (pictures, views,
+  3D view, size). The STEP file is still kept as it came and only downloaded. A preview that can't
+  be made (service down, an error, an STL that fails our reader) never fails the upload: the file
+  just has no preview, as before. Tested against a stand-in converter. **The owner's steps**:
+  decide whether it's worth running (cost), then deploy a converter as its own Railway service
+  (OpenCASCADE is LGPL: as a separate program that's fine; never linked or copied), and set
+  `MF_STEP_CONVERTER` (and a key).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

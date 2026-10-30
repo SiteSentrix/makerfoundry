@@ -6,7 +6,8 @@
 //! OpenSCAD sources, notes) are checked to be text. Anything else is refused.
 //!
 //! STEP and the text companions aren't read further, so they're only ever offered as downloads
-//! (`Content-Disposition: attachment`), never shown on our site.
+//! (`Content-Disposition: attachment`), never shown on our site. (A STEP file's preview, when the
+//! converter service is set, is drawn from the STL the service makes of it: `step.rs`.)
 
 use super::mesh::{MAX_FILE_BYTES, Mesh};
 use super::{obj, stl, threemf};

@@ -299,6 +299,7 @@ async fn site_scanned(
         thingiverse,
         social: None,
         notices: None,
+        step: None,
     });
     Some(Site {
         app,
@@ -599,6 +600,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         thingiverse: None,
         social: None,
         notices: None,
+        step: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -630,6 +632,7 @@ async fn without_a_database_nobody_can_sign_in() {
         thingiverse: None,
         social: None,
         notices: None,
+        step: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1038,6 +1041,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         thingiverse: None,
         social: None,
         notices: None,
+        step: None,
     });
     let s = Site {
         app,
@@ -1273,6 +1277,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         thingiverse: None,
         social: None,
         notices: None,
+        step: None,
     });
     let s = Site {
         app,
@@ -8232,13 +8237,14 @@ async fn the_token_is_never_stored() {
 async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
     let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
     let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
-    Some((services_site(social, None).await?, calls))
+    Some((services_site(social, None, None).await?, calls))
 }
 
 /// A 3D site with the outside services given.
 async fn services_site(
     social: Option<makerfoundry::model3d::social::Social>,
     notices: Option<makerfoundry::notices::Notices>,
+    step: Option<makerfoundry::model3d::step::Converter>,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -8261,6 +8267,7 @@ async fn services_site(
         thingiverse: None,
         social,
         notices,
+        step,
     });
     Some(Site {
         app,
@@ -8383,7 +8390,7 @@ async fn notices_site() -> Option<(
 )> {
     let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
     let notices = makerfoundry::notices::Notices::new("re_test_key", None, Some(&base)).unwrap();
-    Some((services_site(None, Some(notices.clone())).await?, notices, sent))
+    Some((services_site(None, Some(notices.clone()), None).await?, notices, sent))
 }
 
 /// The digests sent, by recipient: (to, text).
@@ -8599,4 +8606,110 @@ async fn notices_are_in_the_data_download_and_go_with_the_data() {
     assert!(r.body.contains("Your MakerFoundry data is deleted"), "{}", r.body);
     assert_eq!(s.scalar("SELECT count(*) FROM mf_notices").await, 0);
     assert_eq!(s.scalar("SELECT count(*) FROM mf_notice_prefs").await, 0);
+}
+
+// ---------------------------------------------------------------- STEP previews (issue #32)
+
+#[tokio::test]
+async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloaded() {
+    let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
+    let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
+    let Some(s) = services_site(None, None, converter).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let r = upload_model(
+        &s,
+        &ann,
+        &[
+            ("part.stl", stl_cube(5.0)),
+            ("bracket.step", STEP_FILE.as_bytes().to_vec()),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let id = design_id(r.location());
+    assert_eq!(*calls.lock().unwrap(), 1, "only the STEP file is sent");
+    let page = s.get(&format!("/designs/{id}"), Some(&ann)).await.body;
+    assert!(page.contains("preview drawn from the STEP file"), "{page}");
+    let step_id: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND format = 'step'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let hero = s.get(&format!("/3d/{id}/files/{step_id}/hero"), Some(&ann)).await;
+    assert_eq!(hero.status, StatusCode::OK);
+    let mesh = s.get(&format!("/3d/{id}/files/{step_id}/mesh"), Some(&ann)).await;
+    assert_eq!(mesh.status, StatusCode::OK);
+    let (triangles, size): (Option<i64>, Option<Vec<f64>>) =
+        sqlx::query_as("SELECT triangles, size_mm FROM mf_model_files WHERE id = $1")
+            .bind(step_id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(triangles, Some(12));
+    assert_eq!(size, Some(vec![10.0, 10.0, 10.0]));
+    // the STEP file itself is kept as it came, and still only downloaded
+    let kept = s
+        .stored
+        .lock()
+        .unwrap()
+        .values()
+        .any(|(_, b)| b.as_slice() == STEP_FILE.as_bytes());
+    assert!(kept);
+    s.dump_page("step-preview", &page, Some(&ann)).await;
+}
+
+#[tokio::test]
+async fn a_step_file_the_converter_cant_preview_is_still_taken() {
+    let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
+    let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
+    let Some(s) = services_site(None, None, converter).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let bad = STEP_FILE.replace("'test'", "'BAD'");
+    let huge = STEP_FILE.replace("'test'", "'HUGE'");
+    let r = upload_model(
+        &s,
+        &ann,
+        &[
+            ("part.stl", stl_cube(5.0)),
+            ("bad.step", bad.into_bytes()),
+            ("huge.stp", huge.into_bytes()),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(*calls.lock().unwrap(), 2);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_model_files WHERE format = 'step' AND thumb_key IS NULL AND mesh_key IS NULL AND triangles IS NULL")
+            .await,
+        2
+    );
+    // without a converter, nothing is sent and STEP files have no preview, as before
+    drop(s);
+    let Some(s) = services_site(None, None, None).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let r = upload_model(
+        &s,
+        &ann,
+        &[
+            ("part.stl", stl_cube(5.0)),
+            ("bracket.step", STEP_FILE.as_bytes().to_vec()),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(*calls.lock().unwrap(), 2);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_model_files WHERE format = 'step' AND thumb_key IS NOT NULL")
+            .await,
+        0
+    );
 }
