@@ -6360,3 +6360,183 @@ async fn a_broken_settings_file_never_fails_the_upload() {
     );
     assert_eq!(s.scalar("SELECT count(*) FROM mf_model_files").await, 3);
 }
+
+// ---------------------------------------------------------------- print profiles on pages (MF-45)
+
+const BAMBU_SETTINGS: &str = r##"{"printer_model": "Bambu Lab A1 mini", "nozzle_diameter": ["0.4"], "layer_height": "0.2",
+    "sparse_infill_density": "15%", "wall_loops": "3", "enable_support": "0",
+    "filament_type": ["PLA", "PLA"], "filament_colour": ["#D03030", "#FFFFFF"]}"##;
+
+fn bambu_3mf() -> Vec<u8> {
+    project_3mf_with(
+        "BambuStudio-02.00.00.00",
+        &[
+            ("Metadata/project_settings.config", BAMBU_SETTINGS),
+            ("Metadata/model_settings.config", "<config><plate/><plate/></config>"),
+        ],
+    )
+}
+
+/// Adds files to a model as its maker → the answer.
+async fn add_model_files(s: &Site, cookie: &str, id: i64, files: &[(&str, Vec<u8>)]) -> Answer {
+    let parts: Vec<(&str, &str, Vec<u8>)> = files.iter().map(|(n, b)| ("files", *n, b.clone())).collect();
+    s.send(multipart(&format!("/3d/{id}/files"), &parts, cookie)).await
+}
+
+#[tokio::test]
+async fn a_model_shows_each_profile_with_badges_and_colours() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = published_model(&s, "maker%40example.com", "maker").await;
+    let r = add_model_files(&s, &cookie, id, &[("a1 mini.3mf", bambu_3mf())]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let page = s.get(&format!("/d/{id}/cube"), None).await.body;
+    for text in [
+        "Print profiles",
+        "0.2 mm layers, PLA, A1 mini",
+        r#"<span class="badge printer">A1 mini</span>"#,
+        "0.4 mm nozzle",
+        "15% infill",
+        "3 walls",
+        "no supports",
+        "2 plates",
+        "data:image/svg+xml,",
+        "%23D03030",
+        "%23FFFFFF",
+        "Bambu Studio",
+    ] {
+        assert!(page.contains(text), "{text}: {page}");
+    }
+    s.dump_page("model-profiles", &page, None).await;
+}
+
+#[tokio::test]
+async fn each_profile_downloads_its_own_3mf() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = published_model(&s, "maker%40example.com", "maker").await;
+    add_model_files(&s, &cookie, id, &[("a1 mini.3mf", bambu_3mf())]).await;
+    let (fid, key): (i64, String) = sqlx::query_as(
+        "SELECT f.id, f.file_key FROM mf_print_profiles p JOIN mf_model_files f ON f.id = p.file_id WHERE f.file_name = 'a1 mini.3mf'",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    let page = s.get(&format!("/d/{id}/cube"), None).await.body;
+    assert!(
+        page.contains(&format!(r#"href="/d/{id}/download?model_file={fid}""#)),
+        "{page}"
+    );
+    let r = s.get(&format!("/d/{id}/download?model_file={fid}"), None).await;
+    assert!(
+        r.location().contains(&key) && r.location().contains("mini.3mf"),
+        "{}",
+        r.location()
+    );
+}
+
+#[tokio::test]
+async fn profiles_are_added_and_removed() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = published_model(&s, "maker%40example.com", "maker").await;
+    // the ZIP made before a change is made again after it
+    s.get(&format!("/d/{id}/download"), None).await;
+    let old_zip: String = sqlx::query_scalar("SELECT zip_key FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    add_model_files(&s, &cookie, id, &[("a1 mini.3mf", bambu_3mf())]).await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_print_profiles").await, 2);
+    assert!(!s.stored.lock().unwrap().contains_key(&old_zip), "the old ZIP is gone");
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_designs WHERE id = {id} AND zip_key IS NULL"
+        ))
+        .await,
+        1
+    );
+    // another account can't add or remove
+    let other = s.join("other%40example.com").await;
+    assert_eq!(
+        add_model_files(&s, &other, id, &[("x.stl", stl_cube(5.0))])
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE file_name = 'a1 mini.3mf'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let remove = format!("/3d/{id}/files/{fid}/delete");
+    assert_eq!(s.post(&remove, "", Some(&other)).await.status, StatusCode::NOT_FOUND);
+    let keys = makerfoundry::model3d::upload::keys(&s.pool, &[id]).await;
+    let r = s.post(&remove, "", Some(&cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_print_profiles").await, 1);
+    let after = makerfoundry::model3d::upload::keys(&s.pool, &[id]).await;
+    let gone: Vec<_> = keys.iter().filter(|k| !after.contains(k)).collect();
+    assert!(
+        gone.len() >= 2 && gone.iter().all(|k| !s.stored.lock().unwrap().contains_key(*k)),
+        "its file and pictures are deleted"
+    );
+    // removing the main file moves the model's main file to the next one
+    let main: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 ORDER BY position LIMIT 1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    s.post(&format!("/3d/{id}/files/{main}/delete"), "", Some(&cookie))
+        .await;
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_designs WHERE id = {id} AND file_name = 'cube project.3mf'"
+        ))
+        .await,
+        1
+    );
+    // the last model file can't go
+    let last: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND role = 'project'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let r = s
+        .post(&format!("/3d/{id}/files/{last}/delete"), "", Some(&cookie))
+        .await;
+    assert!(r.body.contains("at least one STL, 3MF or OBJ"), "{}", r.body);
+    // adding checks files as an upload does
+    let r = add_model_files(&s, &cookie, id, &[("page.stl", b"<html></html>".to_vec())]).await;
+    assert!(r.body.contains("page.stl"), "{}", r.body);
+}
+
+#[tokio::test]
+async fn an_unreadable_profile_still_shows_and_downloads() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = published_model(&s, "maker%40example.com", "maker").await;
+    add_model_files(
+        &s,
+        &cookie,
+        id,
+        &[(
+            "odd.3mf",
+            project_3mf_with("BambuStudio-02.00", &[("Metadata/project_settings.config", "{ nope")]),
+        )],
+    )
+    .await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE file_name = 'odd.3mf'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get(&format!("/d/{id}/cube"), None).await.body;
+    assert!(
+        page.contains("settings couldn") && page.contains(&format!("?model_file={fid}")),
+        "{page}"
+    );
+}

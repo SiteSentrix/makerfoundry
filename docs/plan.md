@@ -249,6 +249,13 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   printer name), each slicer's own key names mapped onto the same checked fields. A 3MF from a
   program that isn't a slicer is geometry only; a slicer's settings that can't be read never
   fail an upload.
+- **MF-45 print profiles on pages, built 2026-10-30** (#13): a model's page lists each print
+  profile: its name, printer badges, the slicer and file it came from, nozzle, layers, infill,
+  walls, supports, plates and the filaments used as colour swatches (small SVGs in `data:`
+  addresses, as pages allow no inline styles), with a download of that 3MF; a profile whose
+  settings couldn't be read still shows and downloads. Makers add files to a model (another
+  profile, a STEP source) and remove them (`/3d/<id>/files`), never the last printable file nor
+  any file of a model people have bought; the model's ZIP is made again after any change.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

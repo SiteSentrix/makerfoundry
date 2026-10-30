@@ -128,6 +128,11 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .import-groups label { display: flex; flex-wrap: wrap; gap: .375rem; align-items: center; overflow-wrap: anywhere; }
 .import-groups input { font: inherit; padding: .35rem .55rem; border: 1px solid var(--line); border-radius: .375rem; background: var(--card); color: var(--fg); max-width: 100%; }
 .import-drafts, .problems { padding-left: 1.25rem; overflow-wrap: anywhere; }
+.profiles { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: .75rem; max-width: 48rem; }
+.profiles li { display: grid; gap: .3rem; border: 1px solid var(--line); border-radius: .5rem; padding: .75rem; overflow-wrap: anywhere; }
+.badge.printer { background: var(--card); border: 1px solid var(--line); justify-self: start; }
+.filaments { display: flex; flex-wrap: wrap; gap: .25rem .9rem; }
+.filament { display: inline-flex; align-items: center; gap: .3rem; }
 .model-picture { margin: 0 0 1.5rem; }
 .model-picture img { display: block; width: 100%; max-width: 36rem; height: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
 .downloads { margin: 0 0 1.5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }

@@ -281,6 +281,111 @@ pub async fn add(
 }
 
 /// Stores the files, then notes the model; if noting fails, the stored files go again.
+/// One file stored, ready to be noted.
+struct StoredFile {
+    name: String,
+    format: &'static str,
+    role: Role,
+    key: String,
+    bytes: i64,
+    triangles: Option<i64>,
+    size_mm: Option<Vec<f64>>,
+    thumb: Option<(String, &'static str)>,
+    views: Vec<String>,
+    dropped: Vec<String>,
+    profile: Option<super::profile::Profile>,
+}
+
+/// Stores prepared files and their pictures, noting every key stored in `stored`.
+async fn store_files(
+    storage: &Storage,
+    prepared: Vec<Prepared>,
+    stored: &mut Vec<String>,
+) -> Result<Vec<StoredFile>, String> {
+    let mut rows = Vec::new();
+    for p in prepared {
+        let key = new_key("model")?;
+        let bytes = p.bytes.len() as i64;
+        storage.put(&key, p.bytes, "application/octet-stream").await?;
+        stored.push(key.clone());
+        let thumb = match p.hero {
+            Some((picture, kind)) => {
+                let k = new_key("thumb")?;
+                storage.put(&k, picture, kind).await?;
+                stored.push(k.clone());
+                Some((k, kind))
+            }
+            None => None,
+        };
+        let mut views = Vec::new();
+        for v in p.views {
+            let k = new_key("view")?;
+            storage.put(&k, v, "image/png").await?;
+            stored.push(k.clone());
+            views.push(k);
+        }
+        rows.push(StoredFile {
+            name: p.name,
+            format: p.format,
+            role: p.role,
+            key,
+            bytes,
+            triangles: p.triangles.map(|t| i64::try_from(t).unwrap_or(i64::MAX)),
+            size_mm: p.size_mm.map(|s| s.to_vec()),
+            thumb,
+            views,
+            dropped: p.dropped,
+            profile: p.profile,
+        });
+    }
+    Ok(rows)
+}
+
+/// Notes stored files as model `id`'s, from `start` on in its order, with their profiles.
+async fn note_files(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: i64,
+    rows: &[StoredFile],
+    start: i32,
+) -> Result<(), String> {
+    for (n, r) in rows.iter().enumerate() {
+        let file_id: i64 = sqlx::query_scalar(
+            "INSERT INTO mf_model_files (design_id, role, format, file_name, file_key, file_bytes, triangles, size_mm, thumb_key, thumb_type, view_keys, dropped, position)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
+        )
+        .bind(id)
+        .bind(r.role.as_str())
+        .bind(r.format)
+        .bind(&r.name)
+        .bind(&r.key)
+        .bind(r.bytes)
+        .bind(r.triangles)
+        .bind(&r.size_mm)
+        .bind(r.thumb.as_ref().map(|t| t.0.clone()))
+        .bind(r.thumb.as_ref().map(|t| t.1))
+        .bind(&r.views)
+        .bind(&r.dropped)
+        .bind(start.saturating_add(i32::try_from(n).unwrap_or(i32::MAX)))
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        if let Some(p) = &r.profile {
+            save_profile(tx, id, file_id, p).await.map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Deletes stored keys, best effort (an orphaned file costs a little storage, nothing else).
+async fn forget(storage: &Storage, keys: &[String]) {
+    for key in keys {
+        if let Err(e) = storage.delete(key).await {
+            eprintln!("model3d: delete {key}: {e}");
+        }
+    }
+}
+
+/// Stores the files, then notes the model; if noting fails, the stored files go again.
 async fn keep(
     storage: &Storage,
     pool: &PgPool,
@@ -290,55 +395,7 @@ async fn keep(
 ) -> Result<i64, String> {
     let mut stored: Vec<String> = Vec::new();
     let result = async {
-        struct Row {
-            name: String,
-            format: &'static str,
-            role: Role,
-            key: String,
-            bytes: i64,
-            triangles: Option<i64>,
-            size_mm: Option<Vec<f64>>,
-            thumb: Option<(String, &'static str)>,
-            views: Vec<String>,
-            dropped: Vec<String>,
-            profile: Option<super::profile::Profile>,
-        }
-        let mut rows = Vec::new();
-        for p in prepared {
-            let key = new_key("model")?;
-            let bytes = p.bytes.len() as i64;
-            storage.put(&key, p.bytes, "application/octet-stream").await?;
-            stored.push(key.clone());
-            let thumb = match p.hero {
-                Some((picture, kind)) => {
-                    let k = new_key("thumb")?;
-                    storage.put(&k, picture, kind).await?;
-                    stored.push(k.clone());
-                    Some((k, kind))
-                }
-                None => None,
-            };
-            let mut views = Vec::new();
-            for v in p.views {
-                let k = new_key("view")?;
-                storage.put(&k, v, "image/png").await?;
-                stored.push(k.clone());
-                views.push(k);
-            }
-            rows.push(Row {
-                name: p.name,
-                format: p.format,
-                role: p.role,
-                key,
-                bytes,
-                triangles: p.triangles.map(|t| i64::try_from(t).unwrap_or(i64::MAX)),
-                size_mm: p.size_mm.map(|s| s.to_vec()),
-                thumb,
-                views,
-                dropped: p.dropped,
-                profile: p.profile,
-            });
-        }
+        let rows = store_files(storage, prepared, &mut stored).await?;
         let mut photo_keys = Vec::new();
         for p in clean {
             let (photo_key, thumb_key) = (new_key("photo")?, new_key("thumb")?);
@@ -376,31 +433,7 @@ async fn keep(
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-        for (position, r) in rows.iter().enumerate() {
-            let file_id: i64 = sqlx::query_scalar(
-                "INSERT INTO mf_model_files (design_id, role, format, file_name, file_key, file_bytes, triangles, size_mm, thumb_key, thumb_type, view_keys, dropped, position)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
-            )
-            .bind(id)
-            .bind(r.role.as_str())
-            .bind(r.format)
-            .bind(&r.name)
-            .bind(&r.key)
-            .bind(r.bytes)
-            .bind(r.triangles)
-            .bind(&r.size_mm)
-            .bind(r.thumb.as_ref().map(|t| t.0.clone()))
-            .bind(r.thumb.as_ref().map(|t| t.1))
-            .bind(&r.views)
-            .bind(&r.dropped)
-            .bind(i32::try_from(position).unwrap_or(i32::MAX))
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-            if let Some(p) = &r.profile {
-                save_profile(&mut tx, id, file_id, p).await.map_err(|e| e.to_string())?;
-            }
-        }
+        note_files(&mut tx, id, &rows, 0).await?;
         for (position, (photo_key, thumb_key, w, h)) in photo_keys.iter().enumerate() {
             sqlx::query("INSERT INTO mf_design_photos (design_id, photo_key, thumb_key, width, height, position) VALUES ($1, $2, $3, $4, $5, $6)")
                 .bind(id)
@@ -418,10 +451,7 @@ async fn keep(
     }
     .await;
     if result.is_err() {
-        for key in &stored {
-            // (best effort: an orphaned file costs a little storage, nothing else)
-            let _ = storage.delete(key).await;
-        }
+        forget(storage, &stored).await;
     }
     result
 }
@@ -581,6 +611,14 @@ pub fn files_html(id: i64, list: &[ModelFile], owner: bool) -> String {
                 })
                 .collect();
             let views = if views.is_empty() { String::new() } else { format!(r#"<span class="views">{views}</span>"#) };
+            let remove = if owner {
+                format!(
+                    r#"<form method="post" action="/3d/{id}/files/{fid}/delete"><button type="submit" class="secondary small">Remove</button></form>"#,
+                    fid = f.id
+                )
+            } else {
+                String::new()
+            };
             let dropped = if owner && !f.dropped.is_empty() {
                 format!(
                     r#"<span class="muted">Left out of the download (not needed to print, or not safe to pass on): {}</span>"#,
@@ -590,7 +628,7 @@ pub fn files_html(id: i64, list: &[ModelFile], owner: bool) -> String {
                 String::new()
             };
             format!(
-                r#"<li>{picture}<span class="about"><strong>{name}</strong><span class="muted">{facts}</span>{views}{dropped}</span></li>"#,
+                r#"<li>{picture}<span class="about"><strong>{name}</strong><span class="muted">{facts}</span>{views}{dropped}{remove}</span></li>"#,
                 name = escape(&f.file_name),
                 facts = facts.join(" · "),
             )
@@ -626,6 +664,13 @@ pub async fn manage_page(
     };
     let has_profile = crate::makers::profile(pool, user.account_id).await.is_some();
     let listing = crate::listings::manage_html(d, id, has_profile, state.launched);
+    let profiles = profiles_html(id, &profiles(pool, id).await, true);
+    let add = format!(
+        r#"<form method="post" action="/3d/{id}/files" enctype="multipart/form-data" class="form">
+<label>Add files <small>(another print profile as a 3MF, a STEP source, more parts…)</small><input type="file" name="files" multiple required></label>
+<button type="submit" class="secondary">Add them</button>
+</form>"#
+    );
     let note = if d.status == "draft" {
         r#"<p class="lead">A draft, seen only by you.</p>"#
     } else {
@@ -634,7 +679,7 @@ pub async fn manage_page(
     private(
         &format!("{} · MakerFoundry", escape(title)),
         &format!(
-            r#"<section class="design"><h1>{title}</h1>{problem}{note}{listing}{files}{photos}{delete}<p><a href="/designs">Your designs</a></p></section>"#,
+            r#"<section class="design"><h1>{title}</h1>{problem}{note}{listing}{profiles}{files}{add}{photos}{delete}<p><a href="/designs">Your designs</a></p></section>"#,
             title = escape(title),
         ),
         true,
@@ -814,6 +859,347 @@ pub async fn zip_for(storage: &Storage, pool: &PgPool, id: i64, d: &DesignRow) -
         .await
         .map_err(|e| e.to_string())?;
     kept.ok_or_else(|| "no ZIP".to_string())
+}
+
+// ---------------------------------------------------------------- print profiles (MF-45)
+
+/// A print profile as a model's page shows it.
+pub struct ProfileView {
+    pub file_id: i64,
+    pub file_name: String,
+    pub name: String,
+    pub slicer: String,
+    pub printers: Vec<String>,
+    pub nozzle_mm: Option<f64>,
+    pub layer_mm: Option<f64>,
+    pub infill_percent: Option<f64>,
+    pub walls: Option<i32>,
+    pub supports: Option<bool>,
+    pub plates: Option<i32>,
+    pub filaments: serde_json::Value,
+    pub readable: bool,
+}
+
+pub async fn profiles(pool: &PgPool, design: i64) -> Vec<ProfileView> {
+    let rows = sqlx::query(
+        "SELECT p.file_id, f.file_name, p.name, p.slicer, p.printers, p.nozzle_mm, p.layer_mm, p.infill_percent, p.walls,
+                p.supports, p.plates, p.filaments, p.readable
+         FROM mf_print_profiles p JOIN mf_model_files f ON f.id = p.file_id
+         WHERE p.design_id = $1 ORDER BY f.position",
+    )
+    .bind(design)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    use sqlx::Row;
+    rows.iter()
+        .filter_map(|r| {
+            Some(ProfileView {
+                file_id: r.try_get("file_id").ok()?,
+                file_name: r.try_get("file_name").ok()?,
+                name: r.try_get("name").ok()?,
+                slicer: r.try_get("slicer").ok()?,
+                printers: r.try_get("printers").ok()?,
+                nozzle_mm: r.try_get("nozzle_mm").ok()?,
+                layer_mm: r.try_get("layer_mm").ok()?,
+                infill_percent: r.try_get("infill_percent").ok()?,
+                walls: r.try_get("walls").ok()?,
+                supports: r.try_get("supports").ok()?,
+                plates: r.try_get("plates").ok()?,
+                filaments: r.try_get("filaments").ok()?,
+                readable: r.try_get("readable").ok()?,
+            })
+        })
+        .collect()
+}
+
+/// A slicer's name as shown.
+fn slicer_name(id: &str) -> &'static str {
+    match id {
+        "bambu" => "Bambu Studio",
+        "orca" => "OrcaSlicer",
+        "prusa" => "PrusaSlicer",
+        "cura" => "Cura",
+        _ => "a slicer",
+    }
+}
+
+/// A filament's colour as a small round swatch: an SVG in a `data:` address (pages allow no
+/// inline styles), only for a checked `#RRGGBB`.
+fn swatch(kind: &str, colour: &str) -> String {
+    let hex = colour
+        .strip_prefix('#')
+        .filter(|h| h.len() == 6 && h.chars().all(|c| c.is_ascii_hexdigit()));
+    let Some(hex) = hex else {
+        return format!(r#"<span class="filament">{}</span>"#, escape(kind));
+    };
+    format!(
+        r#"<span class="filament"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Ccircle cx='5' cy='5' r='4.5' fill='%23{hex}' stroke='%23888888'/%3E%3C/svg%3E" alt="" width="14" height="14"> {kind} <span class="muted">#{hex}</span></span>"#,
+        kind = escape(kind),
+    )
+}
+
+/// A model's print profiles, each with its printer badges, settings, filaments and a download of
+/// its own 3MF when `may_download`.
+pub fn profiles_html(id: i64, list: &[ProfileView], may_download: bool) -> String {
+    if list.is_empty() {
+        return String::new();
+    }
+    let items: String = list
+        .iter()
+        .map(|p| {
+            let badges: String = p
+                .printers
+                .iter()
+                .map(|b| super::profile::badge_name(b))
+                .filter(|n| !n.is_empty())
+                .map(|n| format!(r#"<span class="badge printer">{}</span> "#, escape(n)))
+                .collect();
+            let mut facts = Vec::new();
+            if let Some(n) = p.nozzle_mm {
+                facts.push(format!("{} mm nozzle", super::profile::trim_number(n)));
+            }
+            if let Some(l) = p.layer_mm {
+                facts.push(format!("{} mm layers", super::profile::trim_number(l)));
+            }
+            if let Some(i) = p.infill_percent {
+                facts.push(format!("{}% infill", super::profile::trim_number(i)));
+            }
+            if let Some(w) = p.walls {
+                facts.push(format!("{w} wall{}", if w == 1 { "" } else { "s" }));
+            }
+            if let Some(s) = p.supports {
+                facts.push(if s { "supports" } else { "no supports" }.to_string());
+            }
+            if let Some(n) = p.plates {
+                facts.push(format!("{n} plate{}", if n == 1 { "" } else { "s" }));
+            }
+            let filaments: String = p
+                .filaments
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .take(32)
+                        .map(|f| {
+                            swatch(
+                                f.get("type").and_then(|v| v.as_str()).unwrap_or(""),
+                                f.get("colour").and_then(|v| v.as_str()).unwrap_or(""),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let settings = if p.readable {
+                format!(r#"<span class="muted">{}</span>"#, facts.join(" · "))
+            } else {
+                r#"<span class="muted">This project's settings couldn't be read; the file still has them.</span>"#.to_string()
+            };
+            let download = if may_download {
+                format!(
+                    r#" <a href="/d/{id}/download?model_file={fid}" rel="nofollow">Download this 3MF</a>"#,
+                    fid = p.file_id
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                r#"<li><strong>{name}</strong> {badges}<span class="muted">from {slicer}, in {file}</span>{settings}<span class="filaments">{filaments}</span>{download}</li>"#,
+                name = escape(&p.name),
+                slicer = slicer_name(&p.slicer),
+                file = escape(&p.file_name),
+            )
+        })
+        .collect();
+    format!(r#"<h2>Print profiles</h2><ul class="profiles">{items}</ul>"#)
+}
+
+// ---------------------------------------------------------------- adding and removing files
+
+/// The maker's own model `id`, its database and the signed-in maker; or the answer instead.
+async fn own_model(state: &AppState, headers: &HeaderMap, id: i64) -> Result<(User, PgPool, DesignRow), Response> {
+    let (user, pool) = uploader(state, headers).await?;
+    match crate::designs::design(&pool, id).await {
+        Ok(Some(d)) if d.account_id == user.account_id && d.kind == "model3d" => Ok((user, pool, d)),
+        _ => Err(not_found()),
+    }
+}
+
+/// Forgets a model's ZIP after its files change (the next download makes it again).
+async fn drop_zip(storage: &Storage, pool: &PgPool, id: i64) {
+    let old: Option<Option<String>> = sqlx::query_scalar(
+        "UPDATE mf_designs d SET zip_key = NULL FROM (SELECT zip_key FROM mf_designs WHERE id = $1 FOR UPDATE) old
+         WHERE d.id = $1 RETURNING old.zip_key",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some(Some(key)) = old {
+        forget(storage, &[key]).await;
+    }
+}
+
+/// `POST /3d/<id>/files`: more files for a model (another print profile, a STEP source…), read
+/// and checked as an upload's are.
+pub async fn add_files(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    mut multipart: Multipart,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (user, pool, _) = match own_model(&state, &headers, id).await {
+        Ok(o) => o,
+        Err(r) => return r,
+    };
+    let Some(storage) = state.storage.as_ref() else {
+        return not_found();
+    };
+    let again = |why: String| {
+        let (state, pool, user) = (&state, &pool, &user);
+        async move { crate::designs::manage_page(state, pool, user, id, &why).await }
+    };
+    let (count, next): (i64, i32) =
+        sqlx::query_as("SELECT count(*), coalesce(max(position) + 1, 0) FROM mf_model_files WHERE design_id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or((0, 0));
+    let room = MAX_FILES.saturating_sub(usize::try_from(count).unwrap_or(MAX_FILES));
+    let mut new_files: Vec<(String, Vec<u8>)> = Vec::new();
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) => {
+                let name = clean_name(field.file_name().unwrap_or("model"));
+                let part = field.name().unwrap_or_default().to_string();
+                let Ok(bytes) = field.bytes().await else {
+                    return again("The files didn't come through whole. Please try again.".into()).await;
+                };
+                if part != "files" || bytes.is_empty() {
+                    continue;
+                }
+                if new_files.len() >= room {
+                    return again(format!("A model can have up to {MAX_FILES} files.")).await;
+                }
+                if bytes.len() > MAX_FILE_BYTES {
+                    return again(format!("{name} is larger than {} MB.", MAX_FILE_BYTES / (1024 * 1024))).await;
+                }
+                new_files.push((name, bytes.to_vec()));
+            }
+            Ok(None) => break,
+            Err(_) => return again("The files didn't come through whole. Please try again.".into()).await,
+        }
+    }
+    if new_files.is_empty() {
+        return again("Choose the files to add.".into()).await;
+    }
+    if !state
+        .limits
+        .allow(crate::limits::MODEL_UPLOAD, &user.account_id.to_string())
+    {
+        return again("You've added a lot of models today. Please try again tomorrow.".into()).await;
+    }
+    let mut prepared = Vec::new();
+    for (name, bytes) in new_files {
+        let shown: String = name.chars().take(80).collect();
+        match tokio::task::spawn_blocking(move || prepare(name, &bytes)).await {
+            Ok(Ok(p)) => prepared.push(p),
+            Ok(Err(why)) => return again(format!("{shown}: {why}.")).await,
+            Err(_) => return again(format!("{shown} couldn't be read. Please try again.")).await,
+        }
+    }
+    let mut stored = Vec::new();
+    let result = async {
+        let rows = store_files(storage, prepared, &mut stored).await?;
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        note_files(&mut tx, id, &rows, next).await?;
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+    .await;
+    if let Err(e) = result {
+        eprintln!("model3d: add files to {id}: {e}");
+        forget(storage, &stored).await;
+        return again("The files couldn't be kept just now. Please try again in a few minutes.".into()).await;
+    }
+    drop_zip(storage, &pool, id).await;
+    Redirect::to(&format!("/designs/{id}")).into_response()
+}
+
+/// `POST /3d/<id>/files/<file>/delete`: removes one of a model's files, with its pictures and
+/// profile; never its last STL, 3MF or OBJ, nor any file of a model people have bought.
+pub async fn remove_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, file)): Path<(i64, i64)>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (user, pool, d) = match own_model(&state, &headers, id).await {
+        Ok(o) => o,
+        Err(r) => return r,
+    };
+    let Some(storage) = state.storage.as_ref() else {
+        return not_found();
+    };
+    let row: Option<(String, String, Option<String>, Vec<String>)> = sqlx::query_as(
+        "SELECT role, file_key, thumb_key, view_keys FROM mf_model_files WHERE id = $1 AND design_id = $2",
+    )
+    .bind(file)
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((role, key, thumb, views)) = row else {
+        return not_found();
+    };
+    let printable: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM mf_model_files WHERE design_id = $1 AND role IN ('mesh', 'project')")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+    let problem = if crate::selling::has_sales(&pool, id).await {
+        Some("People have bought this model, so its files are kept for their downloads.")
+    } else if matches!(role.as_str(), "mesh" | "project") && printable <= 1 {
+        Some("A model needs at least one STL, 3MF or OBJ file to print from.")
+    } else {
+        None
+    };
+    if let Some(p) = problem {
+        return crate::designs::manage_page(&state, &pool, &user, id, p).await;
+    }
+    if let Err(e) = sqlx::query("DELETE FROM mf_model_files WHERE id = $1 AND design_id = $2")
+        .bind(file)
+        .bind(id)
+        .execute(&pool)
+        .await
+    {
+        eprintln!("model3d: remove {file}: {e}");
+        return crate::designs::manage_page(&state, &pool, &user, id, "The file couldn't be removed just now.").await;
+    }
+    // the model's own file moves to the next printable one
+    if d.file_key == key {
+        let _ = sqlx::query(
+            "UPDATE mf_designs d SET file_name = f.file_name, file_key = f.file_key, file_bytes = f.file_bytes, format = f.format,
+                    width_mm = f.size_mm[1], height_mm = f.size_mm[2]
+             FROM (SELECT * FROM mf_model_files WHERE design_id = $1 AND role IN ('mesh', 'project') ORDER BY position LIMIT 1) f
+             WHERE d.id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await;
+    }
+    let mut keys = vec![key];
+    keys.extend(thumb);
+    keys.extend(views);
+    forget(storage, &keys).await;
+    drop_zip(storage, &pool, id).await;
+    Redirect::to(&format!("/designs/{id}")).into_response()
 }
 
 #[cfg(test)]

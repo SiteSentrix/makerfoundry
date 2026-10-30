@@ -635,7 +635,12 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     };
     let formats = if d.kind == "model3d" {
         let files = crate::model3d::upload::model_files(pool, id).await;
-        crate::model3d::upload::public_files_html(id, &files, may_download)
+        let profiles = crate::model3d::upload::profiles(pool, id).await;
+        format!(
+            "{}{}",
+            crate::model3d::upload::profiles_html(id, &profiles, may_download),
+            crate::model3d::upload::public_files_html(id, &files, may_download)
+        )
     } else {
         crate::files::public_html(id, first_format, &others, &converted, may_download)
     };

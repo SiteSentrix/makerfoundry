@@ -209,6 +209,7 @@ pub fn app(state: AppState) -> Router {
         .route("/3d", get(model3d::landing))
         .route("/3d/{id}/files/{file}/{view}", get(model3d::upload::picture))
         .route("/3d/import/{id}", get(model3d::import::review))
+        .route("/3d/{id}/files/{file}/delete", post(model3d::upload::remove_file))
         .route("/3d/import/{id}/arrange", post(model3d::import::arrange))
         .route("/3d/import/{id}/details", post(model3d::import::details))
         .route("/3d/import/{id}/publish", post(model3d::import::publish))
@@ -253,6 +254,7 @@ pub fn app(state: AppState) -> Router {
     // 3D models (MF-41) are larger and take longer to read and draw: their own cap and time
     let models = Router::new()
         .route("/3d/new", get(model3d::upload::new_page).post(model3d::upload::create))
+        .route("/3d/{id}/files", post(model3d::upload::add_files))
         .layer(DefaultBodyLimit::max(model3d::upload::BODY_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(model3d::upload::BODY_LIMIT_BYTES))
         .layer(TimeoutLayer::with_status_code(
