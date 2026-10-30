@@ -126,6 +126,8 @@ pub struct Filter {
     pub collection: Option<i64>,
     /// Designs by the makers this account follows (`follows`).
     pub followed_by: Option<i64>,
+    /// Whether 3D models are shown (MF-42: once MakerFoundry 3D is on).
+    pub three_d: bool,
     pub page: i64,
 }
 
@@ -136,6 +138,8 @@ pub struct Card {
     pub kind: String,
     pub format: String,
     pub photo: Option<i64>,
+    /// A 3D model's first file with a picture, shown when it has no photo.
+    pub model_file: Option<i64>,
     pub maker: String,
     pub downloads: i64,
     pub price: i64,
@@ -144,9 +148,11 @@ pub struct Card {
 pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     let rows = sqlx::query(
         "SELECT d.id, d.title, d.kind, d.format, d.downloads, d.price_cents, m.name AS maker,
-                (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1) AS photo
+                (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1) AS photo,
+                (SELECT f.id FROM mf_model_files f WHERE f.design_id = d.id AND f.thumb_key IS NOT NULL ORDER BY f.position LIMIT 1) AS model_file
          FROM mf_designs d JOIN mf_makers m ON m.account_id = d.account_id
          WHERE d.status = 'published'
+           AND (d.kind <> 'model3d' OR $15)
            AND ($1::text IS NULL OR d.kind = $1)
            AND ($2::text IS NULL OR $2 = ANY (d.tags))
            AND ($3::text IS NULL OR d.search @@ websearch_to_tsquery('english', $3))
@@ -178,6 +184,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
     .bind(f.collection)
     .bind(f.most_saved)
     .bind(f.followed_by)
+    .bind(f.three_d)
     .fetch_all(pool)
     .await;
     match rows {
@@ -190,6 +197,7 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
                     kind: r.try_get("kind").ok()?,
                     format: r.try_get("format").ok()?,
                     photo: r.try_get("photo").ok()?,
+                    model_file: r.try_get("model_file").ok()?,
                     maker: r.try_get("maker").ok()?,
                     downloads: r.try_get("downloads").ok()?,
                     price: r.try_get("price_cents").ok()?,
@@ -204,7 +212,11 @@ pub async fn find(pool: &PgPool, f: &Filter, limit: i64) -> Vec<Card> {
 }
 
 fn kind_name(kind: &str) -> &'static str {
-    if kind == "laser" { "Laser" } else { "Embroidery" }
+    match kind {
+        "laser" => "Laser",
+        "model3d" => "3D model",
+        _ => "Embroidery",
+    }
 }
 
 pub fn cards_html(cards: &[Card]) -> String {
@@ -214,9 +226,10 @@ pub fn cards_html(cards: &[Card]) -> String {
     let items: String = cards
         .iter()
         .map(|c| {
-            let picture = match c.photo {
-                Some(p) => format!(r#"<img src="/designs/{}/photos/{p}/thumb" alt="" loading="lazy">"#, c.id),
-                None => r#"<span class="muted">No photo</span>"#.to_string(),
+            let picture = match (c.photo, c.model_file) {
+                (Some(p), _) => format!(r#"<img src="/designs/{}/photos/{p}/thumb" alt="" loading="lazy">"#, c.id),
+                (None, Some(f)) => format!(r#"<img src="/3d/{}/files/{f}/hero" alt="" loading="lazy">"#, c.id),
+                _ => r#"<span class="muted">No photo</span>"#.to_string(),
             };
             format!(
                 r#"<li><a href="/d/{id}/{slug}"><span class="thumb">{picture}</span><strong>{title}</strong><span class="muted">by {maker} · {kind}, {format}{downloads}</span><span class="price">{price}</span></a></li>"#,
@@ -258,7 +271,15 @@ pub async fn newest(state: &AppState) -> String {
     let Some(pool) = state.db.as_ref() else {
         return String::new();
     };
-    let found = find(pool, &Filter::default(), 8).await;
+    let found = find(
+        pool,
+        &Filter {
+            three_d: state.three_d,
+            ..Filter::default()
+        },
+        8,
+    )
+    .await;
     if found.is_empty() {
         return String::new();
     }
@@ -323,6 +344,7 @@ pub async fn browse(State(state): State<AppState>, headers: HeaderMap, Query(q):
         },
     );
     let filter = Filter {
+        three_d: state.three_d,
         kind: kind.clone(),
         tag: tag.clone(),
         words: (!words.is_empty()).then(|| words.clone()),
@@ -436,10 +458,12 @@ pub fn fits_text(d: &DesignRow) -> Option<String> {
             Some(t) => format!("for {} {}", sizes::thickness_text(t), material.to_lowercase()),
             None => format!("for {}", material.to_lowercase()),
         })
-    } else {
+    } else if d.kind == "embroidery" {
         let hoop = sizes::smallest_hoop(d.width_mm?, d.height_mm?)?;
         let short = hoop.name.split(" (").next().unwrap_or(hoop.name);
         Some(format!("fits a {short} hoop"))
+    } else {
+        None
     }
 }
 
@@ -471,6 +495,9 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         Ok(Some(d)) if visible(&d, viewer.as_ref(), &state.admins) => d,
         _ => return not_found(signed_in),
     };
+    if d.kind == "model3d" && !crate::model3d::open_to(&state, viewer.as_ref()) {
+        return not_found(signed_in);
+    }
     let maker = makers::profile(pool, d.account_id).await;
     let mine = viewer.as_ref().is_some_and(|u| u.account_id == d.account_id);
     let draft_note = match d.status.as_str() {
@@ -497,7 +524,10 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         1 => " · 1 download".into(),
         n => format!(" · {n} downloads"),
     };
-    let fits = fits_text(&d).map(|t| format!(" · {}", escape(&t))).unwrap_or_default();
+    let fits = match d.category.as_deref().and_then(crate::model3d::category) {
+        Some(c) => format!(" · {}", escape(c.name)),
+        None => fits_text(&d).map(|t| format!(" · {}", escape(&t))).unwrap_or_default(),
+    };
     let made = match crate::makes::count(pool, id).await {
         0 => String::new(),
         1 => " · 1 make".into(),
@@ -595,7 +625,12 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         Vec::new()
     };
-    let formats = crate::files::public_html(id, first_format, &others, &converted, may_download);
+    let formats = if d.kind == "model3d" {
+        let files = crate::model3d::upload::model_files(pool, id).await;
+        crate::model3d::upload::public_files_html(id, &files, may_download)
+    } else {
+        crate::files::public_html(id, first_format, &others, &converted, may_download)
+    };
     let edit = if mine {
         format!(r#"<p><a href="/designs/{id}">Manage this design</a></p>"#)
     } else if d.status == "published" {
@@ -620,7 +655,12 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         d.title.clone()
     };
-    match designs::facts_section(&d, &title, &intro, &footer) {
+    let section = if d.kind == "model3d" {
+        crate::model3d::upload::public_section(pool, id, &title, &intro, &footer).await
+    } else {
+        designs::facts_section(&d, &title, &intro, &footer)
+    };
+    match section {
         Some(html) => {
             // a published design's link shows its title, a line of its description and a photo
             let url = format!("{}/d/{id}/{}", state.public_url, slug(&title));
@@ -631,19 +671,29 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
                     .await
                     .ok()
                     .flatten();
-            let image = photo.map(|p| format!("{}/designs/{id}/photos/{p}/large", state.public_url));
+            let model_picture = if d.kind == "model3d" {
+                crate::model3d::upload::first_picture(pool, id).await
+            } else {
+                None
+            };
+            let image = match (model_picture, photo) {
+                (Some(f), _) => Some(format!("{}/3d/{id}/files/{f}/hero", state.public_url)),
+                (None, Some(p)) => Some(format!("{}/designs/{id}/photos/{p}/large", state.public_url)),
+                _ => None,
+            };
             let by = maker
                 .as_ref()
                 .map(|m| m.name.clone())
                 .unwrap_or_else(|| "a maker".into());
             let description = if d.description.trim().is_empty() {
                 format!(
-                    "{} design by {by} on MakerFoundry",
-                    if d.kind == "laser" {
-                        "A laser-cut"
-                    } else {
-                        "An embroidery"
-                    }
+                    "{} {} by {by} on MakerFoundry",
+                    match d.kind.as_str() {
+                        "laser" => "A laser-cut",
+                        "model3d" => "A 3D",
+                        _ => "An embroidery",
+                    },
+                    if d.kind == "model3d" { "model" } else { "design" }
                 )
             } else {
                 crate::pages::summary(&d.description, 200)
@@ -675,6 +725,8 @@ pub struct DownloadQuery {
     /// The first file converted to this format (`convert`): `dst`.
     #[serde(rename = "as")]
     to: Option<String>,
+    /// One of a 3D model's files (`model3d`); all of them as a ZIP without it.
+    model_file: Option<i64>,
 }
 
 /// Whether `viewer` may see design `d` (`id`) and whether they may download it: a free published
@@ -722,8 +774,37 @@ pub async fn download(
         // not bought: the page with the button to buy it
         return Redirect::to(&format!("/d/{id}/{}", slug(&d.title))).into_response();
     }
+    if d.kind == "model3d" && !crate::model3d::open_to(&state, viewer.as_ref()) {
+        return not_found(viewer.is_some());
+    }
     if let Some(ext) = &q.to {
         return converted(&state, storage, pool, &d, id, ext, &headers).await;
+    }
+    if d.kind == "model3d" {
+        let found = match q.model_file {
+            Some(fid) => crate::model3d::upload::model_file_key(pool, id, fid).await,
+            None => match crate::model3d::upload::zip_for(storage, pool, id, &d).await {
+                Ok(key) => Some((key, format!("{}.zip", slug(&d.title)))),
+                Err(e) => {
+                    eprintln!("listings: zip {id}: {e}");
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        "The files can't be fetched just now. Please try again.",
+                    )
+                        .into_response();
+                }
+            },
+        };
+        let Some((key, name)) = found else {
+            return not_found(viewer.is_some());
+        };
+        if d.status == "published" {
+            let _ = sqlx::query("UPDATE mf_designs SET downloads = downloads + 1 WHERE id = $1")
+                .bind(id)
+                .execute(pool)
+                .await;
+        }
+        return Redirect::to(storage.download_url(&key, &name).as_str()).into_response();
     }
     // which file: the first, or one of the others
     let (file_key, file_name) = match q.file {
@@ -848,6 +929,8 @@ struct Details<'a> {
     thickness: &'a str,
     /// An embroidery design: offered converted to other formats.
     convert: bool,
+    /// A 3D model's category.
+    category: &'a str,
 }
 
 fn details_form(id: i64, f: &Details, problem: &str) -> String {
@@ -862,8 +945,24 @@ fn details_form(id: i64, f: &Details, problem: &str) -> String {
         material,
         thickness,
         convert,
+        category,
     } = *f;
-    let made_for = if kind == "laser" {
+    let made_for = if kind == "model3d" {
+        let options: String = crate::model3d::CATEGORIES
+            .iter()
+            .map(|c| {
+                format!(
+                    r#"<option value="{id}"{selected}>{name}</option>"#,
+                    id = c.id,
+                    selected = if c.id == category { " selected" } else { "" },
+                    name = escape(c.name)
+                )
+            })
+            .collect();
+        format!(
+            r#"<label>Category<select name="category" required><option value="">Choose one</option>{options}</select></label>"#
+        )
+    } else if kind == "laser" {
         let options: String = MATERIALS
             .iter()
             .map(|(id, name)| {
@@ -977,6 +1076,7 @@ pub async fn edit_page(State(state): State<AppState>, headers: HeaderMap, Path(i
                 material: d.material.as_deref().unwrap_or(""),
                 thickness: &thickness,
                 convert: d.convert,
+                category: d.category.as_deref().unwrap_or(""),
             },
             "",
         ),
@@ -996,6 +1096,7 @@ pub struct DetailsForm {
     thickness: String,
     convert: String,
     convert_shown: String,
+    category: String,
 }
 
 pub async fn save(
@@ -1031,6 +1132,7 @@ pub async fn save(
                     material: &f.material,
                     thickness: &f.thickness,
                     convert: f.convert == "yes",
+                    category: &f.category,
                 },
                 why,
             ),
@@ -1067,9 +1169,17 @@ pub async fn save(
     } else {
         (None, None)
     };
+    let category = if d.kind == "model3d" {
+        match crate::model3d::category(&f.category) {
+            Some(c) => Some(c.id),
+            None => return again("Choose a category."),
+        }
+    } else {
+        None
+    };
     let saved = sqlx::query(
         "UPDATE mf_designs SET title = $2, description = $3, tags = $4, licence = $5, price_cents = $7,
-             material = $8, thickness_mm = $9, convert = $10,
+             material = $8, thickness_mm = $9, convert = $10, category = $11,
              search = setweight(to_tsvector('english', $2), 'A')
                    || setweight(to_tsvector('english', array_to_string($4::text[], ' ')), 'B')
                    || setweight(to_tsvector('english', $3), 'C')
@@ -1089,6 +1199,7 @@ pub async fn save(
     } else {
         d.convert
     })
+    .bind(category)
     .execute(&pool)
     .await;
     match saved {
@@ -1127,6 +1238,8 @@ pub async fn publish(
         Some("Publishing opens when MakerFoundry launches. Your design stays saved as a draft.")
     } else if makers::profile(&pool, user.account_id).await.is_none() {
         Some("Set up your maker profile first: it's the name people see on your designs.")
+    } else if d.kind == "model3d" && (d.title.is_empty() || d.licence.is_none() || d.category.is_none()) {
+        Some("Give the model a title, a category and a licence first (Edit details).")
     } else if d.title.is_empty() || d.licence.is_none() {
         Some("Give the design a title and a licence first (Edit details).")
     } else if d.price_cents > 0 && !selling::can_sell(&state, &pool, user.account_id).await {
@@ -1205,6 +1318,14 @@ pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool, launched: bool) ->
             escape(&d.title)
         },
         made_for = match fits_text(d) {
+            _ if d.kind == "model3d" => format!(
+                r#"<div><dt>Category</dt><dd>{}</dd></div>"#,
+                d.category
+                    .as_deref()
+                    .and_then(crate::model3d::category)
+                    .map_or("none yet", |c| c.name)
+                    .replace('&', "&amp;")
+            ),
             Some(t) if d.kind == "laser" => format!(
                 r#"<div><dt>Made for</dt><dd>{}</dd></div>"#,
                 escape(t.trim_start_matches("for "))
@@ -1247,9 +1368,14 @@ pub fn manage_html(d: &DesignRow, id: i64, has_profile: bool, launched: bool) ->
         };
         format!(
             r#"{profile}<form method="post" action="/designs/{id}/publish" class="publish">
-<label class="choice"><input type="checkbox" name="confirm" value="yes"> <span>I made this design, or have the right to share it, and it doesn't copy anyone else's logos, characters or designs.{seller_terms}</span></label>
+<label class="choice"><input type="checkbox" name="confirm" value="yes"> <span>{own}{seller_terms}</span></label>
 <button type="submit">Publish</button>
-</form>"#
+</form>"#,
+            own = if d.kind == "model3d" {
+                "I created this model, or have the right to share it, and it doesn't copy anyone else's logos, characters or designs."
+            } else {
+                "I made this design, or have the right to share it, and it doesn't copy anyone else's logos, characters or designs."
+            }
         )
     };
     format!("{details}{publishing}")

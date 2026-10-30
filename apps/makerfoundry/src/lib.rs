@@ -395,8 +395,10 @@ async fn sitemap(State(state): State<AppState>) -> Response {
     }
     if let Some(pool) = &state.db {
         let designs: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT id, title FROM mf_designs WHERE status = 'published' ORDER BY published_at DESC LIMIT 40000",
+            "SELECT id, title FROM mf_designs WHERE status = 'published' AND (kind <> 'model3d' OR $1)
+             ORDER BY published_at DESC LIMIT 40000",
         )
+        .bind(state.three_d)
         .fetch_all(pool)
         .await
         .unwrap_or_default();

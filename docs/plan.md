@@ -204,6 +204,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   triangles and what a 3MF's rebuild left out; deleting the draft (or the account) deletes every
   stored file. (The whole upload is held in memory while it's read: streaming it to storage is a
   later improvement if the server's memory needs it.)
+- **MF-42 details, publishing, public page and downloads, built 2026-10-30** (#10): a model's
+  details take a category (required) and the 3D licences; publishing needs a title, category and
+  licence and the maker's word that they created it or may share it. The public page
+  (`/d/<id>/<slug>`) shows its main picture, category, files with their pictures and facts (what
+  a rebuild dropped is for the maker only), images, makes, licence and comments, with a link
+  preview using the main picture. Downloads: each file, or all of them as one ZIP made on the
+  first download and kept (`zip_key`, migration 0024), both counted once published. Uploaded
+  file names lose any folders. While `MF_3D` is off, models stay out of browsing, the home page
+  and the sitemap, and their pages and files are for admins only. Browsing shows 3D models with
+  their picture.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

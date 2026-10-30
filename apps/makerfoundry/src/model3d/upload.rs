@@ -105,7 +105,7 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
         match multipart.next_field().await {
             Ok(Some(field)) => {
                 let part = field.name().unwrap_or_default().to_string();
-                let name: String = field.file_name().unwrap_or("model").chars().take(200).collect();
+                let name = clean_name(field.file_name().unwrap_or("model"));
                 let Ok(bytes) = field.bytes().await else {
                     return again(&whole());
                 };
@@ -144,6 +144,19 @@ pub async fn create(State(state): State<AppState>, headers: HeaderMap, mut multi
         Ok(id) => Redirect::to(&format!("/designs/{id}")).into_response(),
         Err(Refused::Unavailable) => Redirect::to("/3d/new").into_response(),
         Err(r) => again(&r.message()),
+    }
+}
+
+/// A file's name as kept and offered again: without any folders (a browser sends none, but a
+/// request can), control characters or surrounding spaces and dots, at most 200 characters.
+pub fn clean_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let clean: String = base.chars().filter(|c| !c.is_control()).take(200).collect();
+    let clean = clean.trim().trim_start_matches('.').trim();
+    if clean.is_empty() {
+        "model".to_string()
+    } else {
+        clean.to_string()
     }
 }
 
@@ -238,6 +251,7 @@ pub async fn add(
     // reading and drawing are CPU-heavy: off the threads that answer requests, one file at a time
     let mut prepared = Vec::with_capacity(model_files.len());
     for (name, bytes) in model_files {
+        let name = clean_name(&name);
         let shown: String = name.chars().take(80).collect();
         match tokio::task::spawn_blocking(move || prepare(name, &bytes)).await {
             Ok(Ok(p)) => prepared.push(p),
@@ -408,7 +422,8 @@ async fn keep(
 /// Every stored key of these designs' model files and their pictures (for deleting them).
 pub async fn keys(pool: &PgPool, designs: &[i64]) -> Vec<String> {
     sqlx::query_scalar(
-        "SELECT file_key FROM mf_model_files WHERE design_id = ANY($1)
+        "SELECT zip_key FROM mf_designs WHERE id = ANY($1) AND zip_key IS NOT NULL
+         UNION ALL SELECT file_key FROM mf_model_files WHERE design_id = ANY($1)
          UNION ALL SELECT thumb_key FROM mf_model_files WHERE design_id = ANY($1) AND thumb_key IS NOT NULL
          UNION ALL SELECT unnest(view_keys) FROM mf_model_files WHERE design_id = ANY($1)",
     )
@@ -547,8 +562,16 @@ pub fn files_html(id: i64, list: &[ModelFile], owner: bool) -> String {
     format!(r#"<h2>Files</h2><ul class="model-files">{items}</ul>"#)
 }
 
-/// A maker's own page for a 3D draft: its files and images, and deleting it.
-pub async fn manage_page(pool: &PgPool, id: i64, d: &DesignRow, problem: &str) -> Response {
+/// A maker's own page for a 3D model: its listing and publishing, its files and images, and
+/// deleting a draft.
+pub async fn manage_page(
+    state: &AppState,
+    pool: &PgPool,
+    user: &User,
+    id: i64,
+    d: &DesignRow,
+    problem: &str,
+) -> Response {
     let problem = if problem.is_empty() {
         String::new()
     } else {
@@ -564,15 +587,17 @@ pub async fn manage_page(pool: &PgPool, id: i64, d: &DesignRow, problem: &str) -
             r#"<form method="post" action="/designs/{id}/delete"><button type="submit" class="secondary">Delete this draft</button></form>"#
         )
     };
-    let state = if d.status == "published" {
-        "Published."
+    let has_profile = crate::makers::profile(pool, user.account_id).await.is_some();
+    let listing = crate::listings::manage_html(d, id, has_profile, state.launched);
+    let note = if d.status == "draft" {
+        r#"<p class="lead">A draft, seen only by you.</p>"#
     } else {
-        "A draft, seen only by you."
+        ""
     };
     private(
         &format!("{} · MakerFoundry", escape(title)),
         &format!(
-            r#"<section class="design"><h1>{title}</h1>{problem}<p class="lead">{state}</p>{files}{photos}{delete}<p><a href="/designs">Your designs</a></p></section>"#,
+            r#"<section class="design"><h1>{title}</h1>{problem}{note}{listing}{files}{photos}{delete}<p><a href="/designs">Your designs</a></p></section>"#,
             title = escape(title),
         ),
         true,
@@ -638,5 +663,135 @@ pub async fn picture(
             eprintln!("model3d: picture {file}: {e}");
             (StatusCode::BAD_GATEWAY, "The picture can't be fetched just now.").into_response()
         }
+    }
+}
+
+/// A model's files on its public page, each with a download link when `may_download`, and the
+/// whole model as a ZIP.
+pub fn public_files_html(id: i64, list: &[ModelFile], may_download: bool) -> String {
+    let mut html = files_html(id, list, false);
+    if may_download {
+        let links: String = list
+            .iter()
+            .map(|f| {
+                format!(
+                    r#"<li><a href="/d/{id}/download?model_file={fid}" rel="nofollow">{name}</a></li>"#,
+                    fid = f.id,
+                    name = escape(&f.file_name)
+                )
+            })
+            .collect();
+        html.push_str(&format!(
+            r#"<p class="actions"><a class="button" href="/d/{id}/download" rel="nofollow">Download all (ZIP)</a></p><ul class="downloads">{links}</ul>"#
+        ));
+    }
+    html
+}
+
+/// The first of a model's files with a picture: the model's main picture.
+pub async fn first_picture(pool: &PgPool, id: i64) -> Option<i64> {
+    sqlx::query_scalar(
+        "SELECT id FROM mf_model_files WHERE design_id = $1 AND thumb_key IS NOT NULL ORDER BY position LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// A model's public page: its title, main picture, `intro` and `footer` (HTML).
+pub async fn public_section(pool: &PgPool, id: i64, title: &str, intro: &str, footer: &str) -> Option<String> {
+    let picture = match first_picture(pool, id).await {
+        Some(f) => format!(
+            r#"<p class="model-picture"><img src="/3d/{id}/files/{f}/hero" alt="{alt}" width="800" height="800"></p>"#,
+            alt = escape(title)
+        ),
+        None => String::new(),
+    };
+    Some(format!(
+        r#"<section class="design"><h1>{title}</h1>{intro}{picture}{footer}</section>"#,
+        title = escape(title)
+    ))
+}
+
+/// One of model `id`'s files → its key and the name to save it as.
+pub async fn model_file_key(pool: &PgPool, id: i64, file: i64) -> Option<(String, String)> {
+    sqlx::query_as("SELECT file_key, file_name FROM mf_model_files WHERE id = $1 AND design_id = $2")
+        .bind(file)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// The key of model `id`'s files as one ZIP: made from its stored files the first time it's
+/// asked for, then kept.
+pub async fn zip_for(storage: &Storage, pool: &PgPool, id: i64, d: &DesignRow) -> Result<String, String> {
+    if let Some(key) = &d.zip_key {
+        return Ok(key.clone());
+    }
+    let list: Vec<(String, String)> =
+        sqlx::query_as("SELECT file_name, file_key FROM mf_model_files WHERE design_id = $1 ORDER BY position")
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(list.len());
+    for (name, key) in list {
+        let bytes = storage.get(&key).await?.ok_or_else(|| format!("{key} is missing"))?;
+        // two files of the same name: the later ones are numbered
+        let name = clean_name(&name);
+        let mut unique = name.clone();
+        let mut n = 2;
+        while entries.iter().any(|(e, _)| e.eq_ignore_ascii_case(&unique)) {
+            unique = match name.rsplit_once('.') {
+                Some((stem, ext)) => format!("{stem} ({n}).{ext}"),
+                None => format!("{name} ({n})"),
+            };
+            n += 1;
+        }
+        entries.push((unique, bytes));
+    }
+    let zip = tokio::task::spawn_blocking(move || super::zip::write(&entries))
+        .await
+        .map_err(|e| e.to_string())??;
+    let key = new_key("zip")?;
+    storage.put(&key, zip, "application/zip").await?;
+    // two first downloads at once: the first one noted wins, the other's ZIP goes again
+    let noted: Option<String> =
+        sqlx::query_scalar("UPDATE mf_designs SET zip_key = $2 WHERE id = $1 AND zip_key IS NULL RETURNING zip_key")
+            .bind(id)
+            .bind(&key)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    if noted.is_some() {
+        return Ok(key);
+    }
+    let _ = storage.delete(&key).await;
+    let kept: Option<String> = sqlx::query_scalar("SELECT zip_key FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    kept.ok_or_else(|| "no ZIP".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_names_lose_their_folders() {
+        assert_eq!(clean_name("../../etc/evil.stl"), "evil.stl");
+        assert_eq!(clean_name("C:\\Users\\me\\part.stl"), "part.stl");
+        assert_eq!(clean_name("  cube project.3mf "), "cube project.3mf");
+        assert_eq!(clean_name("a\u{0}b.stl"), "ab.stl");
+        assert_eq!(clean_name("..."), "model");
+        assert_eq!(clean_name("/"), "model");
+        assert_eq!(clean_name(".hidden.stl"), "hidden.stl");
+        assert_eq!(clean_name(&"x".repeat(300)).len(), 200);
     }
 }

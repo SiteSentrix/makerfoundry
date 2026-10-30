@@ -122,6 +122,9 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 }
 .cards .thumb img { width: 100%; height: 100%; object-fit: cover; }
 .photos { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); margin: 0 0 1.5rem; max-width: 40rem; }
+.model-picture { margin: 0 0 1.5rem; }
+.model-picture img { display: block; width: 100%; max-width: 36rem; height: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--card); }
+.downloads { margin: 0 0 1.5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }
 .model-files { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: .75rem; max-width: 48rem; }
 .model-files li { display: flex; gap: 1rem; align-items: flex-start; border: 1px solid var(--line); border-radius: .5rem; padding: .75rem; }
 .model-files li > img, .model-files .file-kind { width: 6rem; height: 6rem; flex: none; border-radius: .375rem; background: var(--card); }

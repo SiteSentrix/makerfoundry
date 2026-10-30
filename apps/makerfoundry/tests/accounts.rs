@@ -4990,6 +4990,41 @@ async fn a_3d_licence_is_refused_on_an_embroidery_design() {
 // ---------------------------------------------------------------- MakerFoundry 3D (MF-41 onwards)
 
 impl Site {
+    /// For looking at a page (CLAUDE.md › Look at what you build): with `MF_DUMP_PAGES` set to a
+    /// folder, writes `html` there as `<name>.html` with the stylesheet and every picture it shows
+    /// (fetched as `cookie` would see them), ready to screenshot. Does nothing otherwise.
+    async fn dump_page(&self, name: &str, html: &str, cookie: Option<&str>) {
+        let Ok(dir) = std::env::var("MF_DUMP_PAGES") else {
+            return;
+        };
+        let mut html = html.replace("/static/site.css", "site.css");
+        std::fs::write(format!("{dir}/site.css"), include_str!("../static/site.css")).unwrap();
+        let sources: Vec<String> = html
+            .split(r#"src=""#)
+            .skip(1)
+            .filter_map(|t| t.split('"').next())
+            .filter(|u| u.starts_with('/'))
+            .map(String::from)
+            .collect();
+        for (i, src) in sources.iter().enumerate() {
+            let mut req = Request::get(src.replace("&amp;", "&")).header(header::HOST, HOST);
+            if let Some(c) = cookie {
+                req = req.header(header::COOKIE, c);
+            }
+            let resp = self
+                .app
+                .clone()
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let file = format!("{name}-{i}.img");
+            std::fs::write(format!("{dir}/{file}"), &bytes).unwrap();
+            html = html.replace(&format!(r#"src="{src}""#), &format!(r#"src="{file}""#));
+        }
+        std::fs::write(format!("{dir}/{name}.html"), html).unwrap();
+    }
+
     /// Signs up agreeing to the Terms (asked for once launched) → the session cookie.
     async fn join(&self, email: &str) -> String {
         self.post(
@@ -5325,4 +5360,296 @@ async fn the_daily_limit_holds() {
     }
     let r = upload_model(&s, &cookie, &[("cube.stl", cube)], &[]).await;
     assert!(r.body.contains("a lot of models today"), "{}", r.body);
+}
+
+/// A maker (with a profile) and their uploaded model of three files → the cookie and the id.
+async fn model_draft(s: &Site, email: &str, handle: &str) -> (String, i64) {
+    let cookie = s.join(email).await;
+    s.post("/account/maker", &format!("name=Maker&handle={handle}"), Some(&cookie))
+        .await;
+    let r = upload_model(
+        s,
+        &cookie,
+        &[
+            ("cube.stl", stl_cube(10.0)),
+            ("cube project.3mf", project_3mf(None)),
+            ("cube.step", STEP_FILE.as_bytes().to_vec()),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    (cookie, design_id(r.location()))
+}
+
+/// The same, with its details given and published.
+async fn published_model(s: &Site, email: &str, handle: &str) -> (String, i64) {
+    let (cookie, id) = model_draft(s, email, handle).await;
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Cube&category=household&licence=cc-by-sa&price=0",
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    (cookie, id)
+}
+
+#[tokio::test]
+async fn a_draft_needs_a_title_category_and_licence_to_publish() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = model_draft(&s, "maker%40example.com", "maker").await;
+    let manage = s.get(&format!("/designs/{id}"), Some(&cookie)).await.body;
+    assert!(
+        manage.contains("Edit details") && manage.contains("I created this model"),
+        "{manage}"
+    );
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert!(r.body.contains("a title, a category and a licence"), "{}", r.body);
+    let form = s.get(&format!("/designs/{id}/edit"), Some(&cookie)).await.body;
+    assert!(form.contains(r#"name="category""#) && form.contains("3D printer parts &amp; upgrades"));
+    assert!(form.contains("gpl-3.0-or-later"), "the 3D licences are offered");
+    assert!(!form.contains(r#"name="material""#) && !form.contains(r#"name="convert""#));
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Cube&licence=cc-by-sa&price=0",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("Choose a category"), "{}", r.body);
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Cube&category=nope&licence=cc-by-sa&price=0",
+            Some(&cookie),
+        )
+        .await;
+    assert!(r.body.contains("Choose a category"), "{}", r.body);
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Cube&category=household&licence=cc-by-sa&price=0",
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let manage = s.get(&format!("/designs/{id}"), Some(&cookie)).await.body;
+    assert!(manage.contains("Household"), "{manage}");
+    let r = s.post(&format!("/designs/{id}/publish"), "", Some(&cookie)).await;
+    assert!(r.body.contains("Confirm"), "{}", r.body);
+    let r = s
+        .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    assert_eq!(r.location(), format!("/d/{id}/cube"));
+}
+
+#[tokio::test]
+async fn published_is_public_unpublished_is_not() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = published_model(&s, "maker%40example.com", "maker").await;
+    let page = s.get(&format!("/d/{id}/cube"), None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 ORDER BY position LIMIT 1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    for text in [
+        "<h1>Cube</h1>",
+        &format!(r#"src="/3d/{id}/files/{fid}/hero""#),
+        &format!(r#"href="/d/{id}/download""#),
+        "Download all (ZIP)",
+        "cube.step",
+        "Household",
+        "Creative Commons Attribution-ShareAlike",
+    ] {
+        assert!(page.body.contains(text), "{text}: {}", page.body);
+    }
+    s.dump_page("model-public", &page.body, None).await;
+    let manage = s.get(&format!("/designs/{id}"), Some(&cookie)).await.body;
+    s.dump_page("model-manage", &manage, Some(&cookie)).await;
+    assert!(
+        !page.body.contains("plate_1.gcode"),
+        "what was dropped is for the maker only"
+    );
+    assert!(!page.body.contains("hoop"), "{}", page.body);
+    assert_eq!(
+        s.get(&format!("/3d/{id}/files/{fid}/hero"), None).await.status,
+        StatusCode::OK
+    );
+    // it's found in browsing, as a 3D model with its picture
+    let browse = s.get("/browse", None).await.body;
+    assert!(
+        browse.contains("3D model") && browse.contains(&format!("/3d/{id}/files/{fid}/hero")),
+        "{browse}"
+    );
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&cookie)).await;
+    assert_eq!(
+        s.get(&format!("/d/{id}/cube"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/d/{id}/download"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("/3d/{id}/files/{fid}/hero"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // while MakerFoundry 3D is off, a model an admin published isn't shown to others yet
+    let Some(s) = site_3d(vec![1000], false).await else {
+        return;
+    };
+    let (_, id) = published_model(&s, "admin%40example.com", "admin").await;
+    assert_eq!(
+        s.get(&format!("/d/{id}/cube"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(!s.get("/browse", None).await.body.contains("Cube"));
+    assert!(!s.get("/sitemap.xml", None).await.body.contains(&format!("/d/{id}/")));
+}
+
+#[tokio::test]
+async fn the_zip_holds_exactly_the_models_files() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, id) = published_model(&s, "maker%40example.com", "maker").await;
+    let r = s.get(&format!("/d/{id}/download"), None).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(r.location().contains("cube.zip"), "{}", r.location());
+    let zip_key: String = sqlx::query_scalar("SELECT zip_key FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let zip = s.stored.lock().unwrap().get(&zip_key).unwrap().1.clone();
+    let a = makerfoundry::model3d::zip::Archive::open(&zip).unwrap();
+    let names: Vec<_> = a.entries().iter().map(|e| e.name.clone()).collect();
+    assert_eq!(names, ["cube.stl", "cube project.3mf", "cube.step"]);
+    let kept: Vec<(String, String)> =
+        sqlx::query_as("SELECT file_name, file_key FROM mf_model_files WHERE design_id = $1 ORDER BY position")
+            .bind(id)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+    for (name, key) in kept {
+        let original = s.stored.lock().unwrap().get(&key).unwrap().1.clone();
+        assert_eq!(a.read(a.find(&name).unwrap()).unwrap(), original, "{name}");
+    }
+    // made once
+    let files = s.stored.lock().unwrap().len();
+    s.get(&format!("/d/{id}/download"), None).await;
+    assert_eq!(s.stored.lock().unwrap().len(), files);
+}
+
+#[tokio::test]
+async fn downloads_are_counted() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (cookie, id) = model_draft(&s, "maker%40example.com", "maker").await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND format = 'step'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    // the maker's own downloads of a draft aren't counted
+    let r = s
+        .get(&format!("/d/{id}/download?model_file={fid}"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(r.location().contains("cube.step"), "{}", r.location());
+    assert_eq!(
+        s.scalar(&format!("SELECT downloads FROM mf_designs WHERE id = {id}"))
+            .await,
+        0
+    );
+    s.post(
+        &format!("/designs/{id}/edit"),
+        "title=Cube&category=household&licence=cc0&price=0",
+        Some(&cookie),
+    )
+    .await;
+    s.post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    s.get(&format!("/d/{id}/download?model_file={fid}"), None).await;
+    s.get(&format!("/d/{id}/download"), None).await;
+    assert_eq!(
+        s.scalar(&format!("SELECT downloads FROM mf_designs WHERE id = {id}"))
+            .await,
+        2
+    );
+    // another model's file isn't reachable through this one
+    let (_, other) = model_draft(&s, "other%40example.com", "other").await;
+    let theirs: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 LIMIT 1")
+        .bind(other)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(&format!("/d/{id}/download?model_file={theirs}"), None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn the_page_has_its_link_preview() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, id) = published_model(&s, "maker%40example.com", "maker").await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 ORDER BY position LIMIT 1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let page = s.get(&format!("/d/{id}/cube"), None).await.body;
+    assert!(page.contains(r#"<meta property="og:title" content="Cube">"#), "{page}");
+    assert!(
+        page.contains(&format!(
+            r#"<meta property="og:image" content="https://makerfoundry.test/3d/{id}/files/{fid}/hero">"#
+        )),
+        "{page}"
+    );
+    assert!(page.contains("A 3D model by Maker on MakerFoundry"), "{page}");
+}
+
+#[tokio::test]
+async fn uploaded_file_names_lose_their_folders() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let r = upload_model(
+        &s,
+        &cookie,
+        &[
+            ("../../etc/evil.stl", stl_cube(5.0)),
+            ("C:\\Users\\me\\part.stl", stl_cube(5.0)),
+        ],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let names: Vec<String> = sqlx::query_scalar("SELECT file_name FROM mf_model_files ORDER BY position")
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(names, ["evil.stl", "part.stl"]);
 }

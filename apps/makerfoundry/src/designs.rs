@@ -383,12 +383,15 @@ pub struct DesignRow {
     pub thickness_mm: Option<f64>,
     /// Whether an embroidery design is also offered converted to other formats (`convert`).
     pub convert: bool,
+    /// A 3D model's category (`model3d::CATEGORIES`) and its files as one ZIP, once made (MF-42).
+    pub category: Option<String>,
+    pub zip_key: Option<String>,
 }
 
 pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT account_id, kind, file_name, file_key, facts, preview_svg, status, title, description, tags, licence, downloads,
-                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm, convert
+                removed_reason, price_cents, width_mm, height_mm, material, thickness_mm, convert, category, zip_key
          FROM mf_designs WHERE id = $1",
     )
     .bind(id)
@@ -415,6 +418,8 @@ pub async fn design(pool: &PgPool, id: i64) -> Result<Option<DesignRow>, sqlx::E
             material: r.try_get("material")?,
             thickness_mm: r.try_get("thickness_mm")?,
             convert: r.try_get("convert")?,
+            category: r.try_get("category")?,
+            zip_key: r.try_get("zip_key")?,
         })
     })
     .transpose()
@@ -548,7 +553,7 @@ pub async fn manage_page(state: &AppState, pool: &PgPool, user: &User, id: i64, 
         Err(r) => return r,
     };
     if d.kind == "model3d" {
-        return crate::model3d::upload::manage_page(pool, id, &d, problem).await;
+        return crate::model3d::upload::manage_page(state, pool, user, id, &d, problem).await;
     }
     let has_profile = crate::makers::profile(pool, user.account_id).await.is_some();
     let problem = if problem.is_empty() {
