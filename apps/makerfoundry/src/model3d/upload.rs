@@ -434,6 +434,7 @@ async fn keep(
         .await
         .map_err(|e| e.to_string())?;
         note_files(&mut tx, id, &rows, 0).await?;
+        super::search::refresh_facets(&mut *tx, id).await.map_err(|e| e.to_string())?;
         for (position, (photo_key, thumb_key, w, h)) in photo_keys.iter().enumerate() {
             sqlx::query("INSERT INTO mf_design_photos (design_id, photo_key, thumb_key, width, height, position) VALUES ($1, $2, $3, $4, $5, $6)")
                 .bind(id)
@@ -1121,6 +1122,9 @@ pub async fn add_files(
         let rows = store_files(storage, prepared, &mut stored).await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         note_files(&mut tx, id, &rows, next).await?;
+        super::search::refresh_facets(&mut *tx, id)
+            .await
+            .map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())
     }
     .await;
@@ -1198,6 +1202,9 @@ pub async fn remove_file(
         .bind(id)
         .execute(&pool)
         .await;
+    }
+    if let Err(e) = super::search::refresh_facets(&pool, id).await {
+        eprintln!("model3d: facets {id}: {e}");
     }
     let mut keys = vec![key];
     keys.extend(thumb);

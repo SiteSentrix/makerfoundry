@@ -270,6 +270,13 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   Makes, collections, follows and comments work on 3D models as on designs; collections and the
   Following feed show 3D models once `MF_3D` is on; a reported comment on a model reaches the
   admins' queue.
+- **MF-49 3D search, built 2026-10-30** (#17): `/3d` is the 3D section's search
+  (`model3d/search.rs`): words, category, licence, file type, has makes, has print settings,
+  printer, multi-colour and filament, newest or popular first, paged by key (`after=`), filters
+  outside their lists ignored. What the filters need is kept on each model (migration 0029,
+  refreshed whenever its files change) and indexed; popularity (likes and makes of the last 30
+  days, plus downloads) is refreshed by the 10-minute sweep. With 100,000 models every filtered
+  page took under 6 ms on the test database (the test asserts under 100 ms).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

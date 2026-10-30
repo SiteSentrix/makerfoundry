@@ -6904,3 +6904,195 @@ async fn likes_are_in_the_data_download_and_go_with_the_data() {
     s.post("/account/data/delete", "confirm=DELETE", Some(&bea)).await;
     assert_eq!(s.scalar("SELECT count(*) FROM mf_likes").await, 0);
 }
+
+// ---------------------------------------------------------------- 3D search (MF-49)
+
+/// Three published models with different facts, a draft and a taken-down one → (gear, hook, vase).
+async fn searchable_models(s: &Site) -> (String, i64, i64, i64) {
+    let ann = model_maker(s, "ann%40example.com", "ann").await;
+    let publish = |id: i64, title: &'static str, category: &'static str, licence: &'static str| {
+        let ann = ann.clone();
+        async move {
+            let r = s
+                .post(
+                    &format!("/designs/{id}/edit"),
+                    &format!("title={title}&category={category}&licence={licence}&price=0"),
+                    Some(&ann),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+            let r = s
+                .post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&ann))
+                .await;
+            assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+        }
+    };
+    let up = |files: Vec<(&'static str, Vec<u8>)>| {
+        let ann = ann.clone();
+        async move { design_id(upload_model(s, &ann, &files, &[]).await.location()) }
+    };
+    let gear = up(vec![("gear.stl", stl_cube(10.0))]).await;
+    publish(gear, "Gear", "household", "cc-by").await;
+    let hook = up(vec![("hook.3mf", bambu_3mf())]).await;
+    publish(hook, "Hook", "tools-workshop", "cc0").await;
+    let vase = up(vec![
+        ("vase.stl", stl_cube(10.0)),
+        ("vase.step", STEP_FILE.as_bytes().to_vec()),
+    ])
+    .await;
+    publish(vase, "Tall vase", "art-decor", "cc-by-sa").await;
+    let bea = model_maker(s, "bea%40example.com", "bea").await;
+    let r = s
+        .send(multipart(
+            &format!("/d/{vase}/makes"),
+            &[
+                ("photo", "print.jpg", photo_with_location()),
+                ("confirm", "", b"yes".to_vec()),
+            ],
+            &bea,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let draft = up(vec![("secret.stl", stl_cube(10.0))]).await;
+    sqlx::query("UPDATE mf_designs SET title = 'Secret gear', category = 'household' WHERE id = $1")
+        .bind(draft)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let gone = up(vec![("gone.stl", stl_cube(10.0))]).await;
+    publish(gone, "Gone gear", "household", "cc-by").await;
+    sqlx::query("UPDATE mf_designs SET status = 'removed' WHERE id = $1")
+        .bind(gone)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    (ann, gear, hook, vase)
+}
+
+/// The model ids a 3D search finds, in order.
+async fn found(s: &Site, query: &str) -> Vec<i64> {
+    let page = s.get(&format!("/3d?{query}"), None).await.body;
+    page.split(r#"<li><a href="/d/"#)
+        .skip(1)
+        .filter_map(|t| t.split('/').next()?.parse().ok())
+        .collect()
+}
+
+#[tokio::test]
+async fn each_3d_filter_finds_what_it_should() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, gear, hook, vase) = searchable_models(&s).await;
+    for (query, want) in [
+        ("category=household", vec![gear]),
+        ("licence=cc0", vec![hook]),
+        ("format=step", vec![vase]),
+        ("format=3mf", vec![hook]),
+        ("makes=yes", vec![vase]),
+        ("profile=yes", vec![hook]),
+        ("printer=a1-mini", vec![hook]),
+        ("multicolour=yes", vec![hook]),
+        ("filament=PLA", vec![hook]),
+        ("filament=PETG", vec![]),
+        ("q=vase", vec![vase]),
+        ("category=tools-workshop&printer=a1-mini&filament=PLA", vec![hook]),
+        ("category=household&printer=a1-mini", vec![]),
+        ("category=nope", vec![vase, hook, gear]),
+    ] {
+        assert_eq!(found(&s, query).await, want, "{query}");
+    }
+    let page = s.get("/3d", None).await.body;
+    s.dump_page("search-3d", &page, None).await;
+    for control in [
+        r#"name="category""#,
+        r#"name="licence""#,
+        r#"name="format""#,
+        r#"name="printer""#,
+        r#"name="filament""#,
+        r#"name="makes""#,
+        r#"name="profile""#,
+        r#"name="multicolour""#,
+        r#"name="sort""#,
+    ] {
+        assert!(page.contains(control), "{control}");
+    }
+}
+
+#[tokio::test]
+async fn drafts_and_taken_down_never_appear() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, gear, ..) = searchable_models(&s).await;
+    assert_eq!(found(&s, "q=gear").await, vec![gear]);
+    assert_eq!(found(&s, "category=household").await, vec![gear]);
+}
+
+#[tokio::test]
+async fn sorting_by_newest_and_popular_and_paging_by_key() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (_, gear, hook, vase) = searchable_models(&s).await;
+    assert_eq!(found(&s, "").await, vec![vase, hook, gear], "newest first");
+    // the vase has a make; two likes put the gear ahead
+    for who in ["cal%40example.com", "dee%40example.com"] {
+        let c = s.join(who).await;
+        s.post(&format!("/d/{gear}/like"), "like=yes", Some(&c)).await;
+    }
+    makerfoundry::model3d::search::refresh_popularity(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(found(&s, "sort=popular").await[0], gear);
+    // pages go on from the last model shown
+    let first = found(&s, "per=2").await;
+    assert_eq!(first, vec![vase, hook]);
+    let page = s.get("/3d?per=2", None).await.body;
+    assert!(page.contains(&format!("after={hook}")), "{page}");
+    assert_eq!(found(&s, &format!("per=2&after={hook}")).await, vec![gear]);
+}
+
+#[tokio::test]
+async fn a_filtered_page_under_100ms_with_100000_models() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = model_maker(&s, "ann%40example.com", "ann").await;
+    let _ = ann;
+    let categories = makerfoundry::model3d::CATEGORIES
+        .iter()
+        .map(|c| format!("'{}'", c.id))
+        .collect::<Vec<_>>()
+        .join(",");
+    sqlx::query(&format!(
+        "INSERT INTO mf_designs (account_id, kind, file_name, file_key, file_bytes, format, facts, preview_svg, status, title,
+                                 licence, category, published_at, search, formats, printers, filament_types, has_profile, multicolour, popularity)
+         SELECT 1000, 'model3d', 'm.stl', 'model/k' || n, 1, 'stl', '{{}}', '', 'published', 'Model ' || n,
+                (ARRAY['cc-by','cc0','cc-by-sa'])[1 + n % 3], (ARRAY[{categories}])[1 + n % 14], now() - n * interval '1 minute',
+                to_tsvector('english', 'Model ' || n || CASE WHEN n % 50 = 0 THEN ' dragon' ELSE '' END),
+                CASE WHEN n % 2 = 0 THEN ARRAY['stl','3mf'] ELSE ARRAY['stl'] END,
+                CASE WHEN n % 4 = 0 THEN ARRAY['x1c'] WHEN n % 4 = 1 THEN ARRAY['a1-mini'] ELSE '{{}}' END,
+                CASE WHEN n % 2 = 0 THEN ARRAY['PLA'] ELSE '{{}}' END, n % 2 = 0, n % 6 = 0, n % 997
+         FROM generate_series(1, 100000) n"
+    ))
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query("ANALYZE").execute(&s.pool).await.unwrap();
+    for query in [
+        "",
+        "category=household&printer=x1c",
+        "format=3mf&filament=PLA&multicolour=yes&sort=popular",
+        "q=dragon&licence=cc0",
+        "profile=yes&printer=x1c&sort=popular",
+    ] {
+        // once to warm the caches, then timed
+        assert!(!found(&s, query).await.is_empty(), "{query}");
+        let started = std::time::Instant::now();
+        let ids = found(&s, query).await;
+        let took = started.elapsed();
+        println!("3D search {query:?}: {} models in {took:?}", ids.len());
+        assert!(took < std::time::Duration::from_millis(100), "{query}: {took:?}");
+    }
+}

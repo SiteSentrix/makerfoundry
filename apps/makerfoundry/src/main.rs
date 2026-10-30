@@ -197,6 +197,12 @@ async fn main() -> ExitCode {
             {
                 eprintln!("proofs: {e}");
             }
+            // MF-49: how popular 3D models are lately
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::model3d::search::refresh_popularity(pool).await
+            {
+                eprintln!("3D popularity: {e}");
+            }
             // MF-52: pending import files and unpublished imported drafts after 30 days
             if let Some(pool) = &sweep_db
                 && let Err(e) = makerfoundry::model3d::import::forget_old(pool, sweep_storage.as_ref()).await

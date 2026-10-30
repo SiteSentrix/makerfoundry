@@ -10,6 +10,7 @@ pub mod origin;
 pub mod profile;
 pub mod remix;
 pub mod render;
+pub mod search;
 pub mod stl;
 pub mod threemf;
 pub mod upload;
@@ -21,7 +22,7 @@ use axum::response::{Html, IntoResponse, Response};
 
 use crate::AppState;
 use crate::accounts::{User, current_user, private};
-use crate::pages::{escape, page};
+use crate::pages::page;
 
 /// A 3D category: `id` is kept in the database, `name` is shown.
 #[derive(Debug, PartialEq, Eq)]
@@ -102,15 +103,29 @@ pub fn open_to(state: &AppState, viewer: Option<&User>) -> bool {
 }
 
 /// `/3d`: the 3D section's front page.
-pub async fn landing(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub async fn landing(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<search::Query>,
+) -> Response {
     let viewer = current_user(&state, &headers).await;
     if !open_to(&state, viewer.as_ref()) {
         return crate::not_found().await.into_response();
     }
-    let categories: String = CATEGORIES
-        .iter()
-        .map(|c| format!("<li>{}</li>", escape(c.name)))
-        .collect();
+    let Some(pool) = state.db.as_ref() else {
+        return crate::not_found().await.into_response();
+    };
+    let (cards, next) = search::find(pool, &q).await;
+    let results = if cards.is_empty() {
+        r#"<p class="lead">No models found. Try fewer filters.</p>"#.to_string()
+    } else {
+        crate::listings::cards_html(&cards)
+    };
+    let more = match next {
+        Some(after) => format!(r#"<p><a href="{}">More models</a></p>"#, search::next_href(&q, after)),
+        None => String::new(),
+    };
+    let form = search::form_html(&q);
     let preview = if state.three_d {
         ""
     } else {
@@ -122,9 +137,10 @@ pub async fn landing(State(state): State<AppState>, headers: HeaderMap) -> Respo
   <p class="lead">Printable models shared and sold by the makers who designed them: STL, 3MF, OBJ and STEP, with the print settings that worked.</p>
   {preview}
 </section>
-<section>
-  <h2>Categories</h2>
-  <ul class="categories">{categories}</ul>
+<section class="design">
+  {form}
+  {results}
+  {more}
 </section>"#
     );
     let title = "MakerFoundry 3D · MakerFoundry";
