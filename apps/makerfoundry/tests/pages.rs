@@ -25,6 +25,7 @@ fn app() -> axum::Router {
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
         three_d: false,
+        scanner: None,
     })
 }
 

@@ -269,6 +269,7 @@ pub async fn add(
             "You've added a lot of models today. Please try again tomorrow.".into(),
         ));
     }
+    scan_all(state, &model_files, &images).await?;
     // reading and drawing are CPU-heavy: off the threads that answer requests, one file at a time
     let mut prepared = Vec::with_capacity(model_files.len());
     for (name, bytes) in model_files {
@@ -297,6 +298,36 @@ pub async fn add(
         eprintln!("model3d: {why}");
         Refused::Failed
     })
+}
+
+/// Scans every file and image with the virus scanner, when there is one (issue #29): a flagged
+/// one is refused by name; if the scanner can't answer, the upload is held.
+async fn scan_all(state: &AppState, files: &[(String, Vec<u8>)], images: &[Vec<u8>]) -> Result<(), Refused> {
+    let Some(scanner) = &state.scanner else {
+        return Ok(());
+    };
+    let named = files
+        .iter()
+        .map(|(n, b)| (n.clone(), b))
+        .chain(images.iter().enumerate().map(|(i, b)| (format!("Image {}", i + 1), b)));
+    for (name, bytes) in named {
+        match scanner.scan(bytes).await {
+            Ok(crate::scan::Verdict::Clean) => {}
+            Ok(crate::scan::Verdict::Found(_)) => {
+                return Err(Refused::Bad(format!(
+                    "{}: our virus scanner flagged it, so it isn't kept.",
+                    name.chars().take(80).collect::<String>()
+                )));
+            }
+            Err(e) => {
+                eprintln!("scan: {e}");
+                return Err(Refused::Bad(
+                    "Uploads can't be checked for viruses right now, so they're paused. Please try again in a few minutes.".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Stores the files, then notes the model; if noting fails, the stored files go again.
@@ -1163,6 +1194,9 @@ pub async fn add_files(
         .allow(crate::limits::MODEL_UPLOAD, &user.account_id.to_string())
     {
         return again("You've added a lot of models today. Please try again tomorrow.".into()).await;
+    }
+    if let Err(r) = scan_all(&state, &new_files, &[]).await {
+        return again(r.message()).await;
     }
     let mut prepared = Vec::new();
     for (name, bytes) in new_files {

@@ -33,6 +33,7 @@ pub mod pages;
 pub mod photos;
 pub mod preview;
 pub mod proofs;
+pub mod scan;
 pub mod selling;
 pub mod sizes;
 pub mod storage;
@@ -129,6 +130,9 @@ pub struct AppState {
     pub proofs: Option<proofs::Proofs>,
     /// MakerFoundry 3D (MF-35: `MF_3D=yes` for everyone, admins before).
     pub three_d: bool,
+    /// Virus scanning of 3D uploads (issue #29: `MF_CLAMAV`, `host:port` of a ClamAV daemon);
+    /// without it uploads aren't scanned.
+    pub scanner: Option<scan::Scanner>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.

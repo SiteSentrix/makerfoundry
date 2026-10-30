@@ -265,6 +265,18 @@ async fn site_all(
     proofs: Option<makerfoundry::proofs::Proofs>,
     three_d: bool,
 ) -> Option<Site> {
+    site_scanned(admins, stripe, launched, proofs, three_d, None).await
+}
+
+/// The same, with a virus scanner (issue #29) at `scanner`.
+async fn site_scanned(
+    admins: Vec<i64>,
+    stripe: Option<makerfoundry::stripe::Stripe>,
+    launched: bool,
+    proofs: Option<makerfoundry::proofs::Proofs>,
+    three_d: bool,
+    scanner: Option<makerfoundry::scan::Scanner>,
+) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
     let storage_kept = storage.clone();
@@ -282,6 +294,7 @@ async fn site_all(
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs,
         three_d,
+        scanner,
     });
     Some(Site {
         app,
@@ -578,6 +591,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
         three_d: false,
+        scanner: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -605,6 +619,7 @@ async fn without_a_database_nobody_can_sign_in() {
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
         three_d: false,
+        scanner: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1009,6 +1024,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
         three_d: false,
+        scanner: None,
     });
     let s = Site {
         app,
@@ -1240,6 +1256,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
         three_d: false,
+        scanner: None,
     });
     let s = Site {
         app,
@@ -7859,4 +7876,99 @@ async fn csp_on_other_pages_is_unchanged() {
     let maker = s.join("ann%40example.com").await;
     let rose = published(&s, &maker, "ann", "Rose").await;
     assert!(!csp(&s.get(&format!("/d/{rose}/rose"), None).await).contains("script-src"));
+}
+
+// ---------------------------------------------------------------- virus scanning (issue #29)
+
+/// What the stand-in scanner flags (the real EICAR test string isn't kept in the repository).
+const TEST_VIRUS: &[u8] = b"MF-TEST-VIRUS-SIGNATURE";
+
+/// A site with MakerFoundry 3D on and the stand-in scanner → the site and its "down" switch.
+async fn scanned_site() -> Option<(Site, std::sync::Arc<std::sync::atomic::AtomicBool>)> {
+    let (address, down) = makerfoundry::scan::stand_in::start(TEST_VIRUS).await.unwrap();
+    let scanner = makerfoundry::scan::Scanner::new(&address);
+    Some((site_scanned(Vec::new(), None, true, None, true, scanner).await?, down))
+}
+
+fn step_with(extra: &[u8]) -> Vec<u8> {
+    let mut step = STEP_FILE.replace("ENDSEC;\nDATA;", "ENDSEC;\nDATA;\n/* ").into_bytes();
+    let at = step.windows(3).position(|w| w == b"/* ").unwrap() + 3;
+    let mut tail = extra.to_vec();
+    tail.extend(b" */");
+    step.splice(at..at, tail);
+    step
+}
+
+#[tokio::test]
+async fn the_eicar_test_file_is_held() {
+    let Some((s, _)) = scanned_site().await else { return };
+    let ann = s.join("ann%40example.com").await;
+    let r = upload_model(
+        &s,
+        &ann,
+        &[("cube.stl", stl_cube(5.0)), ("part.step", step_with(TEST_VIRUS))],
+        &[],
+    )
+    .await;
+    assert!(
+        r.body.contains("part.step") && r.body.contains("virus scanner"),
+        "{}",
+        r.body
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 0);
+    assert!(s.stored.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_clean_step_passes() {
+    let Some((s, _)) = scanned_site().await else { return };
+    let ann = s.join("ann%40example.com").await;
+    let r = upload_model(
+        &s,
+        &ann,
+        &[("cube.stl", stl_cube(5.0)), ("part.step", step_with(b"clean"))],
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+}
+
+#[tokio::test]
+async fn the_scanner_being_down_holds_uploads() {
+    let Some((s, down)) = scanned_site().await else { return };
+    let ann = s.join("ann%40example.com").await;
+    down.store(true, std::sync::atomic::Ordering::SeqCst);
+    let r = upload_model(&s, &ann, &[("cube.stl", stl_cube(5.0))], &[]).await;
+    assert!(r.body.contains("can&#39;t be checked for viruses"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 0);
+    // adding files to a model is held the same way
+    down.store(false, std::sync::atomic::Ordering::SeqCst);
+    let id = design_id(
+        upload_model(&s, &ann, &[("cube.stl", stl_cube(5.0))], &[])
+            .await
+            .location(),
+    );
+    let r = add_model_files(&s, &ann, id, &[("more.step", step_with(TEST_VIRUS))]).await;
+    assert!(r.body.contains("virus scanner"), "{}", r.body);
+}
+
+#[tokio::test]
+async fn off_without_the_setting_and_nothing_changes() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let ann = s.join("ann%40example.com").await;
+    let r = upload_model(
+        &s,
+        &ann,
+        &[("cube.stl", stl_cube(5.0)), ("part.step", step_with(TEST_VIRUS))],
+        &[],
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::SEE_OTHER,
+        "no scanner set: not scanned, {}",
+        r.body
+    );
 }

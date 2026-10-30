@@ -327,6 +327,11 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   and 1280 px with no sideways scrolling. The owner's steps to open it are in `docs/launch.md`
   (Opening MakerFoundry 3D): approve the wording (#26), try it as a founding creator, then
   `MF_3D=yes`.
+- **#29 ClamAV scanning, built 2026-10-30, off until `MF_CLAMAV` is set**: our own client for
+  clamd's documented `INSTREAM` protocol (`scan.rs`); every 3D upload's files and images (uploads,
+  imports' drafts, files added to a model) are scanned before they're kept: a flagged one is
+  refused by name; if clamd can't be reached, uploads are held, never kept unscanned. Tested
+  against a stand-in clamd. **The owner's call**: running a ClamAV service on Railway (it costs).
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

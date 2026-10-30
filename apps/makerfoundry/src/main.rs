@@ -162,6 +162,9 @@ async fn main() -> ExitCode {
             .collect(),
         proofs,
         three_d: std::env::var("MF_3D").is_ok_and(|v| v.trim() == "yes"),
+        scanner: std::env::var("MF_CLAMAV")
+            .ok()
+            .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
     };
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)
