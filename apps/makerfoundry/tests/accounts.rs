@@ -4986,3 +4986,343 @@ async fn a_3d_licence_is_refused_on_an_embroidery_design() {
         .await;
     assert!(r.body.contains("Choose a licence."), "{}", r.body);
 }
+
+// ---------------------------------------------------------------- MakerFoundry 3D (MF-41 onwards)
+
+impl Site {
+    /// Signs up agreeing to the Terms (asked for once launched) → the session cookie.
+    async fn join(&self, email: &str) -> String {
+        self.post(
+            "/signup",
+            &format!("email={email}&password=fire+truck+1&again=fire+truck+1&agree=yes"),
+            None,
+        )
+        .await
+        .cookie()
+    }
+}
+
+/// A binary STL of a cube `side` mm across.
+fn stl_cube(side: f32) -> Vec<u8> {
+    let p = |i: u8| {
+        [
+            if i & 1 != 0 { side } else { 0.0 },
+            if i & 2 != 0 { side } else { 0.0 },
+            if i & 4 != 0 { side } else { 0.0 },
+        ]
+    };
+    let faces = [
+        [0, 2, 3, 1],
+        [4, 5, 7, 6],
+        [0, 1, 5, 4],
+        [2, 6, 7, 3],
+        [0, 4, 6, 2],
+        [1, 3, 7, 5],
+    ];
+    let mut out = vec![0u8; 80];
+    out.extend(12u32.to_le_bytes());
+    for [a, b, c, d] in faces {
+        for t in [[a, b, c], [a, c, d]] {
+            out.extend([0u8; 12]);
+            for i in t {
+                for n in p(i) {
+                    out.extend(n.to_le_bytes());
+                }
+            }
+            out.extend([0u8; 2]);
+        }
+    }
+    out
+}
+
+fn small_png() -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(16, 16, image::Rgba([200, 60, 40, 255])))
+        .write_to(&mut out, image::ImageFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+
+/// A Bambu-style 3MF: a 20 mm cube, a plate thumbnail, settings, and sliced G-code (dropped).
+fn project_3mf(model_xml: Option<&str>) -> Vec<u8> {
+    let mut vertices = String::new();
+    for i in 0..8u8 {
+        let c = |bit: u8| if i & bit != 0 { 20 } else { 0 };
+        vertices.push_str(&format!(r#"<vertex x="{}" y="{}" z="{}"/>"#, c(1), c(2), c(4)));
+    }
+    let mut triangles = String::new();
+    for [a, b, c, d] in [
+        [0, 2, 3, 1],
+        [4, 5, 7, 6],
+        [0, 1, 5, 4],
+        [2, 6, 7, 3],
+        [0, 4, 6, 2],
+        [1, 3, 7, 5],
+    ] {
+        triangles.push_str(&format!(
+            r#"<triangle v1="{a}" v2="{b}" v3="{c}"/><triangle v1="{a}" v2="{c}" v3="{d}"/>"#
+        ));
+    }
+    let good = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>"#
+    );
+    let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/><Relationship Target="/Metadata/plate_1.png" Id="rel1" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/></Relationships>"#;
+    let files = vec![
+        ("_rels/.rels".to_string(), rels.as_bytes().to_vec()),
+        (
+            "3D/3dmodel.model".to_string(),
+            model_xml.unwrap_or(&good).as_bytes().to_vec(),
+        ),
+        ("Metadata/plate_1.png".to_string(), small_png()),
+        (
+            "Metadata/project_settings.config".to_string(),
+            br#"{"layer_height": "0.2"}"#.to_vec(),
+        ),
+        ("Metadata/plate_1.gcode".to_string(), b"G28\nG1 X10\n".to_vec()),
+    ];
+    makerfoundry::model3d::zip::write(&files).unwrap()
+}
+
+const STEP_FILE: &str =
+    "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('test'),'2;1');\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n";
+
+/// A model file as kept: name, role, key, triangles, picture, views, what was dropped.
+type FileRow = (
+    String,
+    String,
+    String,
+    Option<i64>,
+    Option<String>,
+    Vec<String>,
+    Vec<String>,
+);
+/// The files of one upload, by name.
+type ModelUpload<'a> = Vec<(&'a str, Vec<u8>)>;
+
+/// Uploads a model (files and images) → the answer.
+async fn upload_model(s: &Site, cookie: &str, files: &[(&str, Vec<u8>)], images: &[Vec<u8>]) -> Answer {
+    let mut parts: Vec<(&str, &str, Vec<u8>)> = files.iter().map(|(n, b)| ("files", *n, b.clone())).collect();
+    parts.extend(images.iter().map(|b| ("images", "photo.jpg", b.clone())));
+    s.send(multipart("/3d/new", &parts, cookie)).await
+}
+
+#[tokio::test]
+async fn a_good_upload_makes_one_draft_with_its_files_and_images() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let form = s.get("/3d/new", Some(&cookie)).await;
+    assert_eq!(form.status, StatusCode::OK);
+    assert!(form.body.contains(r#"name="files""#) && form.body.contains("multiple"));
+    let r = upload_model(
+        &s,
+        &cookie,
+        &[
+            ("cube.stl", stl_cube(10.0)),
+            ("cube project.3mf", project_3mf(None)),
+            ("cube.step", STEP_FILE.as_bytes().to_vec()),
+        ],
+        &[photo_with_location()],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let id = design_id(r.location());
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 1);
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_designs WHERE id = {id} AND kind = 'model3d' AND status = 'draft'"
+        ))
+        .await,
+        1
+    );
+    let files: Vec<FileRow> = sqlx::query_as(
+        "SELECT file_name, role, file_key, triangles, thumb_key, view_keys, dropped FROM mf_model_files WHERE design_id = $1 ORDER BY position",
+    )
+    .bind(id)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    let roles: Vec<_> = files.iter().map(|f| (f.0.as_str(), f.1.as_str())).collect();
+    assert_eq!(
+        roles,
+        [
+            ("cube.stl", "mesh"),
+            ("cube project.3mf", "project"),
+            ("cube.step", "source")
+        ]
+    );
+    assert_eq!(files[0].3, Some(12));
+    assert!(
+        files[0].4.is_some() && files[0].5.len() == 3,
+        "a mesh gets a picture and three views"
+    );
+    assert!(files[1].4.is_some(), "a 3MF's own thumbnail");
+    assert!(
+        files[2].4.is_none() && files[2].5.is_empty(),
+        "a STEP file has no picture"
+    );
+    assert_eq!(files[1].6, ["Metadata/plate_1.gcode"]);
+    // what's stored for the 3MF is the rebuilt file, without the G-code
+    let stored_3mf = s.stored.lock().unwrap().get(&files[1].2).unwrap().1.clone();
+    let a = makerfoundry::model3d::zip::Archive::open(&stored_3mf).unwrap();
+    assert!(a.find("Metadata/plate_1.gcode").is_none() && a.find("3D/3dmodel.model").is_some());
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_design_photos WHERE design_id = {id}"))
+            .await,
+        1
+    );
+    // the maker's draft page lists the files and what was dropped
+    let page = s.get(&format!("/designs/{id}"), Some(&cookie)).await;
+    assert_eq!(page.status, StatusCode::OK);
+    for text in [
+        "cube.stl",
+        "cube project.3mf",
+        "cube.step",
+        "Metadata/plate_1.gcode",
+        "10 × 10 × 10 mm",
+    ] {
+        assert!(page.body.contains(text), "{text}: {}", page.body);
+    }
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND role = 'mesh'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    for view in ["hero", "front", "side", "top"] {
+        let pic = s.get(&format!("/3d/{id}/files/{fid}/{view}"), Some(&cookie)).await;
+        assert_eq!(pic.status, StatusCode::OK, "{view}");
+        assert_eq!(pic.headers[header::CONTENT_TYPE], "image/png");
+    }
+    assert_eq!(
+        s.get(&format!("/3d/{id}/files/{fid}/back"), Some(&cookie)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // deleting the draft deletes every stored file
+    let r = s.post(&format!("/designs/{id}/delete"), "", Some(&cookie)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(s.stored.lock().unwrap().is_empty(), "nothing left in storage");
+}
+
+#[tokio::test]
+async fn a_bad_file_a_huge_file_or_a_malformed_3mf_is_refused_and_nothing_is_kept() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let html = b"<!doctype html><html><body><script>alert(1)</script></body></html>".to_vec();
+    let broken = project_3mf(Some(
+        "<model><resources><object id=\"1\"><mesh><vertices/><triangles><triangle v1=\"0\" v2=\"1\" v3=\"9\"/></triangles></mesh></object></resources><build><item objectid=\"1\"/></build></model>",
+    ));
+    let cases: Vec<(ModelUpload, &str)> = vec![
+        (
+            vec![("cube.stl", stl_cube(10.0)), ("page.stl", html.clone())],
+            "page.stl",
+        ),
+        (vec![("cube.3mf", broken)], "cube.3mf"),
+        (
+            vec![("cube.stl", stl_cube(10.0)), ("setup.exe", b"MZ".to_vec())],
+            "STL, 3MF, OBJ and STEP",
+        ),
+        (
+            vec![("part.step", STEP_FILE.as_bytes().to_vec())],
+            "at least one STL, 3MF or OBJ",
+        ),
+        (
+            vec![("huge.stl", vec![0u8; 100 * 1024 * 1024 + 1])],
+            "larger than 100 MB",
+        ),
+        (vec![], "Choose"),
+    ];
+    for (files, why) in cases {
+        let r = upload_model(&s, &cookie, &files, &[]).await;
+        assert_eq!(r.status, StatusCode::OK, "{why}");
+        assert!(r.body.contains(why), "{why}: {}", r.body);
+    }
+    let r = upload_model(&s, &cookie, &[("cube.stl", stl_cube(10.0))], &[html]).await;
+    assert!(r.body.contains("Image 1"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 0);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_model_files").await, 0);
+    assert!(s.stored.lock().unwrap().is_empty(), "nothing kept");
+}
+
+#[tokio::test]
+async fn too_many_files_are_refused() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let names: Vec<String> = (0..31).map(|i| format!("part{i}.stl")).collect();
+    let files: Vec<(&str, Vec<u8>)> = names.iter().map(|n| (n.as_str(), stl_cube(5.0))).collect();
+    let r = upload_model(&s, &cookie, &files, &[]).await;
+    assert!(r.body.contains("up to 30 files"), "{}", r.body);
+    let r = upload_model(&s, &cookie, &files[..30], &[]).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "30 is allowed");
+    let images: Vec<Vec<u8>> = (0..13).map(|_| small_png()).collect();
+    let r = upload_model(&s, &cookie, &files[..1], &images).await;
+    assert!(r.body.contains("up to 12 images"), "{}", r.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 1);
+}
+
+#[tokio::test]
+async fn others_cant_see_or_change_a_draft() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let maker = s.join("maker%40example.com").await;
+    let other = s.join("other%40example.com").await;
+    let r = upload_model(&s, &maker, &[("cube.stl", stl_cube(10.0))], &[]).await;
+    let id = design_id(r.location());
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    for who in [Some(other.as_str()), None] {
+        assert_eq!(
+            s.get(&format!("/3d/{id}/files/{fid}/hero"), who).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        s.get(&format!("/designs/{id}"), Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.post(&format!("/designs/{id}/delete"), "", Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_model_files").await, 1);
+    assert_eq!(s.get("/3d/new", None).await.location(), "/signin?next=/3d/new");
+
+    // while MakerFoundry 3D is off, only admins may upload
+    let Some(s) = site_3d(vec![1000], false).await else {
+        return;
+    };
+    let admin = s.join("admin%40example.com").await;
+    let maker = s.join("maker%40example.com").await;
+    assert_eq!(s.get("/3d/new", Some(&maker)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        upload_model(&s, &maker, &[("cube.stl", stl_cube(10.0))], &[])
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.get("/3d/new", Some(&admin)).await.status, StatusCode::OK);
+    assert_eq!(s.get("/3d/new", None).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn the_daily_limit_holds() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let cookie = s.join("maker%40example.com").await;
+    let cube = stl_cube(5.0);
+    for i in 0..makerfoundry::limits::MODEL_UPLOAD.max {
+        let r = upload_model(&s, &cookie, &[("cube.stl", cube.clone())], &[]).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER, "upload {i}");
+    }
+    let r = upload_model(&s, &cookie, &[("cube.stl", cube)], &[]).await;
+    assert!(r.body.contains("a lot of models today"), "{}", r.body);
+}

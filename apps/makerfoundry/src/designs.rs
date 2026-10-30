@@ -22,7 +22,7 @@ pub const MAX_PHOTOS: usize = 6;
 /// The most an upload (a design and its photos) may be, all told.
 pub const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 
-fn not_found() -> Response {
+pub(crate) fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
         Html(page(
@@ -516,7 +516,11 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
             format!(
                 r#"<li><a href="/designs/{id}"><span class="thumb">{picture}</span><strong>{name}</strong><span class="muted">{kind}, {format} · {status}</span></a></li>"#,
                 name = escape(if title.is_empty() { file_name } else { title }),
-                kind = if kind == "laser" { "Laser" } else { "Embroidery" },
+                kind = match kind.as_str() {
+                    "laser" => "Laser",
+                    "model3d" => "3D model",
+                    _ => "Embroidery",
+                },
                 format = escape(format),
                 status = if status == "published" { "published" } else { "draft" },
             )
@@ -543,6 +547,9 @@ pub async fn manage_page(state: &AppState, pool: &PgPool, user: &User, id: i64, 
         Ok(d) => d,
         Err(r) => return r,
     };
+    if d.kind == "model3d" {
+        return crate::model3d::upload::manage_page(pool, id, &d, problem).await;
+    }
     let has_profile = crate::makers::profile(pool, user.account_id).await.is_some();
     let problem = if problem.is_empty() {
         String::new()
@@ -698,6 +705,7 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
             .await
             .unwrap_or_default();
     let other_files = crate::files::keys(&pool, id).await;
+    let model_files = crate::model3d::upload::keys(&pool, &[id]).await;
     let make_photos = crate::makes::keys(&pool, id).await;
     if let Err(e) = sqlx::query("DELETE FROM mf_designs WHERE id = $1 AND account_id = $2")
         .bind(id)
@@ -714,6 +722,7 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
     if let Some(storage) = &state.storage {
         let all = std::iter::once(d.file_key)
             .chain(other_files)
+            .chain(model_files)
             .chain(make_photos)
             .chain(keys.into_iter().flat_map(|(a, b)| [a, b]));
         for key in all {

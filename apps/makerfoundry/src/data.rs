@@ -195,6 +195,9 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
     let mut keys: Vec<String> = sqlx::query_scalar(
         "SELECT file_key FROM mf_designs WHERE id = ANY($1)
          UNION ALL SELECT file_key FROM mf_design_files WHERE design_id = ANY($1)
+         UNION ALL SELECT file_key FROM mf_model_files WHERE design_id = ANY($1)
+         UNION ALL SELECT thumb_key FROM mf_model_files WHERE design_id = ANY($1) AND thumb_key IS NOT NULL
+         UNION ALL SELECT unnest(view_keys) FROM mf_model_files WHERE design_id = ANY($1)
          UNION ALL SELECT photo_key FROM mf_design_photos WHERE design_id = ANY($1)
          UNION ALL SELECT thumb_key FROM mf_design_photos WHERE design_id = ANY($1)
          UNION ALL SELECT photo_key FROM mf_makes WHERE design_id = ANY($1) OR account_id = $2

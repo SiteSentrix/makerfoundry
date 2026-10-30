@@ -194,6 +194,16 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   side and top views (each slightly turned so faces shade apart); at most 300,000 triangles drawn
   (an even sample beyond) and 400 million pixels visited, so any mesh draws in bounded time; a
   3MF's own thumbnail is preferred for the main picture (`render::hero`).
+- **MF-41 model upload, built 2026-10-30** (#9): `/3d/new` (admins until `MF_3D=yes`) takes a
+  model's files and images in one upload (`model3d/upload.rs`): 100 MB a file, 300 MB, 30 files and
+  12 images a model, 2,000 models an account, 100 new models a day; at least one STL, 3MF or OBJ.
+  Each file is read and checked off the request threads, its main picture (a 3MF's own, or drawn)
+  and three views drawn, the images cleaned; all stored and noted as one draft (`mf_model_files`,
+  migration 0023), or nothing kept if any part is refused. The route has its own body cap and a
+  5-minute time limit. The maker's draft page lists each file with its picture, views, size,
+  triangles and what a 3MF's rebuild left out; deleting the draft (or the account) deletes every
+  stored file. (The whole upload is held in memory while it's read: streaming it to storage is a
+  later improvement if the server's memory needs it.)
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

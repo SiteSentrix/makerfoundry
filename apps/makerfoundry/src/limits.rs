@@ -51,6 +51,10 @@ pub const PROOF_REPLY: Rule = rule("proof-reply", 30, 60);
 /// Founding-creator applications (and changes to a waiting one) by one account an hour.
 pub const FOUNDING: Rule = rule("founding", 10, 60);
 
+/// 3D models (or new versions) added by one account a day (MF-41; the owner's decision,
+/// 2026-10-30).
+pub const MODEL_UPLOAD: Rule = rule("model-upload", 100, 24 * 60);
+
 /// The most designs one account may keep.
 pub const MAX_DESIGNS: i64 = 500;
 
@@ -89,7 +93,7 @@ impl Limits {
         if hits.len() > 100_000 {
             hits.retain(|(name, _), times| {
                 let per = match *name {
-                    "upload" => UPLOAD.per,
+                    "upload" | "model-upload" => UPLOAD.per,
                     _ => Duration::from_secs(3600),
                 };
                 times.back().is_some_and(|t| now.duration_since(*t) < per)

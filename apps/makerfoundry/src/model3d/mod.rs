@@ -7,6 +7,7 @@ pub mod obj;
 pub mod render;
 pub mod stl;
 pub mod threemf;
+pub mod upload;
 pub mod zip;
 
 use axum::extract::State;

@@ -76,6 +76,8 @@ const UPLOAD_LIMIT_BYTES: usize = laser::MAX_FILE_BYTES + 64 * 1024;
 
 /// A request that takes longer than this is answered with 408.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// The same for a 3D model's upload: up to 300 MB to receive, read, draw and store.
+const MODEL_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Scripts, frames, plug-ins and other origins are off; pages use only our own stylesheet. Forms
 /// post only here, and may be sent on to Stripe's checkout and set-up pages (browsers check
@@ -203,6 +205,7 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/orders/{order}/refund", post(selling::refund))
         .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
         .route("/3d", get(model3d::landing))
+        .route("/3d/{id}/files/{file}/{view}", get(model3d::upload::picture))
         .route("/founding", get(founding::page).post(founding::apply))
         .route("/admin/founding", get(founding::admin))
         .route("/admin/founding/{account}/{action}", post(founding::decide))
@@ -241,16 +244,26 @@ pub fn app(state: AppState) -> Router {
         .route("/api/v1/designs/{id}/file/{name}", get(api::design_file))
         .layer(DefaultBodyLimit::max(api::API_LIMIT_BYTES))
         .layer(RequestBodyLimitLayer::new(api::API_LIMIT_BYTES));
+    // 3D models (MF-41) are larger and take longer to read and draw: their own cap and time
+    let models = Router::new()
+        .route("/3d/new", get(model3d::upload::new_page).post(model3d::upload::create))
+        .layer(DefaultBodyLimit::max(model3d::upload::BODY_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(model3d::upload::BODY_LIMIT_BYTES))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            MODEL_UPLOAD_TIMEOUT,
+        ));
     pages
         .merge(uploads)
         .merge(api)
         .merge(new_designs)
         .merge(webhooks)
-        .with_state(state)
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,
         ))
+        .merge(models)
+        .with_state(state)
         .layer(header_layer(header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY))
         .layer(header_layer(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(header_layer(header::REFERRER_POLICY, "strict-origin-when-cross-origin"))

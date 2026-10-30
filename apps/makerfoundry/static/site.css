@@ -122,6 +122,13 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 }
 .cards .thumb img { width: 100%; height: 100%; object-fit: cover; }
 .photos { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); margin: 0 0 1.5rem; max-width: 40rem; }
+.model-files { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: .75rem; max-width: 48rem; }
+.model-files li { display: flex; gap: 1rem; align-items: flex-start; border: 1px solid var(--line); border-radius: .5rem; padding: .75rem; }
+.model-files li > img, .model-files .file-kind { width: 6rem; height: 6rem; flex: none; border-radius: .375rem; background: var(--card); }
+.model-files .file-kind { display: grid; place-items: center; font-weight: 600; border: 1px dashed var(--line); }
+.model-files .about { display: grid; gap: .25rem; min-width: 0; overflow-wrap: anywhere; }
+.model-files .views { display: flex; gap: .375rem; }
+.model-files .views img { width: 3.5rem; height: 3.5rem; border: 1px solid var(--line); border-radius: .25rem; }
 .photos img { width: 100%; height: auto; border-radius: .5rem; border: 1px solid var(--line); display: block; }
 a.button {
   display: inline-block; font-weight: 600; text-decoration: none;
