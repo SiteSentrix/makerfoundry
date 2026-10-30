@@ -267,10 +267,11 @@ his MakerWorld models with the bulk import.
 
 ## 11. Cross-sell
 
-- **Get this printed:** on a model whose licence allows printing for sale (not NonCommercial,
-  unless the seller is the creator) and whose creator ticks "allow print orders", a button to
-  MakerFoundry's ordering (approval links, MF-25, and the StitchShop order flow, issue #2). Who
-  fulfils the prints is the owner's call (Decisions); until then the button can be off.
+- **Get this printed: off for now** (the owner's decision, 2026-10-30). Nobody fulfils print
+  orders yet, so no button is built. When the owner decides who prints and where it goes, it
+  will be a button on a model whose licence allows printing for sale (not NonCommercial, unless
+  the seller is the creator) and whose creator ticks "allow print orders", leading to
+  MakerFoundry's ordering (approval links, MF-25, and the StitchShop order flow, issue #2).
 - **Also by this maker:** links to the same maker's embroidery (StitchFoundry) and laser
   (LightFoundry/LaserFoundry) designs.
 
@@ -307,7 +308,7 @@ imports, likes, comments and reports.
 | MF-54 | Founding creators: invite links and the badge | [#22](https://github.com/SiteSentrix/makerfoundry/issues/22) | MF-35 |
 | MF-55 | Showcase consent on uploads, makes and imports; withdrawing from settings | [#23](https://github.com/SiteSentrix/makerfoundry/issues/23) | MF-42, MF-48 |
 | MF-56 | Admin Showcase queue: list, draft caption, posted, takedown flags | [#24](https://github.com/SiteSentrix/makerfoundry/issues/24) | MF-55 |
-| MF-57 | Cross-sell: Get this printed (licence-gated) and Also by this maker | [#25](https://github.com/SiteSentrix/makerfoundry/issues/25) | MF-42 |
+| MF-57 | Cross-sell: Also by this maker (Get this printed is off for now) | [#25](https://github.com/SiteSentrix/makerfoundry/issues/25) | MF-42 |
 | MF-58 | The 3D hub's Terms and Privacy wording, for the owner's approval | [#26](https://github.com/SiteSentrix/makerfoundry/issues/26) | MF-47, MF-55 |
 | MF-59 | Launch: the checks, then `MF_3D=yes` | [#27](https://github.com/SiteSentrix/makerfoundry/issues/27) | all of the above |
 
@@ -332,7 +333,8 @@ PrusaSlicer 3MF, broken 3MF, oversized uploads, and draft to publish.
    planned), or also a check such as a code placed on their profile there (MakerFoundry would then
    fetch that one page, which those sites' terms may not allow).
 7. **Thingiverse import (P2):** registering an app and confirming its API terms allow it.
-8. **Get this printed:** who prints and fulfils orders, and the button's destination.
+8. ~~**Get this printed**~~: **decided 2026-10-30: off for now.** Who prints and where the
+   button goes are decided later.
 9. **The showcase:** the consent wording, the caption template, and the Terms and Privacy text.
 10. **Founding creators:** how many invites, and sample 3MF files from Nick (Bambu, with AMS
     colours) and others (PrusaSlicer, Cura), to build the parsers against real files.
