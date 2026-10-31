@@ -278,6 +278,7 @@ pub fn app(state: AppState) -> Router {
             post(model3d::showcase::post_now),
         )
         .route("/admin/overview", get(overview::overview))
+        .route("/admin/apps", get(overview::apps))
         .route("/admin/reports/{rid}/takedown", post(moderation::takedown))
         .route("/admin/reports/{rid}/dismiss", post(moderation::dismiss))
         .route("/admin/reports/{rid}/restore", post(moderation::restore))
@@ -439,11 +440,9 @@ async fn stylesheet() -> Response {
         .into_response()
 }
 
-/// The mark as a stand-alone icon, in the accent colour (a favicon can't inherit the page's).
+/// The mark as a stand-alone icon (its colours are its own, so it needs only the SVG namespace).
 async fn favicon() -> Response {
-    let icon = MARK_SVG
-        .replace(r#"class="mark" "#, r#"xmlns="http://www.w3.org/2000/svg" "#)
-        .replace("currentColor", "#b4462a");
+    let icon = MARK_SVG.replace(r#"class="mark" "#, r#"xmlns="http://www.w3.org/2000/svg" "#);
     (
         [
             (header::CONTENT_TYPE, "image/svg+xml"),
@@ -457,21 +456,47 @@ async fn favicon() -> Response {
 async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String> {
     let signed_in = accounts::current_user(&state, &headers).await.is_some();
     let newest = listings::newest(&state).await;
+    // Founding creators (MF-54): before the launch the home page leads with the invitation; after
+    // it, a third button while spots are left.
+    let left = founding::spots_left(&state).await;
     let call = if state.launched {
         let share = if signed_in { "/designs/new" } else { "/signup" };
+        let founding = if left.is_some_and(|n| n > 0) {
+            r#" <a class="button secondary" href="/founding">Become a founding creator</a>"#
+        } else {
+            ""
+        };
         format!(
-            r#"<p class="actions"><a class="button" href="/browse">Browse designs</a> <a class="button secondary" href="{share}">Share your designs</a></p>"#
+            r#"<p class="actions"><a class="button" href="/browse">Browse designs</a> <a class="button secondary" href="{share}">Share your designs</a>{founding}</p>"#
         )
     } else {
-        r#"<p class="soon">Coming soon. MakerFoundry is being built now.</p>"#.to_string()
+        let spots = match left {
+            Some(0) => format!(
+                "All {} founding spots are taken; MakerFoundry opens to everyone soon.",
+                founding::SPOTS
+            ),
+            Some(1) => format!("1 of {} spots left.", founding::SPOTS),
+            Some(n) => format!("{n} of {} spots left.", founding::SPOTS),
+            None => String::new(),
+        };
+        format!(
+            r#"<div class="invite">
+  <h2>Become a founding creator</h2>
+  <p>MakerFoundry opens soon. We're looking for our first {} creators: makers of embroidery designs, laser-cut files and 3D-print models who'll share their work here first. Founding creators get a numbered badge on their page and designs, for good, and early access to MakerFoundry 3D.</p>
+  <p class="actions"><a class="button" href="/founding">Apply to be a founding creator</a> <span class="muted">{spots}</span></p>
+</div>"#,
+            founding::SPOTS
+        )
     };
+    // 3D models open with MakerFoundry 3D (MF-35, `MF_3D`); until then the card says they're coming.
+    let three_d_soon = if state.three_d { "" } else { " 3D models open soon." };
     Html(page(
         "MakerFoundry",
         &format!(
             r#"<section class="hero">
   <h1>Designs for your machines</h1>
-  <p class="lead">Machine-embroidery designs and laser-cut files, shared free or sold by the
-  makers who made them.</p>
+  <p class="lead">Machine-embroidery designs, laser-cut files and 3D-print models, shared free or
+  sold by the makers who made them.</p>
   {call}
 </section>
 <section class="kinds">
@@ -484,6 +509,11 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
     <h2>Laser cutting</h2>
     <p>SVG, DXF and PDF files for cutting and engraving, drawn from their paths with their
     size.</p>
+  </article>
+  <article>
+    <h2>3D printing</h2>
+    <p>STL, 3MF, OBJ and STEP models, shown in a 3D viewer you can turn before you
+    download.{three_d_soon}</p>
   </article>
   <article>
     <h2>For makers</h2>

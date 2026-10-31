@@ -2524,7 +2524,12 @@ async fn before_the_launch_the_legal_pages_are_for_admins_only() {
     assert_eq!(s.scalar("SELECT count(*) FROM mf_agreements").await, 0);
     assert_eq!(s.get("/robots.txt", None).await.body, "User-agent: *\nDisallow: /\n");
     assert_eq!(s.get("/sitemap.xml", None).await.status, StatusCode::NOT_FOUND);
-    assert!(s.get("/", None).await.body.contains("Coming soon"));
+    let home = s.get("/", None).await.body;
+    assert!(
+        home.contains("Become a founding creator") && home.contains(r#"href="/founding""#),
+        "{home}"
+    );
+    assert!(home.contains("100 of 100 spots left."), "{home}");
 }
 
 #[tokio::test]
@@ -2578,7 +2583,9 @@ async fn once_launched_people_agree_to_the_terms_and_the_site_is_found() {
     // the home page invites people in; search engines are welcome, with a map
     let home = s.get("/", None).await.body;
     assert!(
-        home.contains("Browse designs") && !home.contains("Coming soon"),
+        home.contains("Browse designs")
+            && !home.contains("opens soon")
+            && home.contains(r#"href="/founding">Become a founding creator"#),
         "{home}"
     );
     let robots = s.get("/robots.txt", None).await.body;
@@ -4117,7 +4124,11 @@ async fn a_design_for_sale_isnt_sent_to_stitchfoundry() {
     );
     // its maker opens it through a link made for them (see the buyers' test)
     let page = s.get(&format!("/d/{id}/fox-patch"), Some(&seller)).await;
-    assert!(page.body.contains(&format!(r#"href="/d/{id}/open""#)), "{}", page.body);
+    assert!(
+        page.body.contains(&format!(r#"href="/d/{id}/open?app=stitchfoundry""#)),
+        "{}",
+        page.body
+    );
     assert!(
         !s.get(&format!("/d/{id}/fox-patch"), None)
             .await
@@ -4165,7 +4176,7 @@ async fn a_paid_design_opens_in_stitchfoundry_for_its_buyers() {
         s.get(&format!("/d/{id}"), Some(&bea))
             .await
             .body
-            .contains(&format!(r#"href="/d/{id}/open""#))
+            .contains(&format!(r#"href="/d/{id}/open?app=stitchfoundry""#))
     );
     let r = s.get(&format!("/d/{id}/open"), Some(&bea)).await;
     let prefix = format!(
@@ -4309,6 +4320,131 @@ async fn laser_files_are_ready_for_laserfoundrys_web_app() {
         "LaserFoundry doesn't import PDF: {}",
         r.body
     );
+}
+
+/// MakerFoundry's side of ScreenFoundry (MF-67): an SVG it publishes lands as a laser draft with a
+/// title, and a published SVG's file is served for its web app under a plain name, whatever the
+/// title; no button shows until ScreenFoundry's web app opens links.
+#[tokio::test]
+async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
+    use base64::Engine;
+    // (Sol, the first account, 1000, is an admin here: for the list of designs from apps)
+    let Some(s) = site_with(vec![1000]).await else { return };
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let cookie = s.sign_up("sol%40example.com").await;
+    s.post("/account/maker", "name=Sol&handle=sol", Some(&cookie)).await;
+    s.fake.lock().unwrap().sessions.insert("sfs_screen".into(), 1000);
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="40mm" viewBox="0 0 50 40"><circle cx="25" cy="20" r="15" fill="black"/></svg>"#;
+    let r = s
+        .api(
+            "POST",
+            "/api/v1/designs",
+            Some("sfs_screen"),
+            None,
+            &json!({"file_name": "Tiger_shirt-front.svg", "file": b64.encode(svg), "app": "ScreenFoundry 0.1.0"}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    let id = v["id"].as_i64().unwrap();
+    assert_eq!((v["kind"].as_str(), v["format"].as_str()), (Some("laser"), Some("SVG")));
+    let (title, status): (String, String) = sqlx::query_as("SELECT title, status FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!((title.as_str(), status.as_str()), ("Tiger shirt front", "draft"));
+    // it keeps the app's name, without the version (MF-68), for the admins' list
+    let app: Option<String> = sqlx::query_scalar("SELECT from_app FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(app.as_deref(), Some("ScreenFoundry"));
+    let list = s.get("/admin/apps", Some(&cookie)).await.body;
+    assert!(
+        list.contains(r#"<a href="/admin/apps?app=ScreenFoundry">ScreenFoundry</a>"#)
+            && list.contains("1 sent, 0 published"),
+        "{list}"
+    );
+    let one = s.get("/admin/apps?app=ScreenFoundry", Some(&cookie)).await.body;
+    assert!(
+        one.contains("Latest from ScreenFoundry") && one.contains("Tiger shirt front"),
+        "{one}"
+    );
+    assert!(
+        !s.get("/admin/apps?app=StitchFoundry", Some(&cookie))
+            .await
+            .body
+            .contains("Tiger shirt front")
+    );
+    s.dump_page("admin-apps", &one, Some(&cookie)).await;
+    // nobody else sees the list
+    let other = s.sign_up("oz%40example.com").await;
+    assert_eq!(s.get("/admin/apps", Some(&other)).await.status, StatusCode::NOT_FOUND);
+    assert!(
+        s.get("/account/data.json", Some(&cookie))
+            .await
+            .body
+            .contains(r#""from_app": "ScreenFoundry""#)
+    );
+
+    // published with a title that leaves no slug: the file goes by design-<id>.svg
+    s.post(
+        &format!("/designs/{id}/edit"),
+        "title=%E6%97%A5%E6%9C%AC%E3%81%AE%E7%AE%B1&licence=personal&price=0",
+        Some(&cookie),
+    )
+    .await;
+    s.post(&format!("/designs/{id}/publish"), "confirm=yes", Some(&cookie))
+        .await;
+    let r = s
+        .api(
+            "GET",
+            &format!("/api/v1/designs/{id}/file/design-{id}.svg"),
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert!(r.body.contains("<circle"));
+    assert_eq!(
+        r.headers[header::CONTENT_DISPOSITION],
+        format!(r#"attachment; filename="design-{id}.svg""#).as_str()
+    );
+    assert_eq!(r.headers[header::ACCESS_CONTROL_EXPOSE_HEADERS], "content-disposition");
+    assert_eq!(
+        r.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "https://stitchfoundry.test"
+    );
+    // never shown as a page from our site: a download, not an image
+    assert_eq!(r.headers[header::CONTENT_TYPE], "application/octet-stream");
+    assert!(r.headers.get(header::LOCATION).is_none());
+    // a missing design: MakerFoundry's own sentence, as JSON
+    let r = s
+        .api(
+            "GET",
+            "/api/v1/designs/999999/file/x.svg",
+            None,
+            Some("https://stitchfoundry.test"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["error"]["message"], "That design isn't on MakerFoundry.");
+    // the button follows the switch
+    let page = s.get(&format!("/d/{id}"), None).await.body;
+    if makerfoundry::api::SCREENFOUNDRY_OPENS_LINKS {
+        let want = format!(
+            "https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
+        );
+        assert!(page.contains(&want), "{page}");
+        s.dump_page("svg-open-buttons", &page, None).await;
+    } else {
+        assert!(!page.contains("Open in ScreenFoundry"), "{page}");
+    }
 }
 
 // ---------------------------------------------------------------- link previews

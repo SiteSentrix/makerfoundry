@@ -1,12 +1,12 @@
 # Terms of Service: MakerFoundry
 
-Effective date: October 22, 2026
+Effective date: November 2, 2026
 
 ## 1. Who we are and what these terms cover
 
 These terms are an agreement between you and Bruce Wattendorf, doing business as SiteSentrix
 ("SiteSentrix", "we", "us"). They cover MakerFoundry (makerfoundry.app): a marketplace where makers
-share and sell machine-embroidery designs and laser-cut files. By browsing, downloading, making an
+share and sell machine-embroidery designs, laser-cut files and 3D-print models. By browsing, downloading, making an
 account or publishing a design, you agree to them.
 
 - **Browsing and free downloads** need no account.
@@ -48,6 +48,9 @@ on scrap before using a design on something that matters.
 
 ## 4. Publishing designs
 
+In these terms, a "design" includes a **3D model**: the files to 3D-print something (STL, 3MF,
+OBJ), its CAD sources (STEP) and notes, with its images.
+
 When you publish a design, you confirm that:
 
 - you made it, or have the right to share it under the licence you choose;
@@ -70,7 +73,52 @@ it's your own photo of your own work. It stays yours, and you give us the same p
 store it, make smaller copies and show it on the design's page and in links to it. You can take
 your make down at any time; the design's maker and our admins may also take it down.
 
-## 5. Rules for everyone
+## 5. 3D models
+
+- **Licences.** You choose a licence for each model: MakerFoundry's own (Personal use, Small
+  business, Commercial), a Creative Commons licence, CC0, a GNU, BSD, Apache, MIT or CERN
+  Open Hardware licence, or All rights reserved. The open licences are their authors' texts,
+  linked from your model's page; they say what others may do with it, and we don't change them.
+- **Remixes.** If your model is made from someone else's, name it as a parent, and choose a
+  licence its licence allows (for example, a remix of a CC BY-SA model must itself be CC BY-SA;
+  a model whose licence forbids adaptations, or keeps all rights, can't be remixed and shared
+  without its maker's permission). MakerFoundry checks the licences you choose against the
+  rules we publish, to help, but **you** are responsible for following the licences of the
+  models you remix. You may always remix your own models.
+- **Models you've shared elsewhere.** If you import models you've published on another site
+  (MakerWorld, Printables, Thingiverse or anywhere), you confirm you made them or have the right
+  to share them here, and that sharing them here doesn't break that site's terms or any licence
+  you gave there. "Originally published on" is what you tell us; we link to it and don't check
+  it. We may remove models whose ownership is disputed (§ 8, Reporting and removing designs).
+- **Your files are rebuilt.** We read every file you upload to check it, measure it and draw
+  its pictures and 3D view. A 3MF file is saved again with only what's needed to print it: its
+  model, pictures and slicer settings. Sliced G-code and anything else in it are left out,
+  because printers run G-code directly. STEP files and notes are offered as downloads only.
+- **Print settings.** The print profile shown on your model (printer, nozzle, layer height,
+  infill, supports, filaments and the like) is read from your 3MF's settings. It's what your
+  file says, shown to help others; we don't promise it prints well on any printer.
+- **Likes.** Signed-in members can like a published model. The number of likes is public; who
+  liked it isn't shown.
+- **Founding creators** may use MakerFoundry 3D before it opens to everyone.
+
+## 6. Featuring your project on our social pages
+
+When you upload a 3D model, post a make of one, or publish models you've imported, you can tick
+**"Feature my project on MakerFoundry's social pages (Facebook, Instagram, YouTube), credited to
+my maker name."** It's unticked unless you tick it, and you can use MakerFoundry the same either
+way.
+
+If you tick it, you give us a non-exclusive, royalty-free permission to post the project's
+images (cropped or resized to fit), its title and a link to it on MakerFoundry's own pages on
+those sites, with a short caption we write that credits you by your **maker name** (never your
+email or anything else about you). We post by hand and choose what to post; ticking the box
+doesn't promise a post.
+
+You can **withdraw** at any time from Account › Featuring your projects. Withdrawing stops new
+posts at once, and we take down posts already made from it within 7 days. Deleting your data
+withdraws everything. Posts on those sites are also governed by their own terms.
+
+## 7. Rules for everyone
 
 Don't use MakerFoundry to:
 
@@ -82,13 +130,18 @@ Don't use MakerFoundry to:
 - spam, scrape the site in bulk, get around rate limits, or make accounts to get around a ban;
 - break into, overload or disrupt the site, or upload files made to harm it or its users.
 
-## 6. Reporting and removing designs
+## 8. Reporting and removing designs
 
 Anyone can report a design with **Report this design** on its page. We review reports and may
 unpublish or remove a design, or limit or close an account, when we believe it breaks these
 terms. Where reasonable, we tell the maker why.
 
-## 7. Copyright (DMCA)
+Reports, copyright notices and counter-notices work the same way for 3D models. While a model
+is taken down, its page, files, pictures and 3D view are hidden, and posts we made of it on our
+social pages are taken down. Takedowns count towards repeat infringement whatever kind of
+design they were.
+
+## 9. Copyright (DMCA)
 
 We respond to notices of copyright infringement under the US Digital Millennium Copyright Act
 (17 U.S.C. § 512). How to send a notice, and a maker's right to send a counter-notice, are
@@ -98,7 +151,7 @@ described at makerfoundry.app/dmca, which also gives our designated agent's cont
 Knowingly misrepresenting that something infringes, or that it was removed by mistake, can make
 you liable for damages (17 U.S.C. § 512(f)).
 
-## 8. Buying designs
+## 10. Buying designs
 
 Paid designs are sold by their makers. MakerFoundry takes
 payment for the maker through Stripe and passes it on, less our fee. Your card details go to
@@ -110,7 +163,7 @@ file is broken, or isn't what the listing described, tell us within 30 days and 
 or the maker will fix it. Where the law gives you more
 rights, they apply.
 
-## 9. Proofs for your customers
+## 11. Proofs for your customers
 
 Any MakerFoundry account can send a **proof**: a design file and photos, sent to a customer
 through a private link, for them to see, comment on, and approve or ask for changes before you
@@ -118,7 +171,7 @@ stitch or cut it.
 
 - **What you send.** You confirm you have the right to use the design and the photos in it, for
   example because it's your customer's own logo and they asked you to. The rules for everyone
-  (§ 5) apply. Proofs are never public and aren't listings: the licences in § 3 don't apply to
+  (§ 7) apply. Proofs are never public and aren't listings: the licences in § 3 don't apply to
   them, and the customer can't download the design file.
 - **The link.** Anyone with a proof's link can see it and answer it, so share it as carefully as
   the design itself. You can make a new link (the old one stops working), turn it off, or delete
@@ -132,7 +185,7 @@ stitch or cut it.
 - **If a shop sent you a proof.** You don't need an account. What you write on it goes to the
   shop that sent it; questions about the design or your order go to them.
 
-## 10. Disclaimers
+## 12. Disclaimers
 
 MakerFoundry is provided "as is" and "as available". Designs are made by their makers, not by us.
 To the extent the law allows, we make no promises that the site will be uninterrupted or
@@ -140,7 +193,7 @@ error-free, or that any design will be accurate, safe, legal to use for your pur
 your machine. We are not responsible for damaged fabric, materials, machines or lasers, or for
 time spent, as a result of using a design from MakerFoundry.
 
-## 11. Limitation of liability and indemnity
+## 13. Limitation of liability and indemnity
 
 To the extent the law allows:
 
@@ -157,14 +210,14 @@ a design against its licence, or your breaking these terms, you agree to cover o
 costs of that claim, including legal fees. We'll tell you promptly about any such claim, and you
 may help defend it. This doesn't apply to claims caused by our own fault.
 
-## 12. Ending things
+## 14. Ending things
 
 You can unpublish or delete your designs at any time, and close your Foundry Account as
 StitchFoundry's Terms describe. We may limit or close an account that breaks these terms, after
 warning you where reasonable. If we stop running MakerFoundry, we'll give at least 30 days'
 notice on the site and by email.
 
-## 13. Changes, governing law and contact
+## 15. Changes, governing law and contact
 
 **Changes.** We may update these terms. For important changes we'll tell you on the site or by
 email at least 14 days before they apply. If you keep using MakerFoundry after that, the new terms

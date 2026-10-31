@@ -46,18 +46,25 @@ main { flex: 1; }
   display: inline-flex; align-items: center; gap: .5rem;
   color: var(--fg); text-decoration: none; font-weight: 700; font-size: 1.25rem;
 }
-.brand .mark { color: var(--accent); }
+.brand .mark { flex: none; border-radius: 7px; }
 .hero { padding: 3rem 0 2rem; }
 .hero h1 { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.1; margin: 0 0 1rem; }
 .lead { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 0 1rem; }
+.invite {
+  margin: 1.25rem 0 0; padding: 1.25rem 1.4rem; max-width: 46rem;
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: .75rem;
+}
+.invite h2 { margin: 0 0 .4rem; font-size: 1.35rem; }
+.invite p { margin: 0 0 .8rem; }
+.invite .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; margin: 0; }
 .soon {
   display: inline-block; margin: .5rem 0 0; padding: .35rem .8rem;
   border: 1px solid var(--line); border-radius: .75rem; background: var(--card); font-size: .95rem;
 }
-.kinds {
-  display: grid; gap: 1rem; padding-bottom: 3rem;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-}
+/* Four cards: one column on a phone, two by two on a tablet, all four in a row on a wide screen. */
+.kinds { display: grid; gap: 1rem; padding-bottom: 3rem; grid-template-columns: 1fr; }
+@media (min-width: 40rem) { .kinds { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 62rem) { .kinds { grid-template-columns: repeat(4, 1fr); } }
 .kinds article {
   background: var(--card); border: 1px solid var(--line); border-radius: .75rem; padding: 1.25rem;
 }
@@ -316,3 +323,11 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .proof figcaption { margin-top: 0.4rem; }
 .cancel { margin: 1.5rem 0; }
 .cancel summary { cursor: pointer; }
+
+/* Open in … buttons (MF-67): several on one row, spaced, wrapping on a phone */
+.open-in { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+
+/* admin lists (MF-68): scroll sideways on a phone rather than overflow */
+.admin-table { overflow-x: auto; margin: 0 0 1rem; }
+.admin-table table { border-collapse: collapse; min-width: 36rem; font-size: .92rem; }
+.admin-table th, .admin-table td { text-align: left; padding: .35rem .6rem .35rem 0; border-bottom: 1px solid var(--line); }

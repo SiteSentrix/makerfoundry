@@ -143,6 +143,10 @@ Nobody may resell or share the files themselves.
 | MF-32 | Custom domains | a Top-tier shop's own domain through Cloudflare for SaaS (100 hostnames included, then $0.10 each). **Planned**: needs MF-29 |
 | MF-33 | Live camera preview | the design on the real garment through the phone camera. **Planned**: needs MF-26 and the owner's agreement to the JavaScript it needs |
 | MF-34 | Report a bug, suggest a feature | at the foot of every page, two buttons open an email to the owner with "[MakerFoundry] Bug report: " or "[MakerFoundry] Feature request: " as the subject and a short template. **Done** (2026-10-30) |
+| MF-60 | A new mark | the three crafts on one red tile (needle and thread, laser head and beam, print nozzle over printed layers) replaces the hoop with a diagonal run of stitches, which read as a "no" sign; header, favicon and the Facebook page. **Done** (2026-10-31) |
+| MF-61 | 3D printing on the home page | the lead, the page description and a fourth card name 3D-print models (STL, 3MF, OBJ, STEP, in a viewer you can turn); while MakerFoundry 3D is off the card says the models open soon. The cards sit one, two or four to a row. **Done** (2026-10-31) |
+| MF-62 | The home page leads with founding creators | before the launch, an invitation to become one of the first 100 founding creators (the badge, early access to MakerFoundry 3D, the spots left) with a button to `/founding`, in place of "Coming soon"; after the launch, a third button beside Browse and Share while spots are left. **Done** (2026-10-31) |
+| MF-63 | Facebook link in the footer | every page's footer links to facebook.com/makerfoundryapp beside Terms, Privacy, Seller Terms and Copyright. **Done** (2026-10-31) |
 | MF-54 | Founding creators | MakerFoundry's first 100 creators, with a numbered badge. **Built 2026-10-30** (the owner's decisions: 100 spots, makers apply and an admin approves, a numbered badge): `/founding` explains it and shows the spots left (it works before the launch, with a link preview, for the Facebook post); signed-in makers apply (the name to know them by, an optional link to their work, what they make), one application an account; admins approve or decline at `/admin/founding`, approving giving the lowest free number up to 100 (never more, approvals one at a time); "Founding creator #7" on their maker page, their designs' pages and their account page; removing a badge frees its number; applications in the data download and deleted with the data (`founding.rs`). Early access to MakerFoundry 3D comes with the 3D hub (#22) |
 
 ## The 3D printing hub (MF-35 onwards, planned 2026-10-30)
@@ -475,6 +479,22 @@ StitchShop's side is stitchbench#74).
   refund reverses it, takes the price back from the shop and gives the shop the 10% and the tax
   it paid over, so the shop is still out only the card fee. Confirm the tax code and
   registrations with an accountant before the first registration.
+
+## ScreenFoundry (MF-67, 2026-10-31)
+- **MF-67 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
+  button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`, off until the owner says
+  ScreenFoundry's web app opens links), linking to
+  `https://stitchwright.github.io/screenfoundry/?open=<the file's address>`; paid designs through
+  `/d/<id>/open?app=screenfoundry`. A design's file name in its links and download is its title's
+  slug or `design-<id>`, so every address meets ScreenFoundry's rules (`docs/api.md`, tested with
+  random titles). A draft from an app is titled after its file. Several Open in buttons share one
+  row. Proposed, not built: a "screen printing" kind for films (see the ScreenFoundry note in
+  `docs/api.md`).
+- **MF-68 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
+  through the API keeps the app's name without its version (`mf_designs.from_app`,
+  `migrations/0043_design_app.sql`); admins see how many each app sent and list them at
+  `/admin/apps` (linked from the overview); it's in the maker's data download. Uploads on the site
+  have none.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

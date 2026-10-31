@@ -75,6 +75,31 @@ async fn home_page_is_html_and_links_the_stylesheet() {
 }
 
 #[tokio::test]
+async fn home_page_names_all_three_crafts() {
+    let (_, _, body) = get("/").await;
+    assert!(body.contains("<h2>Embroidery</h2>") && body.contains("<h2>Laser cutting</h2>"));
+    assert!(body.contains("<h2>3D printing</h2>"), "{body}");
+    assert!(body.contains("STL, 3MF, OBJ and STEP"));
+    // Without MakerFoundry 3D switched on, the card says the models are still coming.
+    assert!(body.contains("download. 3D models open soon.</p>"), "{body}");
+    assert!(
+        body.contains("3D-print models"),
+        "the lead and the description name them too"
+    );
+}
+
+#[tokio::test]
+async fn before_the_launch_the_home_page_leads_with_founding_creators() {
+    let (_, _, body) = get("/").await;
+    assert!(body.contains("<h2>Become a founding creator</h2>"), "{body}");
+    assert!(body.contains(r#"<a class="button" href="/founding">Apply to be a founding creator</a>"#));
+    assert!(
+        !body.contains("Coming soon. MakerFoundry is being built now."),
+        "the old notice is gone"
+    );
+}
+
+#[tokio::test]
 async fn stylesheet_is_css() {
     let (status, headers, body) = get("/static/site.css").await;
     assert_eq!(status, StatusCode::OK);
@@ -89,6 +114,14 @@ async fn favicon_is_a_standalone_svg() {
     assert_eq!(headers[header::CONTENT_TYPE], "image/svg+xml");
     assert!(body.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
     assert!(!body.contains("currentColor"));
+    assert!(
+        !body.contains("class=\"mark\""),
+        "the page's class doesn't belong in a stand-alone icon"
+    );
+    assert!(
+        body.contains("<rect width=\"64\" height=\"64\""),
+        "the mark's own tile, so it shows on any tab colour"
+    );
 }
 
 #[tokio::test]

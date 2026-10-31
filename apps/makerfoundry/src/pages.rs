@@ -1,12 +1,20 @@
 //! The shared page layout and HTML helpers.
 
-/// The site's mark, drawn in code: an embroidery hoop crossed by a run of stitches. Also served as
-/// `/favicon.svg`.
-pub const MARK_SVG: &str = r#"<svg class="mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true">
-<circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="3"/>
-<circle cx="16" cy="16" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-<path d="M6 22 L26 10" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2.5" stroke-linecap="round"/>
-</svg>"#;
+/// The site's mark, drawn in code: the three crafts the site serves on one tile. A needle and
+/// thread (embroidery), a laser head and its beam (laser cutting), and a print nozzle over printed
+/// layers (3D printing). Also served as `/favicon.svg`.
+pub const MARK_SVG: &str = r##"<svg class="mark" viewBox="0 0 64 64" width="32" height="32" aria-hidden="true">
+<rect width="64" height="64" rx="14" fill="#b4462a"/>
+<g transform="translate(32 31) scale(0.86) translate(-32 -32)">
+<path d="M11 46 L19 13" stroke="#fbfaf7" stroke-width="3.6" stroke-linecap="round"/>
+<ellipse cx="19.6" cy="11" rx="2" ry="3.2" transform="rotate(14 19.6 11)" fill="none" stroke="#fbfaf7" stroke-width="1.8"/>
+<path d="M19.6 11 C26 16, 12 24, 16 32 S 22 42, 12 50" fill="none" stroke="#ffd166" stroke-width="2.4" stroke-dasharray="3.4 2.4" stroke-linecap="round"/>
+<rect x="26" y="10" width="13" height="9" rx="2.2" fill="#fbfaf7"/><path d="M29.5 19 H35.5 L34 23 H31 Z" fill="#fbfaf7"/>
+<path d="M32.5 23 V44" stroke="#ffd166" stroke-width="3" stroke-linecap="round"/><circle cx="32.5" cy="46" r="3" fill="#fff3c4"/>
+<rect x="43" y="10" width="13" height="8" rx="2.2" fill="#fbfaf7"/><path d="M46.5 18 H52.5 L49.5 24 Z" fill="#fbfaf7"/>
+<rect x="44" y="43" width="11" height="4" rx="1.2" fill="#fbfaf7"/><rect x="45" y="37.5" width="9" height="4" rx="1.2" fill="#fbfaf7"/><rect x="46" y="32" width="7" height="4" rx="1.2" fill="#fbfaf7"/>
+</g>
+</svg>"##;
 
 /// `text` made safe to put in HTML, in an element or a quoted attribute.
 pub fn escape(text: &str) -> String {
@@ -58,7 +66,7 @@ pub fn summary(text: &str, max: usize) -> String {
 /// [`page`], with a shared link's preview.
 pub fn page_with(title: &str, body: &str, signed_in: bool, preview: Option<&Preview>) -> String {
     let head = match preview {
-        None => r#"<meta name="description" content="Machine-embroidery designs and laser-cut files, shared and sold by makers.">"#.to_string(),
+        None => r#"<meta name="description" content="Machine-embroidery designs, laser-cut files and 3D-print models, shared and sold by makers.">"#.to_string(),
         Some(p) => {
             let image = match p.image {
                 Some(i) => format!(
@@ -101,7 +109,7 @@ pub fn page_with(title: &str, body: &str, signed_in: bool, preview: Option<&Prev
 </main>
 <footer class="bottom"><p>MakerFoundry is made by <a href="https://sitesentrix.com">SiteSentrix</a>,
 the makers of <a href="https://stitchfoundry.app">StitchFoundry</a>.</p>
-<p class="links"><a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/seller-terms">Seller Terms</a> <a href="/dmca">Copyright</a></p>
+<p class="links"><a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/seller-terms">Seller Terms</a> <a href="/dmca">Copyright</a> <a href="https://www.facebook.com/makerfoundryapp" rel="noopener">Facebook</a></p>
 <p class="report">Found a problem, or have an idea? <a class="button secondary" href="mailto:bwattendorf@gmail.com?subject=%5BMakerFoundry%5D%20Bug%20report%3A%20&amp;body=What%20happened%3A%0A%0A%0ASteps%20to%20get%20there%3A%0A1.%20%0A2.%20%0A%0AWhat%20you%20expected%20instead%3A%0A%0A%0AThe%20page%20%28its%20address%29%3A%0A">Report a bug</a> <a class="button secondary" href="mailto:bwattendorf@gmail.com?subject=%5BMakerFoundry%5D%20Feature%20request%3A%20&amp;body=What%20you%20would%20like%20MakerFoundry%20to%20do%3A%0A%0A%0AWhy%20it%20would%20help%20you%3A%0A">Suggest a feature</a></p></footer>
 </body>
 </html>
@@ -134,5 +142,9 @@ mod tests {
             "{html}"
         );
         assert!(html.contains(">Report a bug</a>") && html.contains(">Suggest a feature</a>"));
+        assert!(
+            html.contains(r#"<a href="https://www.facebook.com/makerfoundryapp" rel="noopener">Facebook</a>"#),
+            "{html}"
+        );
     }
 }

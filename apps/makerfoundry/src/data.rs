@@ -71,7 +71,7 @@ pub async fn export(pool: &PgPool, user: &User) -> Result<Value, sqlx::Error> {
         "maker_profile": rows(pool, "SELECT handle, name, bio FROM mf_makers WHERE account_id = $1", a).await?,
         "designs": rows(pool,
             "SELECT d.id, d.kind, d.format, d.file_name, d.title, d.description, d.tags, d.licence, d.price_cents,
-                    d.status, d.material, d.thickness_mm, d.convert, d.downloads, d.created_at, d.published_at,
+                    d.status, d.material, d.thickness_mm, d.convert, d.from_app, d.downloads, d.created_at, d.published_at,
                     (SELECT count(*) FROM mf_design_photos p WHERE p.design_id = d.id) AS photos,
                     (SELECT json_agg(f.format) FROM mf_design_files f WHERE f.design_id = d.id) AS other_formats
              FROM mf_designs d WHERE d.account_id = $1 ORDER BY d.id", a).await?,

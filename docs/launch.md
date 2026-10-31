@@ -32,7 +32,7 @@ pages; published designs stay up.
    Cloudflare's).
 3. **DMCA agent.** Register SiteSentrix at copyright.gov/dmca-directory ($6, valid three years;
    makerfoundry.app as an alternate name), then set `MF_DMCA_AGENT` (lines apart by `|`: name,
-   address, email, phone): `/dmca` shows it, and Terms § 7 points there. The owner chose a soft
+   address, email, phone): `/dmca` shows it, and Terms § 9 points there. The owner chose a soft
    open first (2026-10-22), registering the week after: until then `/dmca` asks for the form, and
    the DMCA's safe harbour (17 U.S.C. § 512(c)(2)) isn't in place, so act on reports promptly.
 4. **Selling** (or launch with free designs only and open selling later):
@@ -72,9 +72,13 @@ disallows `/3d`.
 - 3D search with 100,000 generated models: every filtered page under 6 ms on the test database.
 
 **The owner's steps, in order:**
-1. **Approve the wording** in `docs/legal/3d-draft.md` (issue #26), deciding its three
-   `[OWNER: …]` choices, ideally after a lawyer's read of the remix rules; then it's merged into
-   the Terms and the Privacy Policy as new versions.
+1. ~~**Approve the wording** in `docs/legal/3d-draft.md` (issue #26), deciding its
+   `[OWNER: …]` choices; then it's merged into the Terms and the Privacy Policy as new
+   versions.~~ **Done 2026-10-31** (the owner's choices: no separate early-access terms, posts
+   taken down within 7 days of a withdrawal, a withdrawn consent kept until its posts are down and
+   a year more, virus checks and conversions on MakerFoundry's own Railway services). The Terms,
+   Privacy Policy and Seller Terms are new versions, effective November 2, 2026; a lawyer's read
+   of the remix rules is still advised.
 2. **Try it as a founding creator**: Nick (or any approved founding creator) imports their own
    models with `/3d/import` and checks the groups, print profiles and pages; sample 3MFs from
    Bambu Studio, OrcaSlicer and PrusaSlicer are checked locally against the readers (never
