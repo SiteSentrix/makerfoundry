@@ -66,7 +66,7 @@ pub fn summary(text: &str, max: usize) -> String {
 /// [`page`], with a shared link's preview.
 pub fn page_with(title: &str, body: &str, signed_in: bool, preview: Option<&Preview>) -> String {
     let head = match preview {
-        None => r#"<meta name="description" content="Machine-embroidery designs and laser-cut files, shared and sold by makers.">"#.to_string(),
+        None => r#"<meta name="description" content="Machine-embroidery designs, laser-cut files and 3D-print models, shared and sold by makers.">"#.to_string(),
         Some(p) => {
             let image = match p.image {
                 Some(i) => format!(

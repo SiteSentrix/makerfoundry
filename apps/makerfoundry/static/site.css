@@ -54,10 +54,10 @@ main { flex: 1; }
   display: inline-block; margin: .5rem 0 0; padding: .35rem .8rem;
   border: 1px solid var(--line); border-radius: .75rem; background: var(--card); font-size: .95rem;
 }
-.kinds {
-  display: grid; gap: 1rem; padding-bottom: 3rem;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-}
+/* Four cards: one column on a phone, two by two on a tablet, all four in a row on a wide screen. */
+.kinds { display: grid; gap: 1rem; padding-bottom: 3rem; grid-template-columns: 1fr; }
+@media (min-width: 40rem) { .kinds { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 62rem) { .kinds { grid-template-columns: repeat(4, 1fr); } }
 .kinds article {
   background: var(--card); border: 1px solid var(--line); border-radius: .75rem; padding: 1.25rem;
 }

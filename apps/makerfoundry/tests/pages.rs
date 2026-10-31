@@ -74,6 +74,20 @@ async fn home_page_is_html_and_links_the_stylesheet() {
 }
 
 #[tokio::test]
+async fn home_page_names_all_three_crafts() {
+    let (_, _, body) = get("/").await;
+    assert!(body.contains("<h2>Embroidery</h2>") && body.contains("<h2>Laser cutting</h2>"));
+    assert!(body.contains("<h2>3D printing</h2>"), "{body}");
+    assert!(body.contains("STL, 3MF, OBJ and STEP"));
+    // Without MakerFoundry 3D switched on, the card says the models are still coming.
+    assert!(body.contains("download. 3D models open soon.</p>"), "{body}");
+    assert!(
+        body.contains("3D-print models"),
+        "the lead and the description name them too"
+    );
+}
+
+#[tokio::test]
 async fn stylesheet_is_css() {
     let (status, headers, body) = get("/static/site.css").await;
     assert_eq!(status, StatusCode::OK);

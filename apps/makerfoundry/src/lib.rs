@@ -436,13 +436,15 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
     } else {
         r#"<p class="soon">Coming soon. MakerFoundry is being built now.</p>"#.to_string()
     };
+    // 3D models open with MakerFoundry 3D (MF-35, `MF_3D`); until then the card says they're coming.
+    let three_d_soon = if state.three_d { "" } else { " 3D models open soon." };
     Html(page(
         "MakerFoundry",
         &format!(
             r#"<section class="hero">
   <h1>Designs for your machines</h1>
-  <p class="lead">Machine-embroidery designs and laser-cut files, shared free or sold by the
-  makers who made them.</p>
+  <p class="lead">Machine-embroidery designs, laser-cut files and 3D-print models, shared free or
+  sold by the makers who made them.</p>
   {call}
 </section>
 <section class="kinds">
@@ -455,6 +457,11 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
     <h2>Laser cutting</h2>
     <p>SVG, DXF and PDF files for cutting and engraving, drawn from their paths with their
     size.</p>
+  </article>
+  <article>
+    <h2>3D printing</h2>
+    <p>STL, 3MF, OBJ and STEP models, shown in a 3D viewer you can turn before you
+    download.{three_d_soon}</p>
   </article>
   <article>
     <h2>For makers</h2>
