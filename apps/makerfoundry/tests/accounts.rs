@@ -302,6 +302,7 @@ async fn site_scanned(
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     Some(Site {
         app,
@@ -605,6 +606,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -639,6 +641,7 @@ async fn without_a_database_nobody_can_sign_in() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1050,6 +1053,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let s = Site {
         app,
@@ -1288,6 +1292,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let s = Site {
         app,
@@ -8247,7 +8252,7 @@ async fn the_token_is_never_stored() {
 async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
     let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
     let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
-    Some((services_site(social, None, None, None, false).await?, calls))
+    Some((services_site(social, None, None, None, false, None).await?, calls))
 }
 
 /// A 3D site with the outside services given.
@@ -8257,6 +8262,7 @@ async fn services_site(
     step: Option<makerfoundry::model3d::step::Converter>,
     scad: Option<makerfoundry::model3d::scad::Renderer>,
     points: bool,
+    stitchhub: Option<makerfoundry::shop_orders::hub::Hub>,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -8282,6 +8288,7 @@ async fn services_site(
         step,
         scad,
         points,
+        stitchhub,
     });
     Some(Site {
         app,
@@ -8405,7 +8412,7 @@ async fn notices_site() -> Option<(
     let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
     let notices = makerfoundry::notices::Notices::new("re_test_key", None, Some(&base)).unwrap();
     Some((
-        services_site(None, Some(notices.clone()), None, None, false).await?,
+        services_site(None, Some(notices.clone()), None, None, false, None).await?,
         notices,
         sent,
     ))
@@ -8632,7 +8639,7 @@ async fn notices_are_in_the_data_download_and_go_with_the_data() {
 async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloaded() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter, None, false).await else {
+    let Some(s) = services_site(None, None, converter, None, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8683,7 +8690,7 @@ async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloa
 async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter, None, false).await else {
+    let Some(s) = services_site(None, None, converter, None, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8709,7 +8716,7 @@ async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     );
     // without a converter, nothing is sent and STEP files have no preview, as before
     drop(s);
-    let Some(s) = services_site(None, None, None, None, false).await else {
+    let Some(s) = services_site(None, None, None, None, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8944,7 +8951,7 @@ async fn parametric_model(s: &Site, cookie: &str, price: &str) -> (i64, i64) {
 async fn a_parametric_model_is_customized_and_downloaded_as_a_checked_stl() {
     let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
     let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, None, scad, false).await else {
+    let Some(s) = services_site(None, None, None, scad, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9053,7 +9060,7 @@ async fn customizing_is_off_without_the_service_and_for_models_for_sale() {
     drop(s);
     let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
     let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, None, scad, false).await else {
+    let Some(s) = services_site(None, None, None, scad, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9386,7 +9393,7 @@ async fn make_of(s: &Site, cookie: &str, model: i64) {
 
 #[tokio::test]
 async fn points_come_only_from_what_others_do_with_your_work() {
-    let Some(s) = services_site(None, None, None, None, true).await else {
+    let Some(s) = services_site(None, None, None, None, true, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9439,7 +9446,7 @@ async fn points_come_only_from_what_others_do_with_your_work() {
 
 #[tokio::test]
 async fn makes_of_others_models_count_up_to_twenty_a_month() {
-    let Some(s) = services_site(None, None, None, None, true).await else {
+    let Some(s) = services_site(None, None, None, None, true, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9470,4 +9477,158 @@ async fn points_are_off_unless_switched_on() {
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
     assert_eq!(s.get("/account/points", Some(&ann)).await.status, StatusCode::NOT_FOUND);
     assert!(!s.get("/account", Some(&ann)).await.body.contains("/account/points"));
+}
+
+// ---------------------------------------------------------------- ordering from shops (MF-62 to MF-64)
+
+/// A site with StitchHub (a stand-in) and Stripe (a fake) switched on → the site, its state (to run
+/// the hub's round), the hub and Stripe.
+async fn shops_site() -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    let (hub_url, hub) = makerfoundry::shop_orders::hub::stand_in::start().await.unwrap();
+    let (stripe, st) = fake_stripe().await;
+    let pool = test_db().await?;
+    let (storage, stored) = fake_storage().await;
+    let storage_kept = storage.clone();
+    let (url, fake) = fake_cloud().await;
+    let state = AppState {
+        cloud: Cloud::new(&url).unwrap(),
+        db: Some(pool.clone()),
+        storage: Some(storage),
+        publishers: makerfoundry::listings::Publishers::Everyone,
+        admins: vec![1000],
+        limits: std::sync::Arc::default(),
+        stripe: Some(stripe),
+        launched: true,
+        public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
+        three_d: true,
+        scanner: None,
+        thingiverse: None,
+        social: None,
+        notices: None,
+        step: None,
+        scad: None,
+        points: false,
+        stitchhub: makerfoundry::shop_orders::hub::Hub::new(&hub_url, "mf-test"),
+    };
+    let app = makerfoundry::app(state.clone());
+    Some((
+        Site {
+            app,
+            pool,
+            fake,
+            stored,
+            storage: Some(storage_kept),
+        },
+        state,
+        hub,
+        st,
+    ))
+}
+
+/// The example catalogue (Main Street Threadworks, account 4217), as the hub delivers it.
+fn catalog_message(id: &str) -> Value {
+    let mut v: Value = serde_json::from_slice(
+        &std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/contract/shop-orders/valid/catalog.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    v["id"] = id.into();
+    v
+}
+
+/// Makes account 4217 (the example shop) able to be paid.
+async fn shop_can_be_paid(s: &Site) {
+    sqlx::query("INSERT INTO mf_accounts (account_id, email) VALUES (4217, 'shop@example.com') ON CONFLICT DO NOTHING")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO mf_sellers (account_id, stripe_account, details_submitted, charges_enabled, payouts_enabled)
+         VALUES (4217, 'acct_shop4217', true, true, true) ON CONFLICT DO NOTHING",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn shops_are_missing_until_stitchhub_is_switched_on() {
+    let Some(s) = site().await else { return };
+    assert_eq!(s.get("/shops", None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get("/shops/mainst", None).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
+    let Some((s, state, hub, _)) = shops_site().await else {
+        return;
+    };
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001"));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shops WHERE handle = 'mainst' AND account_id = 4217")
+            .await,
+        1
+    );
+    // kept, but not offered: the shop can't be paid yet
+    assert!(s.get("/shops", None).await.body.contains("No shops take orders yet"));
+    assert_eq!(s.get("/shops/mainst", None).await.status, StatusCode::NOT_FOUND);
+    shop_can_be_paid(&s).await;
+    let list = s.get("/shops", None).await.body;
+    assert!(
+        list.contains(r#"href="/shops/mainst""#)
+            && list.contains("Main Street Threadworks")
+            && list.contains("Elmwood"),
+        "{list}"
+    );
+    let page = s.get("/shops/mainst", None).await.body;
+    for want in [
+        "Heavy cotton tee",
+        "$8.00 a piece before decoration",
+        "Black, Navy",
+        "S, M, L, XL",
+        "Embroidery",
+        "left chest, back",
+        "1+: $12.00 · 12+: $9.00",
+        "set-up $25.00 an order",
+        "Direct to garment (DTG)",
+        "Screen print",
+        "Shipping $8.99 an order",
+        r#"href="/shops/mainst/order/tee-heavy""#,
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop", &page, None).await;
+    // the shop changes its prices: the page follows
+    let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c002");
+    again["body"]["products"][0]["cents"] = 950.into();
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(
+        s.get("/shops/mainst", None)
+            .await
+            .body
+            .contains("$9.50 a piece before decoration")
+    );
+    assert_eq!(s.get("/shops/nobody", None).await.status, StatusCode::NOT_FOUND);
+    // a shop's text can't reach the page as HTML
+    let mut evil = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c003");
+    evil["body"]["shop"]["name"] = "<script>alert(1)</script>".into();
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, evil);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let list = s.get("/shops", None).await.body;
+    assert!(
+        !list.contains("<script>alert") && list.contains("&lt;script&gt;"),
+        "{list}"
+    );
 }

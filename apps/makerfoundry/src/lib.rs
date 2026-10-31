@@ -153,6 +153,9 @@ pub struct AppState {
     pub scad: Option<model3d::scad::Renderer>,
     /// Points (issue #34: `MF_POINTS=yes`), with no rewards until the owner decides on them.
     pub points: bool,
+    /// Ordering from shops through StitchHub (MF-60 to MF-64: `MF_STITCHHUB_URL` and
+    /// `MF_STITCHHUB_KEY`); without them there's none.
+    pub stitchhub: Option<shop_orders::hub::Hub>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -189,6 +192,8 @@ pub fn app(state: AppState) -> Router {
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
         .route("/d/{id}/like", post(model3d::likes::like))
+        .route("/shops", get(shop_orders::shops::list))
+        .route("/shops/{handle}", get(shop_orders::shops::show))
         .route("/contests", get(model3d::contests::list))
         .route("/contests/{slug}", get(model3d::contests::page))
         .route("/contests/{slug}/enter", post(model3d::contests::enter))

@@ -185,11 +185,28 @@ async fn main() -> ExitCode {
         scad: std::env::var("MF_SCAD_SERVICE").ok().and_then(|u| {
             makerfoundry::model3d::scad::Renderer::new(&u, std::env::var("MF_SCAD_SERVICE_KEY").ok().as_deref())
         }),
+        stitchhub: makerfoundry::shop_orders::hub::Hub::new(
+            &std::env::var("MF_STITCHHUB_URL").unwrap_or_default(),
+            &std::env::var("MF_STITCHHUB_KEY").unwrap_or_default(),
+        ),
         points: std::env::var("MF_POINTS").is_ok_and(|v| v.trim() == "yes"),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
     };
+    // every minute: one round with StitchHub, when it's switched on (MF-61)
+    if state.stitchhub.is_some() {
+        let hub_state = state.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                every.tick().await;
+                if let Err(e) = makerfoundry::shop_orders::sync(&hub_state).await {
+                    eprintln!("stitchhub: {e}");
+                }
+            }
+        });
+    }
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)
     let (sweep_limits, sweep_db, sweep_stripe, sweep_storage, sweep_notices, sweep_url) = (

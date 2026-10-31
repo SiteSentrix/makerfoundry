@@ -124,6 +124,11 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .contest-entries li > a { justify-self: stretch; }
 .contest-entries .place { font-weight: 700; color: var(--accent); }
 .contests { padding-left: 1.25rem; display: grid; gap: .75rem; }
+.products { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); margin: 1rem 0 2rem; }
+.product { border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; background: var(--card); }
+.product h2 { margin-top: 0; }
+.product .methods { padding-left: 1.1rem; }
+.shops { padding-left: 1.25rem; display: grid; gap: .5rem; }
 .cards .thumb {
   display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden;
   border-radius: .5rem; background: var(--bg);

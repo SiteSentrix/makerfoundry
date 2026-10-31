@@ -339,9 +339,10 @@ pub fn is_time(s: &str) -> bool {
         })
 }
 
-/// A party: `makerfoundry`, or `shop:<hub shop id>`.
+/// A party: `makerfoundry`, `hub` (its own notices), or `shop:<hub shop id>`.
 fn is_party(s: &str) -> bool {
     s == "makerfoundry"
+        || s == "hub"
         || s.strip_prefix("shop:").is_some_and(|id| {
             !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })

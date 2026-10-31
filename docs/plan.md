@@ -424,7 +424,13 @@ StitchShop's side is stitchbench#74).
   logged by id only. Tested against a stand-in hub (`tests/stitchhub.rs`): down, sends failing,
   refusals, too old, expiry, out-of-order and repeated messages; removing the ordering or the
   de-duplication fails them. Not run by the sweep until MF-62.
-- **MF-62** shop catalogues and pages. **MF-63** ordering and checkout (10%, the card fee from the
+- **MF-62 shop catalogues and pages, built 2026-10-31**: the sweep talks to the hub every minute
+  (when `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set); each shop's `catalog` is kept as it
+  came, checked; `/shops` lists the shops that can be paid (`selling::can_sell` on the shop's
+  Foundry Account) and `/shops/<handle>` shows their products: colours, sizes, methods and
+  placements, price breaks, set-up and shipping. A shop's text is escaped like everyone's.
+  `message.expired` now comes from the `hub` party (fixture updated).
+- **MF-63** ordering and checkout (10%, the card fee from the
   shop's share, ledger rows; `order.placed` only after the payment is confirmed). **MF-64** the
   customer's order page: status, proofs, cancelling, refunds when an order expires undelivered.
 
