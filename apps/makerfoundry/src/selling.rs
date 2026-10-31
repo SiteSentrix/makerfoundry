@@ -508,7 +508,9 @@ pub async fn buy(State(state): State<AppState>, headers: HeaderMap, Path(id): Pa
 
 /// A Checkout Session Stripe says is paid → order `order` paid and its sale in the ledger, once.
 /// `false` (and nothing changes) unless the session is paid and is this order's, for its price
-/// (plus the tax Stripe added, at most the price itself).
+/// (plus the tax Stripe added, at most the price itself). An expired order counts too: a delayed
+/// payment (a bank debit) is confirmed days after checkout, after `expire_orders` has run
+/// (https://docs.stripe.com/payments/checkout/fulfill-orders).
 async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> Result<bool, sqlx::Error> {
     if session.get("payment_status").and_then(Value::as_str) != Some("paid") {
         return Ok(false);
@@ -529,7 +531,7 @@ async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> R
     let intent = session.get("payment_intent").and_then(Value::as_str);
     let row = sqlx::query(
         "UPDATE mf_orders SET status = 'paid', paid_at = now(), stripe_payment_intent = $3, tax_cents = $6
-         WHERE id = $1 AND stripe_session = $2 AND status = 'pending' AND price_cents = $4 AND currency = $5
+         WHERE id = $1 AND stripe_session = $2 AND status IN ('pending', 'expired') AND price_cents = $4 AND currency = $5
          RETURNING seller_account, fee_cents, processing_cents, seller_cents",
     )
     .bind(order)
@@ -545,7 +547,7 @@ async fn confirm_paid(conn: &mut PgConnection, order: i64, session: &Value) -> R
             .bind(order)
             .fetch_optional(&mut *conn)
             .await?;
-        if status.as_deref() == Some("pending") {
+        if matches!(status.as_deref(), Some("pending" | "expired")) {
             eprintln!("selling: order {order}: a paid session that doesn't match it ({sid}, {amount} {currency})");
         }
         return Ok(false);
