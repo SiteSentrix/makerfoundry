@@ -76,6 +76,22 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, ImageFormat), String> {
     Ok((picture, format))
 }
 
+/// Checks a picture can be read (PNG or JPEG, within the limits) without changing it: for art a
+/// shop prints from, whose every pixel matters (MF-63). → its type.
+pub fn check(bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "the picture is larger than {} MB",
+            MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    match decode(bytes)?.1 {
+        ImageFormat::Png => Ok("image/png"),
+        ImageFormat::Jpeg => Ok("image/jpeg"),
+        _ => Err("only PNG and JPEG pictures are taken".into()),
+    }
+}
+
 /// A picture inside a model file (a 3MF's thumbnail, MF-38), decoded within the limits and
 /// written again in the same format (PNG or JPEG), at most `PHOTO_SIDE` a side: nothing of the
 /// original bytes is kept.

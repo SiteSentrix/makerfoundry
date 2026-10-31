@@ -190,7 +190,7 @@ impl Hub {
 /// Puts a message to a shop in the outbox, its `seq` the next for that order and shop, in the
 /// same transaction as the change it reports: it goes when the hub can take it.
 pub async fn enqueue(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx::PgConnection,
     message: &Message,
     order: Option<&str>,
     to: &str,
@@ -202,7 +202,7 @@ pub async fn enqueue(
         )
         .bind(o)
         .bind(to)
-        .fetch_one(&mut **tx)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?,
         None => 0,
@@ -220,7 +220,7 @@ pub async fn enqueue(
     .bind(to)
     .bind(&value)
     .bind(&env.expires_at)
-    .execute(&mut **tx)
+    .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
     Ok(env.id)

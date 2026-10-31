@@ -303,3 +303,11 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 
 /* Founding creators (MF-54): the numbered badge, filled so it stands apart from other badges */
 .badge.founding { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; white-space: nowrap; }
+
+/* ordering from a shop (MF-63) */
+.sizes { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: 0.5rem 0.75rem; }
+.sizes .size input { width: 100%; }
+.totals { border-collapse: collapse; margin: 1rem 0; min-width: 14rem; }
+.totals td, .totals th { padding: 0.25rem 0; text-align: left; }
+.totals td + td, .totals th + th { text-align: right; padding-left: 2rem; font-variant-numeric: tabular-nums; }
+.totals tr:last-child th { border-top: 1px solid currentColor; padding-top: 0.4rem; }

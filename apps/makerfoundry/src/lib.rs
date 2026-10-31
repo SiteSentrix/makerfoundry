@@ -194,6 +194,9 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/like", post(model3d::likes::like))
         .route("/shops", get(shop_orders::shops::list))
         .route("/shops/{handle}", get(shop_orders::shops::show))
+        .route("/shop-orders/{reference}", get(shop_orders::orders::page))
+        .route("/shop-orders/{reference}/pay", post(shop_orders::orders::pay))
+        .route("/shop-orders/{reference}/art/{sha}", get(shop_orders::orders::art))
         .route("/contests", get(model3d::contests::list))
         .route("/contests/{slug}", get(model3d::contests::page))
         .route("/contests/{slug}/enter", post(model3d::contests::enter))
@@ -317,6 +320,14 @@ pub fn app(state: AppState) -> Router {
         .route("/proofs/{id}/versions", post(proofs::add_version))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
+    // ordering from a shop (MF-63): the form carries the customer's art
+    let shop_orders = Router::new()
+        .route(
+            "/shops/{handle}/order/{sku}",
+            get(shop_orders::orders::form).post(shop_orders::orders::create),
+        )
+        .layer(DefaultBodyLimit::max(shop_orders::orders::BODY_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(shop_orders::orders::BODY_LIMIT_BYTES));
     let webhooks = Router::new()
         .route("/stripe/webhook", post(selling::webhook))
         .layer(DefaultBodyLimit::max(WEBHOOK_LIMIT_BYTES))
@@ -356,6 +367,7 @@ pub fn app(state: AppState) -> Router {
         ));
     pages
         .merge(uploads)
+        .merge(shop_orders)
         .merge(api)
         .merge(new_designs)
         .merge(webhooks)

@@ -55,6 +55,7 @@ pub async fn keep(pool: &PgPool, from: &str, c: &Catalog) -> Result<(), String> 
 }
 
 /// A shop as MakerFoundry keeps it.
+#[derive(Clone)]
 pub struct Shop {
     pub party: String,
     pub handle: String,

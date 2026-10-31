@@ -1788,6 +1788,12 @@ fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
     } else {
         0
     };
+    let mut metadata = json!({"app": f["metadata[app]"]});
+    for k in ["order", "shop_order"] {
+        if let Some(v) = f.get(&format!("metadata[{k}]")) {
+            metadata[k] = json!(v);
+        }
+    }
     json!({
         "id": id,
         "object": "checkout.session",
@@ -1797,7 +1803,9 @@ fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
         "total_details": {"amount_tax": tax, "amount_discount": 0, "amount_shipping": 0},
         "currency": "usd",
         "payment_intent": format!("pi_{id}"),
-        "metadata": {"order": f["metadata[order]"], "app": f["metadata[app]"]},
+        "metadata": metadata,
+        "status": if paid { "complete" } else { "open" },
+        "url": format!("https://checkout.stripe.com/c/pay/{id}"),
     })
 }
 
@@ -9503,7 +9511,7 @@ async fn shops_site() -> Option<(
         admins: vec![1000],
         limits: std::sync::Arc::default(),
         stripe: Some(stripe),
-        launched: true,
+        launched: false,
         public_url: "https://makerfoundry.test".into(),
         api_origins: vec!["https://stitchfoundry.test".into()],
         proofs: None,
@@ -9631,4 +9639,375 @@ async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
         !list.contains("<script>alert") && list.contains("&lt;script&gt;"),
         "{list}"
     );
+}
+
+/// The order form sent from our own page: text fields, and the art if given.
+fn order_form(path: &str, fields: &[(&str, &str)], art: Option<(&str, &[u8])>, cookie: &str) -> Request<Body> {
+    let boundary = "----mf-test-order";
+    let mut body = Vec::new();
+    for (k, v) in fields {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes(),
+        );
+    }
+    if let Some((name, bytes)) = art {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"art\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Request::post(path)
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, format!("https://{HOST}"))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A shops site with Main Street Threadworks' catalogue kept and the shop able to be paid.
+async fn open_shop() -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    let (s, state, hub, st) = shops_site().await?;
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001"));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    shop_can_be_paid(&s).await;
+    Some((s, state, hub, st))
+}
+
+const TEE: &str = "/shops/mainst/order/tee-heavy";
+
+/// 10 Navy M and 2 Navy L, embroidered on the left chest, shipped: 12 pieces at $8 + $9.
+fn tee_order<'a>() -> Vec<(&'a str, &'a str)> {
+    vec![
+        ("colour", "1"),
+        ("q1", "10"),
+        ("q2", "2"),
+        ("decoration", "m0p0"),
+        ("name", "Bea Example"),
+        ("delivery", "ship"),
+        ("line1", "12 Oak Street"),
+        ("city", "Elmwood"),
+        ("region", "OH"),
+        ("postcode", "44000"),
+        ("country", "US"),
+        ("note", "Thread to match the logo, please."),
+        ("rights", "yes"),
+    ]
+}
+
+#[tokio::test]
+async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    // signing in comes first
+    assert!(s.get(TEE, None).await.location().starts_with("/signin"));
+    let bea = s.sign_up("bea%40example.com").await;
+    let form = s.get(TEE, Some(&bea)).await.body;
+    for want in [
+        "Order: Heavy cotton tee",
+        "Navy",
+        "XL",
+        "Embroidery on the left chest",
+        "Direct to garment (DTG) on the front",
+        "Ship it to me ($8.99)",
+    ] {
+        assert!(form.contains(want), "{want}: {form}");
+    }
+    s.dump_page("shop-order-form", &form, Some(&bea)).await;
+    assert_eq!(
+        s.get("/shops/mainst/order/nothing", Some(&bea)).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    let pes = sample(sf_formats::Format::Pes);
+    let made = s
+        .send(order_form(TEE, &tee_order(), Some(("logo.pes", &pes)), &bea))
+        .await;
+    let path = made.location().to_string();
+    assert!(path.starts_with("/shop-orders/mf-"), "{} {}", made.status, made.body);
+    let reference = path.trim_start_matches("/shop-orders/").to_string();
+    // 12 × ($8 + $9) + $25 set-up + $8.99 shipping; 10% and the card fee from the shop's share
+    let amounts: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT goods_cents, setup_cents, shipping_cents, paid_cents, fee_cents, card_fee_cents FROM mf_shop_orders",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(amounts, (20_400, 2_500, 899, 23_799, 2_380, 720));
+    assert_eq!(s.scalar("SELECT shop_cents FROM mf_shop_orders").await, 20_699);
+    let page = s.get(&path, Some(&bea)).await.body;
+    for want in [
+        "Your order from Main Street Threadworks",
+        "Not paid yet",
+        "Pay $237.99",
+        "tee-heavy, Navy: L × 2, M × 10",
+        "Embroidery on the left chest (logo.pes)",
+        "Shipping to 12 Oak Street, Elmwood, OH 44000",
+        "$204.00",
+        "$25.00",
+        "$8.99",
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop-order", &page, Some(&bea)).await;
+    // nobody else sees it; nothing goes to the shop before it's paid
+    let sam = s.sign_up("sam%40example.com").await;
+    assert_eq!(s.get(&path, Some(&sam)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.post(&format!("{path}/pay"), "", Some(&sam)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 0);
+    let token: String = sqlx::query_scalar("SELECT token FROM mf_shop_orders")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let sha: String = sqlx::query_scalar("SELECT art->0->>'sha256' FROM mf_shop_orders")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let art = format!("{path}/art/{sha}?t={token}");
+    assert_eq!(s.get(&art, None).await.status, StatusCode::NOT_FOUND);
+
+    // paying: Stripe Checkout, MakerFoundry's 10% and the card fee as the application fee
+    let pay = s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    assert_eq!(pay.location(), "https://checkout.stripe.com/c/pay/cs_test_1");
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(f["line_items[0][price_data][unit_amount]"], "23799");
+    assert_eq!(f["payment_intent_data[application_fee_amount]"], "3100");
+    assert_eq!(f["payment_intent_data[transfer_data][destination]"], "acct_shop4217");
+    assert_eq!(f["metadata[shop_order]"], reference);
+    assert_eq!(f["metadata[app]"], "makerfoundry");
+    // a second click goes to the same checkout, so the order can't be paid twice
+    assert_eq!(
+        s.post(&format!("{path}/pay"), "", Some(&bea)).await.location(),
+        "https://checkout.stripe.com/c/pay/cs_test_1"
+    );
+    assert_eq!(st.lock().unwrap().sessions.len(), 1);
+    // a session that isn't paid, or isn't this order's, changes nothing
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_so_0",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, false),
+    )
+    .await;
+    let mut other = session_json("cs_test_1", &f, true);
+    other["metadata"]["shop_order"] = json!("mf-0000000000000000");
+    s.stripe_event(WEBHOOK_SECRET, "evt_so_1", "checkout.session.completed", other)
+        .await;
+    let mut short = session_json("cs_test_1", &f, true);
+    short["amount_total"] = json!(100);
+    s.stripe_event(WEBHOOK_SECRET, "evt_so_2", "checkout.session.completed", short)
+        .await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'pending'")
+            .await,
+        1
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 0);
+
+    // paid: the ledger and order.placed, once
+    for evt in ["evt_so_3", "evt_so_4"] {
+        let a = s
+            .stripe_event(
+                WEBHOOK_SECRET,
+                evt,
+                "checkout.session.completed",
+                session_json("cs_test_1", &f, true),
+            )
+            .await;
+        assert_eq!(a.status, StatusCode::OK);
+    }
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'sent' AND paid_at IS NOT NULL")
+            .await,
+        1
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 23_799);
+    assert_eq!(
+        s.scalar("SELECT cents FROM mf_shop_ledger WHERE kind = 'shop' AND account_id = 4217")
+            .await,
+        20_699
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE kind = 'order.placed'")
+            .await,
+        1
+    );
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Sent to the shop"));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let placed = hub
+        .lock()
+        .unwrap()
+        .received
+        .iter()
+        .find(|m| m["type"] == "order.placed")
+        .cloned()
+        .unwrap();
+    assert_eq!(placed["order"], json!(reference));
+    assert_eq!(placed["to"], "shop:mainst");
+    assert_eq!(placed["seq"], 1);
+    assert_eq!(placed["body"]["totals"]["paid_cents"], 23_799);
+    assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 20_699);
+    assert_eq!(placed["body"]["customer"]["ship_to"]["city"], "Elmwood");
+    assert_eq!(placed["body"]["lines"][0]["sizes"]["M"], 10);
+    let url = placed["body"]["art_urls"][&sha].as_str().unwrap().to_string();
+    assert_eq!(url, format!("https://makerfoundry.test{art}"));
+    // the message passes the contract's own checks
+    makerfoundry::shop_orders::contract::parse(placed.to_string().as_bytes()).unwrap();
+
+    // the shop fetches the art with the order's secret, and only with it
+    let got = s.get(&art, None).await;
+    assert_eq!(got.status, StatusCode::OK);
+    assert!(
+        got.headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("attachment; filename=\"logo.pes\"")
+    );
+    assert!(s.stored.lock().unwrap().values().any(|(_, b)| *b == pes));
+    assert_eq!(
+        s.get(&format!("{path}/art/{sha}?t=wrong"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("{path}/art/{sha}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // and paying again does nothing
+    assert_eq!(s.post(&format!("{path}/pay"), "", Some(&bea)).await.location(), path);
+}
+
+#[tokio::test]
+async fn coming_back_from_checkout_sends_a_shop_order_without_waiting_for_the_webhook() {
+    let Some((s, _, _, st)) = open_shop().await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let photo = photo_with_location();
+    let mut fields = tee_order();
+    fields.retain(|(k, _)| *k != "decoration" && *k != "delivery");
+    fields.push(("decoration", "m1p0"));
+    fields.push(("delivery", "pickup"));
+    let path = s
+        .send(order_form(TEE, &fields, Some(("front.jpg", &photo)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert!(path.starts_with("/shop-orders/mf-"));
+    // picked up: no shipping; DTG at $10 a piece, no set-up
+    assert_eq!(s.scalar("SELECT paid_cents FROM mf_shop_orders").await, 12 * 1_800);
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Pick up at the shop"));
+    s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    // back from Stripe before it's paid: nothing changes
+    assert!(
+        s.get(&format!("{path}?session=cs_test_1"), Some(&bea))
+            .await
+            .body
+            .contains("Not paid yet")
+    );
+    // another paid session of the same amount (a design bought, say) doesn't pay for this order
+    let mut design = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    design.remove("metadata[shop_order]");
+    design.insert("metadata[order]".into(), "1".into());
+    st.lock()
+        .unwrap()
+        .sessions
+        .insert("cs_test_other".into(), (design, true));
+    assert!(
+        s.get(&format!("{path}?session=cs_test_other"), Some(&bea))
+            .await
+            .body
+            .contains("Not paid yet")
+    );
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = true;
+    // someone else's visit with the session checks nothing
+    let sam = s.sign_up("sam%40example.com").await;
+    assert_eq!(
+        s.get(&format!("{path}?session=cs_test_1"), Some(&sam)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 0);
+    let page = s.get(&format!("{path}?session=cs_test_1"), Some(&bea)).await.body;
+    assert!(page.contains("Sent to the shop"), "{page}");
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 1);
+    // the webhook arriving later adds nothing
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_so_9",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, true),
+    )
+    .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 1);
+}
+
+#[tokio::test]
+async fn order_problems_are_explained_and_nothing_is_kept() {
+    let Some((s, _, _, _)) = open_shop().await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let pes = sample(sf_formats::Format::Pes);
+    let photo = photo_with_location();
+    let without = |drop: &str| {
+        let mut f = tee_order();
+        f.retain(|(k, _)| *k != drop);
+        f
+    };
+    let mut no_pieces = without("q1");
+    no_pieces.retain(|(k, _)| *k != "q2");
+    let mut too_many = without("q1");
+    too_many.push(("q1", "100000"));
+    let mut no_address = without("line1");
+    no_address.push(("line1", ""));
+    let mut bad_choice = without("decoration");
+    bad_choice.push(("decoration", "m9p0"));
+    for (fields, art, want) in [
+        (
+            without("rights"),
+            Some(("logo.pes", &pes[..])),
+            "Confirm the art is yours",
+        ),
+        (no_pieces, Some(("logo.pes", &pes[..])), "Say how many of each size"),
+        (too_many, Some(("logo.pes", &pes[..])), "at most"),
+        (no_address, Some(("logo.pes", &pes[..])), "Give the shipping address"),
+        (bad_choice, Some(("logo.pes", &pes[..])), "Choose a decoration"),
+        (tee_order(), None, "Choose your art"),
+        // embroidery needs an embroidery file
+        (tee_order(), Some(("photo.jpg", &photo[..])), "The art:"),
+        (without("name"), Some(("logo.pes", &pes[..])), "Give your name"),
+    ] {
+        let a = s.send(order_form(TEE, &fields, art, &bea)).await;
+        assert_eq!(a.status, StatusCode::OK, "{want}");
+        assert!(a.body.contains(want), "{want}: {}", a.body);
+    }
+    // printing needs a picture
+    let mut dtg = without("decoration");
+    dtg.push(("decoration", "m1p0"));
+    let a = s.send(order_form(TEE, &dtg, Some(("logo.pes", &pes)), &bea)).await;
+    assert!(a.body.contains("The art:"), "{}", a.body);
+    // from another site
+    let mut req = order_form(TEE, &tee_order(), Some(("logo.pes", &pes)), &bea);
+    req.headers_mut()
+        .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+    assert_eq!(s.send(req).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_orders").await, 0);
+    assert!(s.stored.lock().unwrap().is_empty());
 }

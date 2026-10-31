@@ -5,6 +5,7 @@
 
 pub mod contract;
 pub mod hub;
+pub mod orders;
 pub mod shops;
 
 use std::future::Future;

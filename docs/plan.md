@@ -430,8 +430,21 @@ StitchShop's side is stitchbench#74).
   Foundry Account) and `/shops/<handle>` shows their products: colours, sizes, methods and
   placements, price breaks, set-up and shipping. A shop's text is escaped like everyone's.
   `message.expired` now comes from the `hub` party (fixture updated).
-- **MF-63** ordering and checkout (10%, the card fee from the
-  shop's share, ledger rows; `order.placed` only after the payment is confirmed). **MF-64** the
+- **MF-63 ordering and checkout, built 2026-10-31** (`src/shop_orders/orders.rs`, tables in
+  `migrations/0040_shop_orders.sql`): `/shops/<handle>/order/<sku>` (signed in) takes a colour,
+  quantities by size, a decoration and placement, the art (an embroidery file for embroidery, a
+  PNG or JPEG for printing; 10 MB, read with the same limits as uploads), a name, pick-up or a
+  shipping address and the rights checkbox. The price comes from the shop's catalogue only (the
+  price break for the whole order, set-up once, flat shipping); MakerFoundry's 10% and the card
+  fee (2.9% + 30¢) are each rounded to the cent and the shop gets the rest. `/shop-orders/<ref>`
+  shows the order; paying is Stripe Checkout with the 10% and the card fee as the application fee,
+  the rest to the shop's Stripe account (a second click reuses the open session). Once the
+  verified webhook or the return from Checkout shows a paid session labelled with this order, its
+  amount and currency, the order is paid, three `mf_shop_ledger` rows are written and
+  `order.placed` is queued for the shop, in one transaction, once. The shop fetches the art from
+  `/shop-orders/<ref>/art/<sha256>?t=<the order's secret>` while the order is open. Sales tax on
+  physical goods isn't collected (`tax_cents` 0) until the owner decides.
+- **MF-64** the
   customer's order page: status, proofs, cancelling, refunds when an order expires undelivered.
 
 ## Open decisions (the owner's)
