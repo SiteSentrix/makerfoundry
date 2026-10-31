@@ -13,7 +13,14 @@
       "town": "Elmwood",
       "ships": true,
       "pickup": true,
-      "account": 4217
+      "account": 4217,
+      "address": {
+        "line1": "210 Main Street",
+        "city": "Elmwood",
+        "region": "OH",
+        "postcode": "44001",
+        "country": "US"
+      }
     },
     "products": [
       {
@@ -98,7 +105,9 @@
       }
     ],
     "shipping": {
-      "flat_cents": 899
+      "flat_cents": 899,
+      "per_extra_piece_cents": 50,
+      "free_over_cents": 30000
     },
     "currency": "usd"
   }

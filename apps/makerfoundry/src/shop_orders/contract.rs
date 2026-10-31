@@ -62,6 +62,9 @@ pub struct Shop {
     /// The Foundry Account the shop belongs to: MakerFoundry pays it through that account's
     /// payout setup.
     pub account: i64,
+    /// Where customers pick up (needed for sales tax on pick-up orders).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<Address>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -93,7 +96,26 @@ pub struct Product {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Shipping {
+    /// For an order of one piece.
     pub flat_cents: i64,
+    /// Added for each piece after the first.
+    #[serde(default)]
+    pub per_extra_piece_cents: i64,
+    /// Orders whose goods and set-up come to this or more ship free; 0: never.
+    #[serde(default)]
+    pub free_over_cents: i64,
+}
+
+impl Shipping {
+    /// What shipping `pieces` pieces costs, for goods and set-up of `subtotal`.
+    pub fn cents(&self, pieces: u32, subtotal: i64) -> Option<i64> {
+        if self.free_over_cents > 0 && subtotal >= self.free_over_cents {
+            return Some(0);
+        }
+        self.per_extra_piece_cents
+            .checked_mul(i64::from(pieces.saturating_sub(1)))?
+            .checked_add(self.flat_cents)
+    }
 }
 
 /// `catalog` v1: a shop's products and prices.
@@ -293,6 +315,22 @@ fn text(field: &str, s: &str, max: usize, required: bool) -> Result<(), String> 
     Ok(())
 }
 
+fn address(field: &str, a: &Address) -> Result<(), String> {
+    for (f, v, req) in [
+        ("line1", &a.line1, true),
+        ("line2", &a.line2, false),
+        ("city", &a.city, true),
+        ("region", &a.region, true),
+        ("postcode", &a.postcode, true),
+    ] {
+        text(&format!("{field}.{f}"), v, 100, req)?;
+    }
+    if a.country.len() != 2 || !a.country.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(format!("{field}.country is a two-letter code"));
+    }
+    Ok(())
+}
+
 fn cents(field: &str, c: i64) -> Result<(), String> {
     if (0..=MAX_CENTS).contains(&c) {
         Ok(())
@@ -379,6 +417,11 @@ fn check_catalog(c: &Catalog) -> Result<(), String> {
         return Err("only usd is taken".into());
     }
     cents("shipping.flat_cents", c.shipping.flat_cents)?;
+    cents("shipping.per_extra_piece_cents", c.shipping.per_extra_piece_cents)?;
+    cents("shipping.free_over_cents", c.shipping.free_over_cents)?;
+    if let Some(a) = &c.shop.address {
+        address("shop.address", a)?;
+    }
     if c.products.is_empty() || c.products.len() > 200 {
         return Err("a catalogue has 1 to 200 products".into());
     }
@@ -519,18 +562,7 @@ fn check_placed(o: &OrderPlaced) -> Result<(), String> {
     }
     text("customer.name", &o.customer.name, 100, true)?;
     if let Some(a) = &o.customer.ship_to {
-        for (f, v, req) in [
-            ("line1", &a.line1, true),
-            ("line2", &a.line2, false),
-            ("city", &a.city, true),
-            ("region", &a.region, true),
-            ("postcode", &a.postcode, true),
-        ] {
-            text(f, v, 100, req)?;
-        }
-        if a.country.len() != 2 || !a.country.bytes().all(|b| b.is_ascii_uppercase()) {
-            return Err("country is a two-letter code".into());
-        }
+        address("ship_to", a)?;
     }
     check_totals(&o.totals)?;
     text("note", &o.note, 1000, false)
@@ -707,6 +739,54 @@ pub fn make(message: &Message, order: Option<&str>, seq: u64, to: &str, days: i6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shipping_is_flat_plus_each_extra_piece_and_free_over_a_total() {
+        let s = Shipping {
+            flat_cents: 899,
+            per_extra_piece_cents: 50,
+            free_over_cents: 30_000,
+        };
+        assert_eq!(s.cents(1, 2_000), Some(899));
+        assert_eq!(s.cents(12, 22_900), Some(899 + 11 * 50));
+        assert_eq!(s.cents(20, 29_999), Some(899 + 19 * 50));
+        assert_eq!(s.cents(20, 30_000), Some(0));
+        // the old form: one flat price, never free
+        let flat = Shipping {
+            flat_cents: 899,
+            per_extra_piece_cents: 0,
+            free_over_cents: 0,
+        };
+        assert_eq!(flat.cents(500, MAX_CENTS), Some(899));
+        assert_eq!(
+            Shipping {
+                flat_cents: 0,
+                per_extra_piece_cents: i64::MAX,
+                free_over_cents: 0
+            }
+            .cents(3, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn a_v1_catalogue_without_the_new_shipping_fields_still_reads() {
+        let mut v: serde_json::Value = serde_json::from_slice(
+            &fixtures("valid")
+                .into_iter()
+                .find(|(n, _)| n == "catalog.json")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        v["body"]["shipping"] = serde_json::json!({"flat_cents": 899});
+        v["body"]["shop"].as_object_mut().unwrap().remove("address");
+        let (_, m) = parse(v.to_string().as_bytes()).unwrap();
+        let Message::Catalog(c) = m else { panic!("a catalogue") };
+        assert_eq!(c.shipping.per_extra_piece_cents, 0);
+        assert_eq!(c.shipping.free_over_cents, 0);
+        assert!(c.shop.address.is_none());
+    }
 
     fn fixtures(kind: &str) -> Vec<(String, Vec<u8>)> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

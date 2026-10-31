@@ -29,6 +29,22 @@ pub fn method_name(m: &str) -> &'static str {
     }
 }
 
+/// A shop's shipping prices, as people say them.
+pub fn shipping_words(s: &super::contract::Shipping) -> String {
+    let mut words = format!("Shipping {} an order", dollars(s.flat_cents));
+    if s.per_extra_piece_cents > 0 {
+        words.push_str(&format!(
+            ", plus {} for each piece after the first",
+            dollars(s.per_extra_piece_cents)
+        ));
+    }
+    if s.free_over_cents > 0 {
+        words.push_str(&format!("; free on orders of {} or more", dollars(s.free_over_cents)));
+    }
+    words.push('.');
+    words
+}
+
 /// Keeps a shop's latest catalogue (`from` is `shop:<handle>`).
 pub async fn keep(pool: &PgPool, from: &str, c: &Catalog) -> Result<(), String> {
     let handle = from.strip_prefix("shop:").ok_or("not from a shop")?;
@@ -199,7 +215,7 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     let c = &shop.catalog;
     let products: String = c.products.iter().map(|p| product_html(&shop.handle, p)).collect();
     let shipping = if c.shop.ships {
-        format!("Shipping {} an order.", dollars(c.shipping.flat_cents))
+        shipping_words(&c.shipping)
     } else {
         String::new()
     };

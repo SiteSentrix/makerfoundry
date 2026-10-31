@@ -81,14 +81,24 @@ a catalogue the shop published. `shop.account` is the shop's Foundry Account: Ma
 the shop through that account's payout setup, and a shop without one isn't offered to customers.
 `cents` is the garment's own price per piece; each method's `price_breaks` are the decoration's
 price per piece from `min` pieces up (the first starts at 1).
+
+Shipping (the owner's decision, 2026-10-31): `flat_cents` for an order of one piece, plus the
+optional `per_extra_piece_cents` for each piece after the first; with the optional
+`free_over_cents` (more than 0), an order whose goods and set-up come to that or more ships free.
+Both default to 0, so a catalogue with only `flat_cents` still reads. `shop.address` (optional,
+the same fields as `ship_to`) is where customers pick up: sales tax on a pick-up order is worked
+out from it, so a shop that offers pick-up should send it; without it MakerFoundry offers only
+shipping while it collects tax.
 ```json
-{ "shop": { "name": "…", "town": "…", "ships": true, "pickup": true, "account": 4217 },
+{ "shop": { "name": "…", "town": "…", "ships": true, "pickup": true, "account": 4217,
+            "address": { "line1": "…", "city": "…", "region": "OH", "postcode": "…", "country": "US" } },
   "products": [{ "sku": "tee-g500", "name": "Heavy cotton tee", "kind": "tee", "cents": 800,
                  "colours": ["Black", "Navy"], "sizes": ["S","M","L","XL"],
                  "methods": [{ "method": "embroidery", "placements": ["left chest","back"],
                                "price_breaks": [{ "min": 1, "cents": 2400 }, { "min": 12, "cents": 1900 }],
                                "setup_cents": 2500 }] }],
-  "shipping": { "flat_cents": 899 }, "currency": "usd" }
+  "shipping": { "flat_cents": 899, "per_extra_piece_cents": 50, "free_over_cents": 30000 },
+  "currency": "usd" }
 ```
 
 **`order.placed` (MakerFoundry → shop), v1.** Sent once the payment has succeeded (Stripe's

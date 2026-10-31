@@ -458,6 +458,10 @@ StitchShop's side is stitchbench#74).
   closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
   lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
   keeps the amounts.
+- **MF-65 shipping by the piece, built 2026-10-31** (the owner's decision): the catalogue's
+  `shipping` may add `per_extra_piece_cents` and `free_over_cents` (both optional, so v1
+  catalogues still read), and `shop.address` gives the pick-up address for sales tax. The form
+  and the shop's page say the shipping in words.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

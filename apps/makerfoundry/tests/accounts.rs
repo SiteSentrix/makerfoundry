@@ -9611,7 +9611,7 @@ async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
         "set-up $25.00 an order",
         "Direct to garment (DTG)",
         "Screen print",
-        "Shipping $8.99 an order",
+        "Shipping $8.99 an order, plus $0.50 for each piece after the first; free on orders of $300.00 or more.",
         r#"href="/shops/mainst/order/tee-heavy""#,
     ] {
         assert!(page.contains(want), "{want}: {page}");
@@ -9720,7 +9720,7 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
         "XL",
         "Embroidery on the left chest",
         "Direct to garment (DTG) on the front",
-        "Ship it to me ($8.99)",
+        "Ship it to me",
     ] {
         assert!(form.contains(want), "{want}: {form}");
     }
@@ -9737,26 +9737,26 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
     let path = made.location().to_string();
     assert!(path.starts_with("/shop-orders/mf-"), "{} {}", made.status, made.body);
     let reference = path.trim_start_matches("/shop-orders/").to_string();
-    // 12 × ($8 + $9) + $25 set-up + $8.99 shipping; 10% and the card fee from the shop's share
+    // 12 × ($8 + $9) + $25 set-up + $8.99 + 11 × 50¢ shipping; 10% and the card fee from the shop's share
     let amounts: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
         "SELECT goods_cents, setup_cents, shipping_cents, paid_cents, fee_cents, card_fee_cents FROM mf_shop_orders",
     )
     .fetch_one(&s.pool)
     .await
     .unwrap();
-    assert_eq!(amounts, (20_400, 2_500, 899, 23_799, 2_380, 720));
-    assert_eq!(s.scalar("SELECT shop_cents FROM mf_shop_orders").await, 20_699);
+    assert_eq!(amounts, (20_400, 2_500, 1_449, 24_349, 2_435, 736));
+    assert_eq!(s.scalar("SELECT shop_cents FROM mf_shop_orders").await, 21_178);
     let page = s.get(&path, Some(&bea)).await.body;
     for want in [
         "Your order from Main Street Threadworks",
         "Not paid yet",
-        "Pay $237.99",
+        "Pay $243.49",
         "tee-heavy, Navy: L × 2, M × 10",
         "Embroidery on the left chest (logo.pes)",
         "Shipping to 12 Oak Street, Elmwood, OH 44000",
         "$204.00",
         "$25.00",
-        "$8.99",
+        "$14.49",
     ] {
         assert!(page.contains(want), "{want}: {page}");
     }
@@ -9784,8 +9784,8 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
     let pay = s.post(&format!("{path}/pay"), "", Some(&bea)).await;
     assert_eq!(pay.location(), "https://checkout.stripe.com/c/pay/cs_test_1");
     let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
-    assert_eq!(f["line_items[0][price_data][unit_amount]"], "23799");
-    assert_eq!(f["payment_intent_data[application_fee_amount]"], "3100");
+    assert_eq!(f["line_items[0][price_data][unit_amount]"], "24349");
+    assert_eq!(f["payment_intent_data[application_fee_amount]"], "3171");
     assert_eq!(f["payment_intent_data[transfer_data][destination]"], "acct_shop4217");
     assert_eq!(f["metadata[shop_order]"], reference);
     assert_eq!(f["metadata[app]"], "makerfoundry");
@@ -9836,11 +9836,11 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
         1
     );
     assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
-    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 23_799);
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 24_349);
     assert_eq!(
         s.scalar("SELECT cents FROM mf_shop_ledger WHERE kind = 'shop' AND account_id = 4217")
             .await,
-        20_699
+        21_178
     );
     assert_eq!(
         s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE kind = 'order.placed'")
@@ -9860,8 +9860,8 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
     assert_eq!(placed["order"], json!(reference));
     assert_eq!(placed["to"], "shop:mainst");
     assert_eq!(placed["seq"], 1);
-    assert_eq!(placed["body"]["totals"]["paid_cents"], 23_799);
-    assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 20_699);
+    assert_eq!(placed["body"]["totals"]["paid_cents"], 24_349);
+    assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 21_178);
     assert_eq!(placed["body"]["customer"]["ship_to"]["city"], "Elmwood");
     assert_eq!(placed["body"]["lines"][0]["sizes"]["M"], 10);
     let url = placed["body"]["art_urls"][&sha].as_str().unwrap().to_string();
@@ -10251,11 +10251,11 @@ async fn a_cancelled_order_is_refunded_and_the_shop_is_out_only_the_card_fee() {
     assert_eq!(
         s.scalar("SELECT cents FROM mf_shop_ledger WHERE reason = 'refund'")
             .await,
-        -23_799
+        -24_349
     );
     let page = s.get(&path, Some(&bea)).await.body;
     assert!(
-        page.contains("You cancelled this order: Wrong colour.") && page.contains("Refunded: $237.99"),
+        page.contains("You cancelled this order: Wrong colour.") && page.contains("Refunded: $243.49"),
         "{page}"
     );
     assert!(!page.contains("Cancel the order"));
@@ -10272,7 +10272,7 @@ async fn a_cancelled_order_is_refunded_and_the_shop_is_out_only_the_card_fee() {
     let fee_refunds = st.lock().unwrap().fee_refunds.clone();
     assert_eq!(fee_refunds.len(), 1);
     assert_eq!(fee_refunds[0].0, "fee_pi_cs_test_1");
-    assert_eq!(fee_refunds[0].1["amount"], "2380");
+    assert_eq!(fee_refunds[0].1["amount"], "2435");
     assert_eq!(st.lock().unwrap().refunds.len(), 1, "refunded once");
     // in the end: the customer has it all back, MakerFoundry keeps nothing but the card fee it
     // paid Stripe, and the shop is out the card fee
@@ -10280,7 +10280,7 @@ async fn a_cancelled_order_is_refunded_and_the_shop_is_out_only_the_card_fee() {
     assert_eq!(
         s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'shop'")
             .await,
-        -720
+        -736
     );
     assert_eq!(
         s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'fee'")
@@ -10316,7 +10316,7 @@ async fn an_order_the_shop_never_takes_or_turns_down_is_refunded() {
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     let page = s.get(&path, Some(&bea)).await.body;
     assert!(
-        page.contains("didn't take the order in time") && page.contains("Refunded: $237.99"),
+        page.contains("didn't take the order in time") && page.contains("Refunded: $243.49"),
         "{page}"
     );
     assert_eq!(st.lock().unwrap().refunds.len(), 1);
@@ -10419,7 +10419,7 @@ async fn unpaid_orders_are_given_up_and_a_customers_data_is_exported_and_erased(
         "Main Street Threadworks",
         "12 Oak Street",
         "logo.pes",
-        "23799",
+        "24349",
     ] {
         assert!(export.contains(want), "{want}: {export}");
     }
@@ -10430,7 +10430,7 @@ async fn unpaid_orders_are_given_up_and_a_customers_data_is_exported_and_erased(
         "the unpaid one went"
     );
     assert_eq!(
-        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE customer_name = '' AND ship_to IS NULL AND art = '[]'::jsonb AND paid_cents = 23799")
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE customer_name = '' AND ship_to IS NULL AND art = '[]'::jsonb AND paid_cents = 24349")
             .await,
         1
     );

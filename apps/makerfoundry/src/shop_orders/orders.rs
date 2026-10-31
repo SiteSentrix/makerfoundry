@@ -102,10 +102,13 @@ fn form_html(shop: &Shop, sku: &str, problem: &str) -> Option<String> {
     let c = &shop.catalog;
     let delivery = match (c.shop.ships, c.shop.pickup) {
         (true, true) => format!(
-            r#"<label>Delivery <select name="delivery"><option value="ship">Ship it to me ({})</option><option value="pickup">I'll pick it up at the shop</option></select></label>"#,
-            dollars(c.shipping.flat_cents)
+            r#"<label>Delivery <small>({})</small> <select name="delivery"><option value="ship">Ship it to me</option><option value="pickup">I'll pick it up at the shop</option></select></label>"#,
+            escape(&shops::shipping_words(&c.shipping))
         ),
-        (true, false) => r#"<input type="hidden" name="delivery" value="ship">"#.to_string(),
+        (true, false) => format!(
+            r#"<input type="hidden" name="delivery" value="ship"><p>{}</p>"#,
+            escape(&shops::shipping_words(&c.shipping))
+        ),
         _ => r#"<input type="hidden" name="delivery" value="pickup"><p>You pick it up at the shop.</p>"#.to_string(),
     };
     let address = if c.shop.ships {
@@ -307,8 +310,15 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
     let goods = i64::from(pieces)
         .checked_mul(shops::piece_cents(p, method, pieces))
         .ok_or("The order is too large.")?;
-    let totals = totals(goods, method.setup_cents, if ship { c.shipping.flat_cents } else { 0 })
-        .ok_or("The order is too large or too small to take.")?;
+    let shipping = if ship {
+        goods
+            .checked_add(method.setup_cents)
+            .and_then(|subtotal| c.shipping.cents(pieces, subtotal))
+            .ok_or("The order is too large.")?
+    } else {
+        0
+    };
+    let totals = totals(goods, method.setup_cents, shipping).ok_or("The order is too large or too small to take.")?;
     let sha = format!("{:x}", Sha256::digest(&bytes));
     let line = Line {
         sku: p.sku.clone(),
