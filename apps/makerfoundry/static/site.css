@@ -46,7 +46,7 @@ main { flex: 1; }
   display: inline-flex; align-items: center; gap: .5rem;
   color: var(--fg); text-decoration: none; font-weight: 700; font-size: 1.25rem;
 }
-.brand .mark { color: var(--accent); }
+.brand .mark { flex: none; border-radius: 7px; }
 .hero { padding: 3rem 0 2rem; }
 .hero h1 { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.1; margin: 0 0 1rem; }
 .lead { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 0 1rem; }

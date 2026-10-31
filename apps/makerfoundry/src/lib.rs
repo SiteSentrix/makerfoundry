@@ -412,11 +412,9 @@ async fn stylesheet() -> Response {
         .into_response()
 }
 
-/// The mark as a stand-alone icon, in the accent colour (a favicon can't inherit the page's).
+/// The mark as a stand-alone icon (its colours are its own, so it needs only the SVG namespace).
 async fn favicon() -> Response {
-    let icon = MARK_SVG
-        .replace(r#"class="mark" "#, r#"xmlns="http://www.w3.org/2000/svg" "#)
-        .replace("currentColor", "#b4462a");
+    let icon = MARK_SVG.replace(r#"class="mark" "#, r#"xmlns="http://www.w3.org/2000/svg" "#);
     (
         [
             (header::CONTENT_TYPE, "image/svg+xml"),

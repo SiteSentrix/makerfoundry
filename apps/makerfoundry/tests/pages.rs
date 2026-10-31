@@ -88,6 +88,14 @@ async fn favicon_is_a_standalone_svg() {
     assert_eq!(headers[header::CONTENT_TYPE], "image/svg+xml");
     assert!(body.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
     assert!(!body.contains("currentColor"));
+    assert!(
+        !body.contains("class=\"mark\""),
+        "the page's class doesn't belong in a stand-alone icon"
+    );
+    assert!(
+        body.contains("<rect width=\"64\" height=\"64\""),
+        "the mark's own tile, so it shows on any tab colour"
+    );
 }
 
 #[tokio::test]
