@@ -4322,7 +4322,7 @@ async fn laser_files_are_ready_for_laserfoundrys_web_app() {
     );
 }
 
-/// MakerFoundry's side of ScreenFoundry (MF-67): an SVG it publishes lands as a laser draft with a
+/// MakerFoundry's side of ScreenFoundry (MF-87): an SVG it publishes lands as a laser draft with a
 /// title, and a published SVG's file is served for its web app under a plain name, whatever the
 /// title; no button shows until ScreenFoundry's web app opens links.
 #[tokio::test]
@@ -4354,7 +4354,7 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
         .await
         .unwrap();
     assert_eq!((title.as_str(), status.as_str()), ("Tiger shirt front", "draft"));
-    // it keeps the app's name, without the version (MF-68), for the admins' list
+    // it keeps the app's name, without the version (MF-88), for the admins' list
     let app: Option<String> = sqlx::query_scalar("SELECT from_app FROM mf_designs WHERE id = $1")
         .bind(id)
         .fetch_one(&s.pool)

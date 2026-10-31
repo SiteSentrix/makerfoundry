@@ -324,10 +324,10 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .cancel { margin: 1.5rem 0; }
 .cancel summary { cursor: pointer; }
 
-/* Open in … buttons (MF-67): several on one row, spaced, wrapping on a phone */
+/* Open in … buttons (MF-87): several on one row, spaced, wrapping on a phone */
 .open-in { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 
-/* admin lists (MF-68): scroll sideways on a phone rather than overflow */
+/* admin lists (MF-88): scroll sideways on a phone rather than overflow */
 .admin-table { overflow-x: auto; margin: 0 0 1rem; }
 .admin-table table { border-collapse: collapse; min-width: 36rem; font-size: .92rem; }
 .admin-table th, .admin-table td { text-align: left; padding: .35rem .6rem .35rem 0; border-bottom: 1px solid var(--line); }

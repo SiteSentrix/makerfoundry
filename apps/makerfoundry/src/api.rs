@@ -36,7 +36,7 @@ pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/
 /// LaserFoundry v0.2.0 was live and opened a MakerFoundry address in a real browser.
 pub const LASERFOUNDRY_OPENS_LINKS: bool = true;
 
-/// ScreenFoundry's web app (screen-printing prepress, MF-67), which opens SVG designs the same way
+/// ScreenFoundry's web app (screen-printing prepress, MF-87), which opens SVG designs the same way
 /// once it reads `?open=`.
 pub const SCREENFOUNDRY_WEB: &str = "https://stitchwright.github.io/screenfoundry/";
 /// Whether ScreenFoundry's web app opens a design from an address yet: until the owner says it
@@ -450,7 +450,7 @@ async fn answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Response 
     match designs::add(state, pool, account.id, &file_name, bytes, photos).await {
         Ok(id) => {
             // a draft from an app is named after its file, so it's never left without a title, and
-            // keeps the app's name (MF-68), for finding designs by the app that made them
+            // keeps the app's name (MF-88), for finding designs by the app that made them
             let _ = sqlx::query(
                 "UPDATE mf_designs SET title = CASE WHEN title = '' THEN $2 ELSE title END, from_app = $3 WHERE id = $1",
             )

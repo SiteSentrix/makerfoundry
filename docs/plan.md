@@ -480,8 +480,12 @@ StitchShop's side is stitchbench#74).
   it paid over, so the shop is still out only the card fee. Confirm the tax code and
   registrations with an accountant before the first registration.
 
-## ScreenFoundry (MF-67, 2026-10-31)
-- **MF-67 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
+## ScreenFoundry (MF-87, 2026-10-31)
+(Numbered MF-87 and MF-88 on 2026-10-31; their commits, and the comment in
+`migrations/0043_design_app.sql`, say MF-67 and MF-68, which clashed with numbers used on `main`.
+A migration that has run in production is never edited, not even its comments: sqlx checks each
+one's checksum when it starts.)
+- **MF-87 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
   button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`, off until the owner says
   ScreenFoundry's web app opens links), linking to
   `https://stitchwright.github.io/screenfoundry/?open=<the file's address>`; paid designs through
@@ -490,7 +494,7 @@ StitchShop's side is stitchbench#74).
   random titles). A draft from an app is titled after its file. Several Open in buttons share one
   row. Proposed, not built: a "screen printing" kind for films (see the ScreenFoundry note in
   `docs/api.md`).
-- **MF-68 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
+- **MF-88 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
   through the API keeps the app's name without its version (`mf_designs.from_app`,
   `migrations/0043_design_app.sql`); admins see how many each app sent and list them at
   `/admin/apps` (linked from the overview); it's in the maker's data download. Uploads on the site
