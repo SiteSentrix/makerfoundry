@@ -1,6 +1,6 @@
 # Seller Terms: MakerFoundry
 
-Effective date: October 22, 2026
+Effective date: November 2, 2026
 
 These Seller Terms add to MakerFoundry's Terms of Service for makers who **publish** designs, and
 for those who **sell** them. If they differ, these Seller Terms apply to publishing and selling.
@@ -22,7 +22,7 @@ Before you publish a design, you confirm that:
 
 We read each file to check it and draw its preview. We may refuse, unpublish or remove a design
 that breaks these terms or the Terms of Service, and we close the accounts of makers who
-repeatedly infringe others' rights (Terms § 7).
+repeatedly infringe others' rights (Terms § 9).
 
 ## 2. Who may sell
 

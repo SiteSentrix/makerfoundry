@@ -1,6 +1,8 @@
 # MakerFoundry 3D (MF-58): wording for the Terms and the Privacy Policy
 
-**Status:** 2026-10-30. A draft for the owner, not yet in the Terms or the Privacy Policy.
+**Status:** 2026-10-31. **Merged** into `terms.md` (§§ 4 to 9) and `privacy.md` (§§ 2, 3, 6) with
+the owner's choices; kept for the record and for the outside services' lines below, which go in
+when each service is switched on. Was: a draft for the owner, not yet in the Terms or the Privacy Policy.
 MakerFoundry 3D stays switched off for everyone but admins and founding creators (`MF_3D` unset)
 until this wording is approved and merged. Merging makes a new version of each document: people
 who agreed to the earlier version keep that record, and new sign-ups agree to the new one

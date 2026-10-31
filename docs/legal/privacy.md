@@ -1,6 +1,6 @@
 # Privacy Policy: MakerFoundry
 
-Effective date: October 22, 2026
+Effective date: November 2, 2026
 
 **The short version.** You can browse and download free designs without telling us anything. With
 a Foundry Account, we keep what the site needs: your account's number and email, your sign-ins,
@@ -24,6 +24,10 @@ Policy (stitchfoundry.app/privacy) covers it. This policy covers what MakerFound
 | Your maker profile (name, address on the site, "about you") | To show who made a design. **Public** | Until you change it or close your account |
 | Your founding-creator application (the name you give, a link to your work, what you make, when, and whether it was approved) | To choose MakerFoundry's founding creators. Seen only by our admins; if you're approved, your badge and its number are **public** | Until you delete your data or close your account |
 | Your designs: the files, what reading them found (size, stitches, colours), the previews we draw, titles, descriptions, tags and licences | To list and deliver them. Public once you publish, private before | Until you delete them or close your account |
+| 3D models you upload or import: the files and images, and what reading them finds (size, triangles, the print settings listed in the Terms § 5, which program made a 3MF). From a 3MF's settings we keep only those print settings, not the rest of the file's text | To list and deliver them. Public once you publish, private before | Until you delete them or close your account. Imports keep each file's name and folder until it becomes a draft; files not made into drafts, and imported drafts never published, are deleted after 30 days |
+| Likes (which models you've liked, and when) | To count them. Shown only as a count | Until you unlike or close your account |
+| Showcase consents (what you've said we may feature, when you said so, when you withdrew, and where we posted it) | To feature only what you asked us to (Terms § 6), and to take down what was posted when you withdraw | While the consent stands; after you withdraw, until every post from it is taken down, then a year |
+| "Originally published on" (the site, address and date you give for an imported model) | To credit where you first shared it. We never fetch that address | As the model |
 | Photos of your work, saved again as new images | To show on your designs. Their hidden details (location, camera) are removed when you upload them | As your designs |
 | Makes you post (a photo of what you made from a design, saved again as a new image, and your note) | To show on the design's page, with your maker name. **Public** | Until you, the design's maker or an admin take it down, or the design is deleted |
 | Comments you post (the text, when) | To show under the design, with your maker name. **Public** | Until you, the design's maker or an admin take it down, or the design is deleted |
@@ -70,6 +74,13 @@ companies that run parts of MakerFoundry for us receive it:
 Each handles data under its own privacy policy: railway.com/legal/privacy,
 cloudflare.com/privacypolicy and stripe.com/privacy.
 
+**Virus checks and conversions.** Uploaded files are checked for viruses, and STEP and OpenSCAD
+files are converted, by programs we run on our own hosting (Railway); they aren't shared with
+anyone else.
+
+**Our social pages.** Only for projects you asked us to feature (Terms § 6): their images, title,
+link and your maker name, posted by us on Facebook, Instagram or YouTube.
+
 **What's public.** Published designs (files, photos, previews, descriptions) and maker profiles are
 public: anyone can see and download them. Drafts are seen only by you, and by our admins if a
 design is reported. Proofs are never public: only the shop that sent one and whoever has its link
@@ -114,6 +125,10 @@ Wherever you live, you can:
   StitchFoundry's Terms describe. We delete everything except records the law asks us to keep
   (purchases, sales, agreements to these terms), records of copyright notices and takedowns, and
   designs people have bought, which are unpublished and kept so they keep their downloads.
+
+You can withdraw a showcase consent at any time (Account › Featuring your projects). Your
+likes, imports and showcase consents are in your data download, and deleting your data
+deletes your likes and imports and withdraws every consent.
 
 We answer requests within 30 days and never charge for them. We may need to confirm the request
 comes from your account's email.
