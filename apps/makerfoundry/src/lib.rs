@@ -428,13 +428,37 @@ async fn favicon() -> Response {
 async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String> {
     let signed_in = accounts::current_user(&state, &headers).await.is_some();
     let newest = listings::newest(&state).await;
+    // Founding creators (MF-54): before the launch the home page leads with the invitation; after
+    // it, a third button while spots are left.
+    let left = founding::spots_left(&state).await;
     let call = if state.launched {
         let share = if signed_in { "/designs/new" } else { "/signup" };
+        let founding = if left.is_some_and(|n| n > 0) {
+            r#" <a class="button secondary" href="/founding">Become a founding creator</a>"#
+        } else {
+            ""
+        };
         format!(
-            r#"<p class="actions"><a class="button" href="/browse">Browse designs</a> <a class="button secondary" href="{share}">Share your designs</a></p>"#
+            r#"<p class="actions"><a class="button" href="/browse">Browse designs</a> <a class="button secondary" href="{share}">Share your designs</a>{founding}</p>"#
         )
     } else {
-        r#"<p class="soon">Coming soon. MakerFoundry is being built now.</p>"#.to_string()
+        let spots = match left {
+            Some(0) => format!(
+                "All {} founding spots are taken; MakerFoundry opens to everyone soon.",
+                founding::SPOTS
+            ),
+            Some(1) => format!("1 of {} spots left.", founding::SPOTS),
+            Some(n) => format!("{n} of {} spots left.", founding::SPOTS),
+            None => String::new(),
+        };
+        format!(
+            r#"<div class="invite">
+  <h2>Become a founding creator</h2>
+  <p>MakerFoundry opens soon. We're looking for our first {} creators: makers of embroidery designs, laser-cut files and 3D-print models who'll share their work here first. Founding creators get a numbered badge on their page and designs, for good, and early access to MakerFoundry 3D.</p>
+  <p class="actions"><a class="button" href="/founding">Apply to be a founding creator</a> <span class="muted">{spots}</span></p>
+</div>"#,
+            founding::SPOTS
+        )
     };
     // 3D models open with MakerFoundry 3D (MF-35, `MF_3D`); until then the card says they're coming.
     let three_d_soon = if state.three_d { "" } else { " 3D models open soon." };

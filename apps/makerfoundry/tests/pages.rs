@@ -88,6 +88,17 @@ async fn home_page_names_all_three_crafts() {
 }
 
 #[tokio::test]
+async fn before_the_launch_the_home_page_leads_with_founding_creators() {
+    let (_, _, body) = get("/").await;
+    assert!(body.contains("<h2>Become a founding creator</h2>"), "{body}");
+    assert!(body.contains(r#"<a class="button" href="/founding">Apply to be a founding creator</a>"#));
+    assert!(
+        !body.contains("Coming soon. MakerFoundry is being built now."),
+        "the old notice is gone"
+    );
+}
+
+#[tokio::test]
 async fn stylesheet_is_css() {
     let (status, headers, body) = get("/static/site.css").await;
     assert_eq!(status, StatusCode::OK);

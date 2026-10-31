@@ -2483,7 +2483,12 @@ async fn before_the_launch_the_legal_pages_are_for_admins_only() {
     assert_eq!(s.scalar("SELECT count(*) FROM mf_agreements").await, 0);
     assert_eq!(s.get("/robots.txt", None).await.body, "User-agent: *\nDisallow: /\n");
     assert_eq!(s.get("/sitemap.xml", None).await.status, StatusCode::NOT_FOUND);
-    assert!(s.get("/", None).await.body.contains("Coming soon"));
+    let home = s.get("/", None).await.body;
+    assert!(
+        home.contains("Become a founding creator") && home.contains(r#"href="/founding""#),
+        "{home}"
+    );
+    assert!(home.contains("100 of 100 spots left."), "{home}");
 }
 
 #[tokio::test]
@@ -2537,7 +2542,9 @@ async fn once_launched_people_agree_to_the_terms_and_the_site_is_found() {
     // the home page invites people in; search engines are welcome, with a map
     let home = s.get("/", None).await.body;
     assert!(
-        home.contains("Browse designs") && !home.contains("Coming soon"),
+        home.contains("Browse designs")
+            && !home.contains("opens soon")
+            && home.contains(r#"href="/founding">Become a founding creator"#),
         "{home}"
     );
     let robots = s.get("/robots.txt", None).await.body;

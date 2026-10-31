@@ -32,6 +32,12 @@ async fn taken(pool: &PgPool) -> i64 {
         .unwrap_or(0)
 }
 
+/// How many founding spots are left, or `None` without a database (a test site).
+pub async fn spots_left(state: &AppState) -> Option<i64> {
+    let pool = state.db.as_ref()?;
+    Some((i64::from(SPOTS) - taken(pool).await).max(0))
+}
+
 /// A founding creator's number, if `account` is one.
 pub async fn number(pool: &PgPool, account: i64) -> Option<i32> {
     sqlx::query_scalar("SELECT number FROM mf_founding WHERE account_id = $1 AND status = 'approved'")

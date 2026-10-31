@@ -50,6 +50,13 @@ main { flex: 1; }
 .hero { padding: 3rem 0 2rem; }
 .hero h1 { font-size: clamp(2rem, 6vw, 3.25rem); line-height: 1.1; margin: 0 0 1rem; }
 .lead { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 0 1rem; }
+.invite {
+  margin: 1.25rem 0 0; padding: 1.25rem 1.4rem; max-width: 46rem;
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: .75rem;
+}
+.invite h2 { margin: 0 0 .4rem; font-size: 1.35rem; }
+.invite p { margin: 0 0 .8rem; }
+.invite .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; margin: 0; }
 .soon {
   display: inline-block; margin: .5rem 0 0; padding: .35rem .8rem;
   border: 1px solid var(--line); border-radius: .75rem; background: var(--card); font-size: .95rem;
