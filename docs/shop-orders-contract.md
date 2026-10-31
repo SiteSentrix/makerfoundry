@@ -1,6 +1,6 @@
 # Ordering from shops through StitchHub: the message contract (issues #2 and #1)
 
-**Status:** 2026-10-31. **A proposal for review.** MakerFoundry's reader and writer of these messages are built (MF-60), switched off; the hub's and StitchShop's sides aren't. The owner decided (#2,
+**Status:** 2026-10-31. **A proposal for review.** MakerFoundry's reader and writer of these messages are built (MF-80), switched off; the hub's and StitchShop's sides aren't. The owner decided (#2,
 `docs/stitchshop-ordering-audit.md`): customers order physical goods from shops through
 MakerFoundry, live; MakerFoundry takes the payment and keeps 10%, and the shop pays the card fee;
 orders travel through **StitchHub**. This is the format the three programs would build to. The hub

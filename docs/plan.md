@@ -403,18 +403,20 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   decide whether MakerFoundry wants points at all, what (if anything) they're exchanged for and
   the budget; then set `MF_POINTS=yes`.
 
-## Ordering from shops (MF-60 to MF-64, issues #1 and #2)
+## Ordering from shops (MF-80 to MF-86, issues #1 and #2)
+(Numbered MF-80 to MF-86 on 2026-10-31; their commits say MF-60 to MF-66, which clashed with
+numbers used on `main` for the mark, the home page and the footer.)
 The owner's decisions of 2026-10-31: customers order physical goods from shops through
 MakerFoundry, live (no demo); MakerFoundry takes the payment and keeps 10%; the shop pays the card
 fee; orders travel through StitchHub (`docs/stitchshop-ordering-audit.md`). Built switched off
 until `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set, against a stand-in hub, on the message
 format proposed in `docs/shop-orders-contract.md` (StitchHub owns it: stitchhub#19 and #34;
 StitchShop's side is stitchbench#74).
-- **MF-60 the messages, built 2026-10-31**: `src/shop_orders/contract.rs` reads and writes every
+- **MF-80 the messages, built 2026-10-31**: `src/shop_orders/contract.rs` reads and writes every
   message type, checking each field against a limit (shops' messages are untrusted); 7 valid and 25
   invalid fixtures in `docs/contract/shop-orders/`, each invalid one refused for its own reason;
   property tests with random and damaged messages.
-- **MF-61 the StitchHub client, built 2026-10-31** (`src/shop_orders/hub.rs`, tables in
+- **MF-81 the StitchHub client, built 2026-10-31** (`src/shop_orders/hub.rs`, tables in
   `0038_stitchhub.sql`): the `/v2/hello` handshake every round (too old: sending stops, flagged
   for the admins; deprecations logged once a day); the outbox, saved in the same transaction as the
   change it reports, sent in order, tried again with growing waits (up to an hour) when the hub is
@@ -423,14 +425,14 @@ StitchShop's side is stitchbench#74).
   the earlier, a gap over 24 hours logged), then acknowledged; unreadable ones acknowledged and
   logged by id only. Tested against a stand-in hub (`tests/stitchhub.rs`): down, sends failing,
   refusals, too old, expiry, out-of-order and repeated messages; removing the ordering or the
-  de-duplication fails them. Not run by the sweep until MF-62.
-- **MF-62 shop catalogues and pages, built 2026-10-31**: the sweep talks to the hub every minute
+  de-duplication fails them. Not run by the sweep until MF-82.
+- **MF-82 shop catalogues and pages, built 2026-10-31**: the sweep talks to the hub every minute
   (when `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set); each shop's `catalog` is kept as it
   came, checked; `/shops` lists the shops that can be paid (`selling::can_sell` on the shop's
   Foundry Account) and `/shops/<handle>` shows their products: colours, sizes, methods and
   placements, price breaks, set-up and shipping. A shop's text is escaped like everyone's.
   `message.expired` now comes from the `hub` party (fixture updated).
-- **MF-63 ordering and checkout, built 2026-10-31** (`src/shop_orders/orders.rs`, tables in
+- **MF-83 ordering and checkout, built 2026-10-31** (`src/shop_orders/orders.rs`, tables in
   `migrations/0040_shop_orders.sql`): `/shops/<handle>/order/<sku>` (signed in) takes a colour,
   quantities by size, a decoration and placement, the art (an embroidery file for embroidery, a
   PNG or JPEG for printing; 10 MB, read with the same limits as uploads), a name, pick-up or a
@@ -443,8 +445,8 @@ StitchShop's side is stitchbench#74).
   amount and currency, the order is paid, three `mf_shop_ledger` rows are written and
   `order.placed` is queued for the shop, in one transaction, once. The shop fetches the art from
   `/shop-orders/<ref>/art/<sha256>?t=<the order's secret>` while the order is open. (Sales tax:
-  MF-66.)
-- **MF-64 after payment, built 2026-10-31** (`src/shop_orders/after.rs`, tables in
+  MF-86.)
+- **MF-84 after payment, built 2026-10-31** (`src/shop_orders/after.rs`, tables in
   `migrations/0041_shop_order_updates.sql`): the shop's `order.status` (with its note and
   tracking), `proof.sent` (the mock-up fetched from its signed link, checked by size and SHA-256,
   re-drawn and kept; shown only to the customer) and `order.cancel` are applied to the order when
@@ -458,11 +460,11 @@ StitchShop's side is stitchbench#74).
   closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
   lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
   keeps the amounts.
-- **MF-65 shipping by the piece, built 2026-10-31** (the owner's decision): the catalogue's
+- **MF-85 shipping by the piece, built 2026-10-31** (the owner's decision): the catalogue's
   `shipping` may add `per_extra_piece_cents` and `free_over_cents` (both optional, so v1
   catalogues still read), and `shop.address` gives the pick-up address for sales tax. The form
   and the shop's page say the shipping in words.
-- **MF-66 sales tax on orders from shops, built 2026-10-31** (the owner's decision: Stripe Tax,
+- **MF-86 sales tax on orders from shops, built 2026-10-31** (the owner's decision: Stripe Tax,
   MakerFoundry collecting as the marketplace; `src/shop_orders/tax.rs`,
   `migrations/0042_shop_order_tax.sql`): on with `MF_STRIPE_TAX`, like designs. The tax is worked
   out before checkout (Stripe Tax calculations, under `MF_SHOP_TAX_CODE`, default

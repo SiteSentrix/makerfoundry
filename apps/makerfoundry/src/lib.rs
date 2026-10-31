@@ -153,7 +153,7 @@ pub struct AppState {
     pub scad: Option<model3d::scad::Renderer>,
     /// Points (issue #34: `MF_POINTS=yes`), with no rewards until the owner decides on them.
     pub points: bool,
-    /// Ordering from shops through StitchHub (MF-60 to MF-64: `MF_STITCHHUB_URL` and
+    /// Ordering from shops through StitchHub (MF-80 to MF-84: `MF_STITCHHUB_URL` and
     /// `MF_STITCHHUB_KEY`); without them there's none.
     pub stitchhub: Option<shop_orders::hub::Hub>,
 }
@@ -329,7 +329,7 @@ pub fn app(state: AppState) -> Router {
         .route("/proofs/{id}/versions", post(proofs::add_version))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
-    // ordering from a shop (MF-63): the form carries the customer's art
+    // ordering from a shop (MF-83): the form carries the customer's art
     let shop_orders = Router::new()
         .route(
             "/shops/{handle}/order/{sku}",

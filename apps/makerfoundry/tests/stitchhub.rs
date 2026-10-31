@@ -1,4 +1,4 @@
-//! The StitchHub client (MF-61, issue #1) against a stand-in hub: the outbox survives the hub being
+//! The StitchHub client (MF-81, issue #1) against a stand-in hub: the outbox survives the hub being
 //! down and sends in order; a refusal is final; a version the hub no longer takes stops sending; a
 //! message that expires unsent is reported; messages from shops are applied once and in order.
 //! Needs `MF_TEST_DATABASE_URL` (each test makes its own schema), as `tests/accounts.rs` does.

@@ -24,7 +24,7 @@ pub const TOLERANCE_SECS: i64 = 300;
 /// downloaded - non subscription - with permanent rights" (https://docs.stripe.com/tax/tax-codes);
 /// `MF_TAX_CODE` gives another.
 pub const DEFAULT_TAX_CODE: &str = "txcd_10505001";
-/// The tax code goods ordered from shops are sold under (MF-66): "Clothing & Footwear"
+/// The tax code goods ordered from shops are sold under (MF-86): "Clothing & Footwear"
 /// (https://docs.stripe.com/tax/tax-codes); `MF_SHOP_TAX_CODE` gives another.
 pub const DEFAULT_GOODS_TAX_CODE: &str = "txcd_30011000";
 

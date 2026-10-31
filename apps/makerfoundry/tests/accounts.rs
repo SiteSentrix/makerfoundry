@@ -1715,7 +1715,7 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
                 Json(session_json(&id, &f, paid))
             }),
         )
-        // Stripe Tax (MF-66): 7% of the items, shipping untaxed
+        // Stripe Tax (MF-86): 7% of the items, shipping untaxed
         .route(
             "/v1/tax/calculations",
             post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
@@ -9515,7 +9515,7 @@ async fn points_are_off_unless_switched_on() {
     assert!(!s.get("/account", Some(&ann)).await.body.contains("/account/points"));
 }
 
-// ---------------------------------------------------------------- ordering from shops (MF-62 to MF-64)
+// ---------------------------------------------------------------- ordering from shops (MF-82 to MF-84)
 
 /// A site with StitchHub (a stand-in) and Stripe (a fake) switched on → the site, its state (to run
 /// the hub's round), the hub and Stripe.

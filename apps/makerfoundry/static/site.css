@@ -304,7 +304,7 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 /* Founding creators (MF-54): the numbered badge, filled so it stands apart from other badges */
 .badge.founding { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; white-space: nowrap; }
 
-/* ordering from a shop (MF-63) */
+/* ordering from a shop (MF-83) */
 .sizes { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: 0.5rem 0.75rem; }
 .sizes .size input { width: 100%; }
 .totals { border-collapse: collapse; margin: 1rem 0; min-width: 14rem; }

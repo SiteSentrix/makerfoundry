@@ -234,7 +234,7 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         .fetch_all(&mut *tx)
         .await?;
     keys.extend(crate::proofs::erase(&mut tx, &proofs).await?);
-    // orders from shops (MF-64): the art, mock-ups and the customer's details go; unpaid orders go
+    // orders from shops (MF-84): the art, mock-ups and the customer's details go; unpaid orders go
     // whole; paid ones keep their amounts (the ledger)
     let arts: Vec<Value> = sqlx::query_scalar("SELECT art FROM mf_shop_orders WHERE buyer_account = $1")
         .bind(account)

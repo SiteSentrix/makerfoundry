@@ -1,4 +1,4 @@
-//! The messages MakerFoundry and shops exchange through StitchHub (MF-60, issues #1 and #2):
+//! The messages MakerFoundry and shops exchange through StitchHub (MF-80, issues #1 and #2):
 //! `docs/shop-orders-contract.md`, with one example of each in `docs/contract/shop-orders/` that
 //! the tests here read (StitchHub and StitchShop test against the same files). Everything a shop
 //! sends is untrusted: every field is checked against a limit before anything is made of it.

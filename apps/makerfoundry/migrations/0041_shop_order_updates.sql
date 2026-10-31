@@ -1,4 +1,4 @@
--- MF-64: what a shop reports on an order, its proofs, cancelling and refunds. A refund that's due
+-- MF-84: what a shop reports on an order, its proofs, cancelling and refunds. A refund that's due
 -- (`refund_due`: the order was cancelled before production, or the shop never took it) is made
 -- by Stripe, recorded once (`refunded_at`), and then MakerFoundry's 10% goes back to the shop
 -- (`fee_returned_at`), as for designs: the shop is out only the card fee.

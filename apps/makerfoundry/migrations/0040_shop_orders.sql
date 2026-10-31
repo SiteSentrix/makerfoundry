@@ -1,8 +1,8 @@
--- MF-63: orders from shops (issues #1 and #2). The customer pays MakerFoundry; MakerFoundry keeps
+-- MF-83: orders from shops (issues #1 and #2). The customer pays MakerFoundry; MakerFoundry keeps
 -- 10% and the card fee comes out of the shop's share (the owner's decisions of 2026-10-31). The
 -- amounts are worked out from the shop's catalogue when the order is made and never change; each
 -- share of a paid order is a row in mf_shop_ledger. `token` is the order's secret, which the shop
--- uses to fetch the art. Sales tax (MF-66) is MakerFoundry's to collect as the marketplace: it's
+-- uses to fetch the art. Sales tax (MF-86) is MakerFoundry's to collect as the marketplace: it's
 -- outside the shop's share.
 CREATE TABLE mf_shop_orders (
     id BIGSERIAL PRIMARY KEY,

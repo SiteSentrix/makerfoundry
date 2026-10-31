@@ -1,4 +1,4 @@
-//! Shops and their catalogues (MF-62): what a shop publishes (`catalog`) is kept as it came,
+//! Shops and their catalogues (MF-82): what a shop publishes (`catalog`) is kept as it came,
 //! checked (`contract::parse`), one row per shop. A shop is offered to customers only while its
 //! Foundry Account can be paid (`selling::can_sell`: payouts set up on MakerFoundry). Pages:
 //! `/shops` and `/shops/<handle>`, both missing until StitchHub is switched on.

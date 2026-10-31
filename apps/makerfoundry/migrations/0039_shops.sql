@@ -1,4 +1,4 @@
--- MF-62: shops that take orders through StitchHub, each with the catalogue it last published
+-- MF-82: shops that take orders through StitchHub, each with the catalogue it last published
 -- (checked on arrival). A shop is offered to customers only while its Foundry Account can be paid.
 CREATE TABLE mf_shops (
     party TEXT PRIMARY KEY,

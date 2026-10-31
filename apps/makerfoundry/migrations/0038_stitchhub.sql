@@ -1,4 +1,4 @@
--- MF-61: the StitchHub client's own records (issues #1 and #2). Messages to shops wait in the
+-- MF-81: the StitchHub client's own records (issues #1 and #2). Messages to shops wait in the
 -- outbox until the hub takes them, so an order change and its message are saved together and
 -- survive a restart or the hub being down. Messages from shops are applied once (by id) and in
 -- order (per order and sender, by seq), held while an earlier one hasn't come yet.

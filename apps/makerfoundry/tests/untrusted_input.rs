@@ -791,7 +791,7 @@ fn the_3d_samples_read() {
     assert_eq!(t.pictures.len(), 1);
 }
 
-// ---------------------------------------------------------------- shop-order messages (MF-60)
+// ---------------------------------------------------------------- shop-order messages (MF-80)
 
 /// The valid example messages shared with StitchHub and StitchShop.
 fn shop_order_fixtures() -> Vec<Vec<u8>> {

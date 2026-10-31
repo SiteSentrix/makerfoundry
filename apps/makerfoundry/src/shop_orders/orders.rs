@@ -1,4 +1,4 @@
-//! Ordering from a shop and paying (MF-63): the customer picks a colour, quantities by size, a
+//! Ordering from a shop and paying (MF-83): the customer picks a colour, quantities by size, a
 //! decoration and its placement, and uploads their art; MakerFoundry works out the price from the
 //! shop's published catalogue only, keeps the art, and shows the order before Stripe Checkout. The
 //! customer pays MakerFoundry; MakerFoundry keeps 10% and the card fee comes out of the shop's
@@ -32,7 +32,7 @@ const ORDER_DAYS: i64 = 7;
 
 /// An order's amounts: what the customer pays, and how it's shared. Exact cents; MakerFoundry's
 /// 10% (of the price before tax) and the card fee (2.9% + 30¢ of what's paid) each rounded to the
-/// nearest cent, the sales tax MakerFoundry's to pay over (MF-66), the shop getting the rest.
+/// nearest cent, the sales tax MakerFoundry's to pay over (MF-86), the shop getting the rest.
 pub fn totals(goods: i64, setup: i64, shipping: i64, tax: i64) -> Option<Totals> {
     let price = goods.checked_add(setup)?.checked_add(shipping)?;
     let paid = price.checked_add(tax)?;
@@ -386,7 +386,7 @@ pub async fn create(
         Ok(Err(why)) => return again(&why),
         Err(_) => return again("The order couldn't be worked out. Please try again."),
     };
-    // sales tax, when it's on (MF-66): from where it ships, or the shop's address for pick-up
+    // sales tax, when it's on (MF-86): from where it ships, or the shop's address for pick-up
     let mut d = d;
     let mut calculation: Option<String> = None;
     if let Some(stripe) = state.stripe.as_ref().filter(|s| s.tax_code.is_some()) {

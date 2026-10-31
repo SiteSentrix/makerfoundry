@@ -194,7 +194,7 @@ async fn main() -> ExitCode {
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
     };
-    // every minute: one round with StitchHub, when it's switched on (MF-61)
+    // every minute: one round with StitchHub, when it's switched on (MF-81)
     if state.stitchhub.is_some() {
         let hub_state = state.clone();
         tokio::spawn(async move {
@@ -204,7 +204,7 @@ async fn main() -> ExitCode {
                 if let Err(e) = makerfoundry::shop_orders::sync(&hub_state).await {
                     eprintln!("stitchhub: {e}");
                 }
-                // refunds due, unpaid orders and old files (MF-64)
+                // refunds due, unpaid orders and old files (MF-84)
                 if let Err(e) = makerfoundry::shop_orders::after::sweep(&hub_state).await {
                     eprintln!("shop orders: {e}");
                 }

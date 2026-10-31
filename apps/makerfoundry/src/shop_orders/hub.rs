@@ -1,4 +1,4 @@
-//! The StitchHub client (MF-61, issue #1): the handshake, the outbox, and applying what shops send,
+//! The StitchHub client (MF-81, issue #1): the handshake, the outbox, and applying what shops send,
 //! once each and in order. Off until `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set (the key is
 //! a secret, never logged). The sweep calls `sync` every minute:
 //!
@@ -23,7 +23,7 @@ use sqlx::PgPool;
 
 use super::contract::{self, Envelope, Message, MessageExpired};
 
-/// What applies a checked message (the orders' own code: MF-62 to MF-64).
+/// What applies a checked message (the orders' own code: MF-82 to MF-84).
 pub type Apply<'a> = &'a (dyn Fn(Envelope, Message) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Sync);
 
 /// How long a held message may wait for an earlier one before the admins are told.

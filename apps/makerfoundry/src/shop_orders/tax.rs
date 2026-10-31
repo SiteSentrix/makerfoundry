@@ -1,4 +1,4 @@
-//! Sales tax on orders from shops (MF-66; the owner's decision of 2026-10-31): on with Stripe Tax
+//! Sales tax on orders from shops (MF-86; the owner's decision of 2026-10-31): on with Stripe Tax
 //! (`MF_STRIPE_TAX`), as for designs. MakerFoundry takes the payment, so it's the marketplace
 //! that collects the tax, never the shop: the tax goes to MakerFoundry inside the application fee
 //! and is outside the shop's share.

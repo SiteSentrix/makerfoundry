@@ -77,7 +77,7 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, ImageFormat), String> {
 }
 
 /// Checks a picture can be read (PNG or JPEG, within the limits) without changing it: for art a
-/// shop prints from, whose every pixel matters (MF-63). → its type.
+/// shop prints from, whose every pixel matters (MF-83). → its type.
 pub fn check(bytes: &[u8]) -> Result<&'static str, String> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(format!(

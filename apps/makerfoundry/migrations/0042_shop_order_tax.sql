@@ -1,4 +1,4 @@
--- MF-66: sales tax on orders from shops, worked out by Stripe Tax before checkout (the
+-- MF-86: sales tax on orders from shops, worked out by Stripe Tax before checkout (the
 -- calculation), recorded with Stripe once paid (the transaction) and reversed on a refund.
 ALTER TABLE mf_shop_orders
     ADD COLUMN tax_calculation TEXT,

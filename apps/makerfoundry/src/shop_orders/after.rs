@@ -1,4 +1,4 @@
-//! After an order is paid (MF-64): what the shop reports (`order.status`, `proof.sent`,
+//! After an order is paid (MF-84): what the shop reports (`order.status`, `proof.sent`,
 //! `order.cancel`) and what the hub gives up on (`message.expired`) applied to the order; the
 //! customer's answers to proofs and cancelling; and refunds.
 //!
