@@ -61,10 +61,15 @@ Build it in this order, each step its own approval:
 - **Decision 1:** hub-routed orders (the hub accepts orders for opted-in shops: one transport, works
   when shops are offline, matches #1) or direct MakerFoundry → StitchShop calls (simpler, but
   every shop must be online and reachable). *Recommended: hub-routed.*
-- **Decision 2:** does MakerFoundry offer customers ordering physical goods from shops at all?
-  (No demo either way: owner, 2026-10-31.)
-  This changes the Terms, the Seller Terms and who's liable for physical goods.
-- **Decision 3:** who takes the payment for a real order.
+- ~~**Decision 2**~~: **decided 2026-10-31: yes.** Customers order physical goods from shops
+  through MakerFoundry, as a live feature (no demo). This needs new wording in the Terms and the
+  Seller Terms (physical goods, who makes and ships them, returns, who's liable): legal wording,
+  the owner's.
+- ~~**Decision 3**~~: **decided 2026-10-31: MakerFoundry takes the payment as the broker and keeps
+  10%**, as for designs. *Assumed, to confirm:* the card fee also comes out of the shop's share and
+  Stripe Connect pays shops monthly, as for designs (`docs/start-here.md` › Fees). Still open:
+  sales tax on physical goods (rates depend on where they're shipped; Stripe Tax, MF-24, can
+  compute it) and shipping (the shop's price, passed through, or MakerFoundry's).
 - Original placeholder art for Main Street Threadworks: drawn in code here, or supplied.
 
 ## Issue #1: the StitchHub sync client

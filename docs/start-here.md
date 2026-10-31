@@ -27,6 +27,9 @@ phone. Plain, step-by-step instructions work best for anything he has to click t
 - Rust, server-rendered, Postgres, Railway + Cloudflare, Stripe Connect, Resend (see the plan).
 - **Fees** (2026-10-19): MakerFoundry keeps 10% of each sale; the card fee (2.9% + 30¢) also comes
   out of the seller's share; Stripe pays sellers monthly.
+- **Ordering from shops** (2026-10-31): customers order physical goods (decorated garments and
+  the like) from shops through MakerFoundry, live, never a demo; MakerFoundry takes the payment and
+  keeps 10% (issue #2, `docs/stitchshop-ordering-audit.md`).
 - **Stripe** (2026-10-20): MakerFoundry uses StitchFoundry's Stripe account, with Connect turned
   on, its own restricted key and its own webhooks (`docs/deploy.md` › Stripe).
 - Same working rules as StitchFoundry (`CLAUDE.md`); commits authored as Bruce Wattendorf.
