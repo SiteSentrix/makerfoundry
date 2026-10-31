@@ -66,8 +66,8 @@ Build it in this order, each step its own approval:
   Seller Terms (physical goods, who makes and ships them, returns, who's liable): legal wording,
   the owner's.
 - ~~**Decision 3**~~: **decided 2026-10-31: MakerFoundry takes the payment as the broker and keeps
-  10%**, as for designs. *Assumed, to confirm:* the card fee also comes out of the shop's share and
-  Stripe Connect pays shops monthly, as for designs (`docs/start-here.md` › Fees). Still open:
+  10%**, as for designs; **the shop pays the card fee** out of its share (confirmed 2026-10-31),
+  and Stripe Connect pays shops monthly, as for designs (`docs/start-here.md` › Fees). Still open:
   sales tax on physical goods (rates depend on where they're shipped; Stripe Tax, MF-24, can
   compute it) and shipping (the shop's price, passed through, or MakerFoundry's).
 - Original placeholder art for Main Street Threadworks: drawn in code here, or supplied.
