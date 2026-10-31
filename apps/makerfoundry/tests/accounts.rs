@@ -4287,7 +4287,8 @@ async fn laser_files_are_ready_for_laserfoundrys_web_app() {
 #[tokio::test]
 async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
     use base64::Engine;
-    let Some(s) = site().await else { return };
+    // (Sol, the first account, 1000, is an admin here: for the list of designs from apps)
+    let Some(s) = site_with(vec![1000]).await else { return };
     let b64 = base64::engine::general_purpose::STANDARD;
     let cookie = s.sign_up("sol%40example.com").await;
     s.post("/account/maker", "name=Sol&handle=sol", Some(&cookie)).await;
@@ -4312,6 +4313,40 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
         .await
         .unwrap();
     assert_eq!((title.as_str(), status.as_str()), ("Tiger shirt front", "draft"));
+    // it keeps the app's name, without the version (MF-68), for the admins' list
+    let app: Option<String> = sqlx::query_scalar("SELECT from_app FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(app.as_deref(), Some("ScreenFoundry"));
+    let list = s.get("/admin/apps", Some(&cookie)).await.body;
+    assert!(
+        list.contains(r#"<a href="/admin/apps?app=ScreenFoundry">ScreenFoundry</a>"#)
+            && list.contains("1 sent, 0 published"),
+        "{list}"
+    );
+    let one = s.get("/admin/apps?app=ScreenFoundry", Some(&cookie)).await.body;
+    assert!(
+        one.contains("Latest from ScreenFoundry") && one.contains("Tiger shirt front"),
+        "{one}"
+    );
+    assert!(
+        !s.get("/admin/apps?app=StitchFoundry", Some(&cookie))
+            .await
+            .body
+            .contains("Tiger shirt front")
+    );
+    s.dump_page("admin-apps", &one, Some(&cookie)).await;
+    // nobody else sees the list
+    let other = s.sign_up("oz%40example.com").await;
+    assert_eq!(s.get("/admin/apps", Some(&other)).await.status, StatusCode::NOT_FOUND);
+    assert!(
+        s.get("/account/data.json", Some(&cookie))
+            .await
+            .body
+            .contains(r#""from_app": "ScreenFoundry""#)
+    );
 
     // published with a title that leaves no slug: the file goes by design-<id>.svg
     s.post(

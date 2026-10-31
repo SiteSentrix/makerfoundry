@@ -148,7 +148,9 @@ ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens 
 - **Publishing** is unchanged: an SVG sent with `"app": "ScreenFoundry 0.1.0"` becomes a draft of
   the laser kind. A draft from any app is now titled after its file (`Tiger_shirt-front.svg` →
   "Tiger shirt front"; "Untitled design" if that leaves nothing), so it's never left untitled.
-  The app's name is only logged today; keeping it on the draft is proposed (`docs/plan.md`, MF-67).
+  The draft also keeps the app's name without its version (`from_app`: "ScreenFoundry", MF-68):
+  admins list designs by app at `/admin/apps`, and it's in the maker's data download. Send `app`
+  as `"<Name> <version>"`; the name is its first word, letters and digits only.
 
 
 ## Reading 3D models (issue #36)

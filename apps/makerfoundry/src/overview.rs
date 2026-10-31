@@ -2,7 +2,7 @@
 //! designs, downloads, sales and MakerFoundry's fees (from the ledger), and what's waiting in the
 //! report queue. Only admins (`MF_ADMINS`) see it.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
@@ -182,7 +182,76 @@ pub async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Resp
     private(
         "Overview · MakerFoundry",
         &format!(
-            r#"<section class="design"><h1>Overview</h1><p class="muted"><a href="/admin">Reports</a> · <a href="/admin/orders">Orders</a></p>{people}{designs}{sales}{reports}</section>"#
+            r#"<section class="design"><h1>Overview</h1><p class="muted"><a href="/admin">Reports</a> · <a href="/admin/orders">Orders</a> · <a href="/admin/apps">Designs from apps</a></p>{people}{designs}{sales}{reports}</section>"#
+        ),
+        true,
+    )
+    .into_response()
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub struct AppQuery {
+    app: String,
+}
+
+/// `GET /admin/apps?app=<name>` (MF-68): how many designs each app has sent, and the latest 100 of
+/// one app's (any app's without `app`), drafts included.
+pub async fn apps(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<AppQuery>) -> Response {
+    let (_, pool) = match admin(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let counts: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT from_app, count(*), count(*) FILTER (WHERE status = 'published')
+         FROM mf_designs WHERE from_app IS NOT NULL GROUP BY from_app ORDER BY count(*) DESC, from_app LIMIT 50",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let apps: String = counts
+        .iter()
+        .map(|(app, all, published)| {
+            format!(
+                r#"<li><a href="/admin/apps?app={link}">{name}</a> <span class="muted">{all} sent, {published} published</span></li>"#,
+                link = crate::listings::url_word(app),
+                name = escape(app),
+            )
+        })
+        .collect();
+    let chosen = crate::api::app_name(&q.app);
+    let rows: Vec<(i64, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT id, title, kind, format, status, from_app, to_char(created_at, 'YYYY-MM-DD') FROM mf_designs
+         WHERE from_app IS NOT NULL AND ($1::text IS NULL OR from_app = $1)
+         ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(&chosen)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let list: String = rows
+        .iter()
+        .map(|(id, title, kind, format, status, app, at)| {
+            format!(
+                r#"<tr><td><a href="/d/{id}">{id}</a></td><td>{}</td><td>{} {}</td><td>{}</td><td>{}</td><td>{at}</td></tr>"#,
+                escape(if title.is_empty() { "(untitled)" } else { title }),
+                escape(kind),
+                escape(format),
+                escape(status),
+                escape(app),
+            )
+        })
+        .collect();
+    let heading = match &chosen {
+        Some(app) => format!("Latest from {}", escape(app)),
+        None => "Latest from any app".to_string(),
+    };
+    private(
+        "Designs from apps · MakerFoundry",
+        &format!(
+            r#"<section class="design"><h1>Designs from apps</h1><p class="muted"><a href="/admin/overview">Overview</a> · <a href="/admin/apps">All apps</a></p>
+<ul>{apps}</ul><h2>{heading}</h2><div class="admin-table"><table><tr><th>Design</th><th>Title</th><th>Kind</th><th>Status</th><th>App</th><th>Sent</th></tr>{list}</table></div></section>"#,
+            apps = if apps.is_empty() { "<li>No designs have come from an app yet.</li>".to_string() } else { apps },
         ),
         true,
     )

@@ -414,9 +414,13 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   `/d/<id>/open?app=screenfoundry`. A design's file name in its links and download is its title's
   slug or `design-<id>`, so every address meets ScreenFoundry's rules (`docs/api.md`, tested with
   random titles). A draft from an app is titled after its file. Several Open in buttons share one
-  row. Proposed, not built: keep the sending app's name on a draft (`mf_designs.from_app`, shown
-  to admins and searchable), and a "screen printing" kind for films (see the ScreenFoundry note in
+  row. Proposed, not built: a "screen printing" kind for films (see the ScreenFoundry note in
   `docs/api.md`).
+- **MF-68 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
+  through the API keeps the app's name without its version (`mf_designs.from_app`,
+  `migrations/0043_design_app.sql`); admins see how many each app sent and list them at
+  `/admin/apps` (linked from the overview); it's in the maker's data download. Uploads on the site
+  have none.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

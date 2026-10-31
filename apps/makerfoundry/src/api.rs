@@ -449,11 +449,15 @@ async fn answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Response 
     }
     match designs::add(state, pool, account.id, &file_name, bytes, photos).await {
         Ok(id) => {
-            // a draft from an app is named after its file, so it's never left without a title
-            let _ = sqlx::query("UPDATE mf_designs SET title = $2 WHERE id = $1 AND title = ''")
-                .bind(id)
-                .bind(title_from(&file_name))
-                .execute(pool)
+            // a draft from an app is named after its file, so it's never left without a title, and
+            // keeps the app's name (MF-68), for finding designs by the app that made them
+            let _ = sqlx::query(
+                "UPDATE mf_designs SET title = CASE WHEN title = '' THEN $2 ELSE title END, from_app = $3 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(title_from(&file_name))
+            .bind(app_name(&d.app))
+            .execute(pool)
                 .await
                 .map_err(|e| eprintln!("api: title of {id}: {e}"));
             let app: String = d.app.chars().filter(|c| !c.is_control()).take(60).collect();
@@ -481,6 +485,14 @@ async fn answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Response 
         Err(r @ Refused::Bad(_)) => error(StatusCode::UNPROCESSABLE_ENTITY, &r.message()),
         Err(r @ Refused::Failed) => error(StatusCode::SERVICE_UNAVAILABLE, &r.message()),
     }
+}
+
+/// An app's name from what it sends as `app` ("ScreenFoundry 0.1.0"): its first word, letters and
+/// digits only, at most 40; `None` when that leaves nothing.
+pub fn app_name(app: &str) -> Option<String> {
+    let first = app.split_whitespace().next().unwrap_or("");
+    let name: String = first.chars().filter(char::is_ascii_alphanumeric).take(40).collect();
+    (!name.is_empty()).then_some(name)
 }
 
 /// A title made from a file's name: without its extension, `_` and `-` as spaces, at most 100
@@ -718,6 +730,21 @@ mod tests {
             proptest::prop_assert_eq!(screenfoundry_refuses(&opened(&link)), None);
             proptest::prop_assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'));
         }
+    }
+
+    #[test]
+    fn an_apps_name_is_kept_without_its_version() {
+        assert_eq!(app_name("ScreenFoundry 0.1.0").as_deref(), Some("ScreenFoundry"));
+        assert_eq!(app_name("  StitchFoundry\t0.9.1").as_deref(), Some("StitchFoundry"));
+        assert_eq!(app_name("LaserFoundry").as_deref(), Some("LaserFoundry"));
+        assert_eq!(
+            app_name("<script>alert(1)</script>").as_deref(),
+            Some("scriptalert1script")
+        );
+        assert_eq!(app_name("").as_deref(), None);
+        assert_eq!(app_name("  1.0").as_deref(), Some("10"));
+        assert_eq!(app_name("日本 1").as_deref(), None);
+        assert_eq!(app_name(&"x".repeat(100)).map(|n| n.len()), Some(40));
     }
 
     #[test]
