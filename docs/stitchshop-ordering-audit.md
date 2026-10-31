@@ -37,11 +37,13 @@ built for a designer sending their **own** file to their **own** shop.
    Showing it "back in the customer view" on MakerFoundry needs StitchShop to report status
    changes back: a callback or polling, signed, through the hub or directly.
 6. **Payment.** Who charges the customer: MakerFoundry (the broker, as for designs), or the shop
-   through StitchShop's own Stripe? **Decision 3.** For the demo it's test mode either way.
-7. **The demo fences.** StitchShop's demo mode exists (`DEMO_MODE=on`, stitchbench `docs/demo.md`):
-   no messages, 1 MB uploads, 90 changes a minute, Assistant off. Its nightly reset (stitchbench
-   #62) isn't built yet. MakerFoundry has no demo mode: it would need one (test-mode Stripe only,
-   demo orders and uploads marked and wiped nightly, a guard test that the wipe touches only demo
+   through StitchShop's own Stripe? **Decision 3.**
+7. **No demo in MakerFoundry (owner, 2026-10-31).** MakerFoundry is the live system and gets no
+   demo mode, demo store or demo data. The demo for issue #2 lives in StitchShop's demo
+   (`DEMO_MODE=on`, stitchbench `docs/demo.md`), which already fences messages, uploads and rate.
+   Anything MakerFoundry builds for ordering is the real feature, in Stripe test mode only until
+   the owner switches it to live keys, like selling designs. So the issue's MakerFoundry-side demo
+   items (test-mode demo store, nightly reset of demo orders and its guard test) don't apply here.
    rows).
 8. **Contract tests on both sides.** Neither repo has a fixture of the other's messages.
 
@@ -51,18 +53,18 @@ Build it in this order, each step its own approval:
    order placed, art and preview, status changed, proof sent and approved, cancelled; message ids,
    ordering per order, expiry. That's also issue #1's ground.
 2. **The hub change:** shops opt in to receive orders from other accounts (Decision 1).
-3. **MakerFoundry's demo storefront** behind `MF_DEMO_STORE=on`, a separate Railway service with
-   its own database, as StitchShop's demo is, so the real site never carries demo code paths
-   live.
+3. **MakerFoundry's ordering, as a real feature** (if Decision 2 says yes): switched off until the
+   owner turns it on, tested against a stand-in StitchShop/hub, as the other outside services are.
 4. **StitchShop's side:** take an order message into a `DecorOrder`, and report status back.
 
 ## The owner's decisions before anything is built
 - **Decision 1:** hub-routed orders (the hub accepts orders for opted-in shops: one transport, works
   when shops are offline, matches #1) or direct MakerFoundry → StitchShop calls (simpler, but
   every shop must be online and reachable). *Recommended: hub-routed.*
-- **Decision 2:** is ordering physical goods from shops part of MakerFoundry, or only the demo?
+- **Decision 2:** does MakerFoundry offer customers ordering physical goods from shops at all?
+  (No demo either way: owner, 2026-10-31.)
   This changes the Terms, the Seller Terms and who's liable for physical goods.
-- **Decision 3:** who takes the payment for a real order (later; the demo is test mode).
+- **Decision 3:** who takes the payment for a real order.
 - Original placeholder art for Main Street Threadworks: drawn in code here, or supplied.
 
 ## Issue #1: the StitchHub sync client
