@@ -98,9 +98,11 @@ MakerFoundry's side is built (MF-18): laser designs' SVG and DXF files (what Las
 are served at the same address as embroidery files, `GET
 https://makerfoundry.app/api/v1/designs/{id}/file/{name}` (free designs for anyone; a paid design
 with a buyer's `?t=` link), with CORS for `https://stitchwright.github.io` and `Content-Disposition`
-exposed. The **Open in LaserFoundry** button is off until LaserFoundry's web app opens links
-(`LASERFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`, then the button links to
-`https://stitchwright.github.io/laserfoundry/?open=<the file's address, URL-encoded>`).
+exposed. The **Open in LaserFoundry** button is **on** since 2026-10-31 (LaserFoundry v0.2.0;
+`LASERFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`): it links to
+`https://stitchwright.github.io/laserfoundry/?open=<the file's address, URL-encoded>`. Checked
+live in Chromium: the web app read `?open=`, fetched `makerfoundry.app` with CORS allowed, and
+showed MakerFoundry's own sentence for a design that isn't published.
 
 LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as StitchFoundry did
 (its OPEN-01, `apps/vectorcraft-web/src/open_link.rs`, a good model):
@@ -120,6 +122,35 @@ LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as Sti
 - Tests: the address check (allowed hosts, refused look-alikes, encoded addresses), the file name.
 
 Once it ships, tell the MakerFoundry chat to switch the button on.
+
+## For ScreenFoundry (MF-67): Open in ScreenFoundry, and publishing
+ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens **SVG only**.
+
+- **The button** shows on the page of a free, published SVG design (a paid one: for its buyers,
+  its maker and the admins, through `/d/<id>/open?app=screenfoundry`, which makes the ten-minute
+  `?t=` link). Not on DXF, PDF, embroidery or 3D designs. It's off until ScreenFoundry's web app
+  opens links: `SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`. The link:
+  `https://stitchwright.github.io/screenfoundry/?open=<the file's address, URL-encoded>`, for
+  example
+  `https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
+  for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design can show
+  both Open in LaserFoundry and Open in ScreenFoundry, side by side.
+- **The file's name** (`{name}`, and `Content-Disposition`'s `filename`) is the design's title as
+  a slug (lowercase ASCII letters, digits and `-`, at most 60) and the file's extension (letters and
+  digits); when the title leaves no slug (empty, only symbols, or not in Latin letters) it's
+  `design-<id>`. So the path is only `a-z 0-9 - .` and the query only `t=<48 hex digits>`: every
+  address meets ScreenFoundry's rules (tested against them, with random titles).
+- **The file's answer:** the SVG as `application/octet-stream` with `Content-Disposition:
+  attachment; filename="<name>.svg"` (never shown as a page from MakerFoundry's site), CORS for
+  `MF_API_ORIGINS` (keep `https://stitchwright.github.io`) with `Content-Disposition` exposed, no
+  redirects, `403`/`404`/`429` as `{"error":{"message"}}`. SVG designs are at most 8 MB, well
+  under ScreenFoundry's 32 MB.
+- **Publishing** is unchanged: an SVG sent with `"app": "ScreenFoundry 0.1.0"` becomes a draft of
+  the laser kind. A draft from any app is now titled after its file (`Tiger_shirt-front.svg` →
+  "Tiger shirt front"; "Untitled design" if that leaves nothing), so it's never left untitled.
+  The draft also keeps the app's name without its version (`from_app`: "ScreenFoundry", MF-68):
+  admins list designs by app at `/admin/apps`, and it's in the maker's data download. Send `app`
+  as `"<Name> <version>"`; the name is its first word, letters and digits only.
 
 
 ## Reading 3D models (issue #36)

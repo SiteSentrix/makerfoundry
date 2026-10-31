@@ -619,26 +619,34 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     } else {
         String::new()
     };
-    // Open in StitchFoundry: a free, published embroidery design opens in the web app
-    // Open in StitchFoundry (embroidery) or LaserFoundry (laser): a free design's file is anyone's;
-    // a paid one opens through a link made for its buyers (and its maker)
-    let open = match crate::api::web_app(&d) {
-        Some((app, name)) if d.price_cents == 0 && d.status == "published" => {
-            let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-            let href = crate::api::open_in(app, &state.public_url, id, &format!("{}.{ext}", slug(&d.title)));
-            format!(
-                r#"<p class="actions"><a class="button secondary" href="{}" rel="noopener">Open in {name}</a> <span class="muted">Free, in your web browser</span></p>"#,
+    // Open in StitchFoundry (embroidery), LaserFoundry (laser) or ScreenFoundry (SVG): a free
+    // design's file is anyone's; a paid one opens through a link made for its buyers (and maker)
+    let mut buttons = Vec::new();
+    let free = d.price_cents == 0 && d.status == "published";
+    let paid_may =
+        !free && d.price_cents > 0 && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1;
+    for (app, name) in crate::api::web_apps(&d) {
+        if free {
+            let href = crate::api::open_in(app, &state.public_url, id, &crate::api::file_name(&d, id));
+            buttons.push(format!(
+                r#"<a class="button secondary" href="{}" rel="noopener">Open in {name}</a>"#,
                 escape(&href)
-            )
+            ));
+        } else if paid_may {
+            buttons.push(format!(
+                r#"<a class="button secondary" href="/d/{id}/open?app={}" rel="noopener">Open in {name}</a>"#,
+                name.to_ascii_lowercase()
+            ));
         }
-        Some((_, name))
-            if d.price_cents > 0 && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1 =>
-        {
-            format!(
-                r#"<p class="actions"><a class="button secondary" href="/d/{id}/open" rel="noopener">Open in {name}</a> <span class="muted">In your web browser</span></p>"#
-            )
-        }
-        _ => String::new(),
+    }
+    let open = if buttons.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<p class="actions open-in">{} <span class="muted">{}in your web browser</span></p>"#,
+            buttons.join(" "),
+            if free { "Free, " } else { "" }
+        )
     };
     let origin = match d.original_site.as_deref() {
         Some(site) => format!(
