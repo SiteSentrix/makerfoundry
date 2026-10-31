@@ -30,11 +30,11 @@ pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app,https://stitchwrigh
 
 /// StitchFoundry's web app, which opens a design from `?open=<address>` (Open in StitchFoundry).
 pub const STITCHFOUNDRY_WEB: &str = "https://stitchwright.github.io/StitchFoundry/";
-/// LaserFoundry's web app, which opens laser designs the same way once it reads `?open=`.
+/// LaserFoundry's web app, which opens SVG and DXF laser designs from `?open=` (since its v0.2.0).
 pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/";
-/// Whether LaserFoundry's web app opens a design from an address yet: until it does, laser designs
-/// show no button (their files are served all the same, for when it does).
-pub const LASERFOUNDRY_OPENS_LINKS: bool = false;
+/// Whether LaserFoundry's web app opens a design from an address: on since 2026-10-31 (#46), when
+/// LaserFoundry v0.2.0 was live and opened a MakerFoundry address in a real browser.
+pub const LASERFOUNDRY_OPENS_LINKS: bool = true;
 
 /// ScreenFoundry's web app (screen-printing prepress, MF-67), which opens SVG designs the same way
 /// once it reads `?open=`.

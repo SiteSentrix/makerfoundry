@@ -98,9 +98,11 @@ MakerFoundry's side is built (MF-18): laser designs' SVG and DXF files (what Las
 are served at the same address as embroidery files, `GET
 https://makerfoundry.app/api/v1/designs/{id}/file/{name}` (free designs for anyone; a paid design
 with a buyer's `?t=` link), with CORS for `https://stitchwright.github.io` and `Content-Disposition`
-exposed. The **Open in LaserFoundry** button is off until LaserFoundry's web app opens links
-(`LASERFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`, then the button links to
-`https://stitchwright.github.io/laserfoundry/?open=<the file's address, URL-encoded>`).
+exposed. The **Open in LaserFoundry** button is **on** since 2026-10-31 (LaserFoundry v0.2.0;
+`LASERFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`): it links to
+`https://stitchwright.github.io/laserfoundry/?open=<the file's address, URL-encoded>`. Checked
+live in Chromium: the web app read `?open=`, fetched `makerfoundry.app` with CORS allowed, and
+showed MakerFoundry's own sentence for a design that isn't published.
 
 LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as StitchFoundry did
 (its OPEN-01, `apps/vectorcraft-web/src/open_link.rs`, a good model):
