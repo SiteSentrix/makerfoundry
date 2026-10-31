@@ -123,7 +123,7 @@ LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as Sti
 
 Once it ships, tell the MakerFoundry chat to switch the button on.
 
-## For ScreenFoundry (MF-67): Open in ScreenFoundry, and publishing
+## For ScreenFoundry (MF-87): Open in ScreenFoundry, and publishing
 ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens **SVG only**.
 
 - **The button** shows on the page of a free, published SVG design (a paid one: for its buyers,
@@ -148,7 +148,7 @@ ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens 
 - **Publishing** is unchanged: an SVG sent with `"app": "ScreenFoundry 0.1.0"` becomes a draft of
   the laser kind. A draft from any app is now titled after its file (`Tiger_shirt-front.svg` →
   "Tiger shirt front"; "Untitled design" if that leaves nothing), so it's never left untitled.
-  The draft also keeps the app's name without its version (`from_app`: "ScreenFoundry", MF-68):
+  The draft also keeps the app's name without its version (`from_app`: "ScreenFoundry", MF-88):
   admins list designs by app at `/admin/apps`, and it's in the maker's data download. Send `app`
   as `"<Name> <version>"`; the name is its first word, letters and digits only.
 

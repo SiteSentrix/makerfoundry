@@ -407,8 +407,10 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   decide whether MakerFoundry wants points at all, what (if anything) they're exchanged for and
   the budget; then set `MF_POINTS=yes`.
 
-## ScreenFoundry (MF-67, 2026-10-31)
-- **MF-67 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
+## ScreenFoundry (MF-87, 2026-10-31)
+(Numbered MF-87 and MF-88 on 2026-10-31; their first commits say MF-67 and MF-68, which clashed
+with numbers used on `main`.)
+- **MF-87 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
   button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`, off until the owner says
   ScreenFoundry's web app opens links), linking to
   `https://stitchwright.github.io/screenfoundry/?open=<the file's address>`; paid designs through
@@ -417,7 +419,7 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   random titles). A draft from an app is titled after its file. Several Open in buttons share one
   row. Proposed, not built: a "screen printing" kind for films (see the ScreenFoundry note in
   `docs/api.md`).
-- **MF-68 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
+- **MF-88 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
   through the API keeps the app's name without its version (`mf_designs.from_app`,
   `migrations/0043_design_app.sql`); admins see how many each app sent and list them at
   `/admin/apps` (linked from the overview); it's in the maker's data download. Uploads on the site
