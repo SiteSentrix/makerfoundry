@@ -414,8 +414,16 @@ StitchShop's side is stitchbench#74).
   message type, checking each field against a limit (shops' messages are untrusted); 7 valid and 25
   invalid fixtures in `docs/contract/shop-orders/`, each invalid one refused for its own reason;
   property tests with random and damaged messages.
-- **MF-61** the StitchHub client: handshake, a durable outbox, polling with acknowledgements,
-  dedupe and per-order order.
+- **MF-61 the StitchHub client, built 2026-10-31** (`src/shop_orders/hub.rs`, tables in
+  `0038_stitchhub.sql`): the `/v2/hello` handshake every round (too old: sending stops, flagged
+  for the admins; deprecations logged once a day); the outbox, saved in the same transaction as the
+  change it reports, sent in order, tried again with growing waits (up to an hour) when the hub is
+  down, a refusal final, a message that expires unsent reported as undelivered; inbound messages
+  checked, applied once (by id) and in order (by `seq` per order and sender, later ones held for
+  the earlier, a gap over 24 hours logged), then acknowledged; unreadable ones acknowledged and
+  logged by id only. Tested against a stand-in hub (`tests/stitchhub.rs`): down, sends failing,
+  refusals, too old, expiry, out-of-order and repeated messages; removing the ordering or the
+  de-duplication fails them. Not run by the sweep until MF-62.
 - **MF-62** shop catalogues and pages. **MF-63** ordering and checkout (10%, the card fee from the
   shop's share, ledger rows; `order.placed` only after the payment is confirmed). **MF-64** the
   customer's order page: status, proofs, cancelling, refunds when an order expires undelivered.

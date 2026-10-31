@@ -4,3 +4,4 @@
 //! are set.
 
 pub mod contract;
+pub mod hub;
