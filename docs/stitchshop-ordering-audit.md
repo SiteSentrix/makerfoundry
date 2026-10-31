@@ -58,9 +58,9 @@ Build it in this order, each step its own approval:
 4. **StitchShop's side:** take an order message into a `DecorOrder`, and report status back.
 
 ## The owner's decisions before anything is built
-- **Decision 1:** hub-routed orders (the hub accepts orders for opted-in shops: one transport, works
-  when shops are offline, matches #1) or direct MakerFoundry → StitchShop calls (simpler, but
-  every shop must be online and reachable). *Recommended: hub-routed.*
+- ~~**Decision 1**~~: **decided 2026-10-31: through StitchHub.** Shops opt in on the hub to receive
+  orders from MakerFoundry; the hub queues messages both ways, so a shop that's offline gets its
+  orders when it comes back. The message format is proposed in `docs/shop-orders-contract.md`.
 - ~~**Decision 2**~~: **decided 2026-10-31: yes.** Customers order physical goods from shops
   through MakerFoundry, as a live feature (no demo). This needs new wording in the Terms and the
   Seller Terms (physical goods, who makes and ships them, returns, who's liable): legal wording,
