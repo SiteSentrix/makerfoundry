@@ -1,0 +1,15 @@
+{
+  "type": "order.status",
+  "version": 1,
+  "order": "mf-8f3a1",
+  "seq": 2,
+  "from": "shop:mainst",
+  "to": "makerfoundry",
+  "created_at": "2026-11-02T15:04:05Z",
+  "expires_at": "2026-11-09T15:04:05Z",
+  "body": {
+    "status": "in_production",
+    "tracking": "",
+    "note": "On the machine today."
+  }
+}

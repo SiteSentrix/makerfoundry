@@ -1,0 +1,15 @@
+{
+  "id": "0192f0c4-7a1b-7c2d-8e3f-0123456789ab",
+  "type": "message.expired",
+  "version": 1,
+  "seq": 0,
+  "from": "shop:hub-relay",
+  "to": "makerfoundry",
+  "created_at": "2026-11-02T15:04:05Z",
+  "expires_at": "2026-11-09T15:04:05Z",
+  "body": {
+    "id": "0192f0c4-7a1b-7c2d-8e3f-0123456789ff",
+    "type": "order.placed",
+    "order": "mf-8f3a1"
+  }
+}

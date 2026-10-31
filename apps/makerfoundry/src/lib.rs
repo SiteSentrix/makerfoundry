@@ -36,6 +36,7 @@ pub mod preview;
 pub mod proofs;
 pub mod scan;
 pub mod selling;
+pub mod shop_orders;
 pub mod sizes;
 pub mod storage;
 pub mod stripe;

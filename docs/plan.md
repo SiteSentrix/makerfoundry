@@ -403,6 +403,23 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   decide whether MakerFoundry wants points at all, what (if anything) they're exchanged for and
   the budget; then set `MF_POINTS=yes`.
 
+## Ordering from shops (MF-60 to MF-64, issues #1 and #2)
+The owner's decisions of 2026-10-31: customers order physical goods from shops through
+MakerFoundry, live (no demo); MakerFoundry takes the payment and keeps 10%; the shop pays the card
+fee; orders travel through StitchHub (`docs/stitchshop-ordering-audit.md`). Built switched off
+until `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set, against a stand-in hub, on the message
+format proposed in `docs/shop-orders-contract.md` (StitchHub owns it: stitchhub#19 and #34;
+StitchShop's side is stitchbench#74).
+- **MF-60 the messages, built 2026-10-31**: `src/shop_orders/contract.rs` reads and writes every
+  message type, checking each field against a limit (shops' messages are untrusted); 7 valid and 25
+  invalid fixtures in `docs/contract/shop-orders/`, each invalid one refused for its own reason;
+  property tests with random and damaged messages.
+- **MF-61** the StitchHub client: handshake, a durable outbox, polling with acknowledgements,
+  dedupe and per-order order.
+- **MF-62** shop catalogues and pages. **MF-63** ordering and checkout (10%, the card fee from the
+  shop's share, ledger rows; `order.placed` only after the payment is confirmed). **MF-64** the
+  customer's order page: status, proofs, cancelling, refunds when an order expires undelivered.
+
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
   also from the seller's share, payouts monthly** (research: `docs/research/marketplace-fees.md`).

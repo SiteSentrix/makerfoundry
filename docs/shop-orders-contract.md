@@ -1,6 +1,6 @@
 # Ordering from shops through StitchHub: the message contract (issues #2 and #1)
 
-**Status:** 2026-10-31. **A proposal for review**, not built anywhere. The owner decided (#2,
+**Status:** 2026-10-31. **A proposal for review.** MakerFoundry's reader and writer of these messages are built (MF-60), switched off; the hub's and StitchShop's sides aren't. The owner decided (#2,
 `docs/stitchshop-ordering-audit.md`): customers order physical goods from shops through
 MakerFoundry, live; MakerFoundry takes the payment and keeps 10%, and the shop pays the card fee;
 orders travel through **StitchHub**. This is the format the three programs would build to. The hub
@@ -77,10 +77,13 @@ Every message, both ways:
 ## The messages
 **`catalog` (shop → MakerFoundry), v1.** Published by the shop when it opts in and whenever its
 prices change; MakerFoundry keeps the latest per shop. A customer is only ever charged prices from
-a catalogue the shop published.
+a catalogue the shop published. `shop.account` is the shop's Foundry Account: MakerFoundry pays
+the shop through that account's payout setup, and a shop without one isn't offered to customers.
+`cents` is the garment's own price per piece; each method's `price_breaks` are the decoration's
+price per piece from `min` pieces up (the first starts at 1).
 ```json
-{ "shop": { "name": "…", "town": "…", "ships": true, "pickup": true },
-  "products": [{ "sku": "tee-g500", "name": "Heavy cotton tee", "kind": "tee",
+{ "shop": { "name": "…", "town": "…", "ships": true, "pickup": true, "account": 4217 },
+  "products": [{ "sku": "tee-g500", "name": "Heavy cotton tee", "kind": "tee", "cents": 800,
                  "colours": ["Black", "Navy"], "sizes": ["S","M","L","XL"],
                  "methods": [{ "method": "embroidery", "placements": ["left chest","back"],
                                "price_breaks": [{ "min": 1, "cents": 2400 }, { "min": 12, "cents": 1900 }],
@@ -138,8 +141,11 @@ Bodies at most 256 KB (files go by signed address). The hub keeps delivered mess
 support, then deletes them.
 
 ## Contract tests
-`docs/contract/shop-orders/*.json` holds one valid example per message type and version, plus
-invalid ones (a missing `id`, an unknown type, a `seq` gap, an oversized body). The same files are
+`docs/contract/shop-orders/valid/` holds one valid example of every message type and version, and
+`invalid/` 25 that must be refused, each named for the rule it breaks (a missing `id`, an unknown
+type or version, totals that don't add up, art without an address, price breaks that go down, an
+oversized body…). MakerFoundry's tests read both (`src/shop_orders/contract.rs`), and property tests
+throw random and damaged messages at the reader (`tests/untrusted_input.rs`). The same files are
 copied into StitchHub and StitchShop, and each side's tests read and write them, so a change on one
 side fails the others' tests until they agree.
 
