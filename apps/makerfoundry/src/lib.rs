@@ -36,6 +36,7 @@ pub mod preview;
 pub mod proofs;
 pub mod scan;
 pub mod selling;
+pub mod shop_orders;
 pub mod sizes;
 pub mod storage;
 pub mod stripe;
@@ -152,6 +153,9 @@ pub struct AppState {
     pub scad: Option<model3d::scad::Renderer>,
     /// Points (issue #34: `MF_POINTS=yes`), with no rewards until the owner decides on them.
     pub points: bool,
+    /// Ordering from shops through StitchHub (MF-80 to MF-84: `MF_STITCHHUB_URL` and
+    /// `MF_STITCHHUB_KEY`); without them there's none.
+    pub stitchhub: Option<shop_orders::hub::Hub>,
 }
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
@@ -188,6 +192,20 @@ pub fn app(state: AppState) -> Router {
         .route("/browse", get(listings::browse))
         .route("/d/{id}/save", post(collections::save))
         .route("/d/{id}/like", post(model3d::likes::like))
+        .route("/shops", get(shop_orders::shops::list))
+        .route("/shops/{handle}", get(shop_orders::shops::show))
+        .route("/shop-orders/{reference}", get(shop_orders::orders::page))
+        .route("/shop-orders/{reference}/pay", post(shop_orders::orders::pay))
+        .route("/shop-orders/{reference}/art/{sha}", get(shop_orders::orders::art))
+        .route("/shop-orders/{reference}/cancel", post(shop_orders::after::cancel))
+        .route(
+            "/shop-orders/{reference}/proofs/{proof}",
+            post(shop_orders::after::answer),
+        )
+        .route(
+            "/shop-orders/{reference}/proofs/{proof}/image",
+            get(shop_orders::after::image),
+        )
         .route("/contests", get(model3d::contests::list))
         .route("/contests/{slug}", get(model3d::contests::page))
         .route("/contests/{slug}/enter", post(model3d::contests::enter))
@@ -312,6 +330,14 @@ pub fn app(state: AppState) -> Router {
         .route("/proofs/{id}/versions", post(proofs::add_version))
         .layer(DefaultBodyLimit::max(designs::MAX_UPLOAD_BYTES))
         .layer(RequestBodyLimitLayer::new(designs::MAX_UPLOAD_BYTES));
+    // ordering from a shop (MF-83): the form carries the customer's art
+    let shop_orders = Router::new()
+        .route(
+            "/shops/{handle}/order/{sku}",
+            get(shop_orders::orders::form).post(shop_orders::orders::create),
+        )
+        .layer(DefaultBodyLimit::max(shop_orders::orders::BODY_LIMIT_BYTES))
+        .layer(RequestBodyLimitLayer::new(shop_orders::orders::BODY_LIMIT_BYTES));
     let webhooks = Router::new()
         .route("/stripe/webhook", post(selling::webhook))
         .layer(DefaultBodyLimit::max(WEBHOOK_LIMIT_BYTES))
@@ -351,6 +377,7 @@ pub fn app(state: AppState) -> Router {
         ));
     pages
         .merge(uploads)
+        .merge(shop_orders)
         .merge(api)
         .merge(new_designs)
         .merge(webhooks)

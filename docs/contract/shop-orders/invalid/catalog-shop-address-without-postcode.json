@@ -1,0 +1,114 @@
+{
+  "id": "0192f0c4-7a1b-7c2d-8e3f-0123456789ab",
+  "type": "catalog",
+  "version": 1,
+  "seq": 0,
+  "from": "shop:mainst",
+  "to": "makerfoundry",
+  "created_at": "2026-11-02T15:04:05Z",
+  "expires_at": "2026-11-09T15:04:05Z",
+  "body": {
+    "shop": {
+      "name": "Main Street Threadworks",
+      "town": "Elmwood",
+      "ships": true,
+      "pickup": true,
+      "account": 4217,
+      "address": {
+        "line1": "210 Main Street",
+        "city": "Elmwood",
+        "region": "OH",
+        "postcode": "",
+        "country": "US"
+      }
+    },
+    "products": [
+      {
+        "sku": "tee-heavy",
+        "name": "Heavy cotton tee",
+        "kind": "tee",
+        "cents": 800,
+        "colours": [
+          "Black",
+          "Navy"
+        ],
+        "sizes": [
+          "S",
+          "M",
+          "L",
+          "XL"
+        ],
+        "methods": [
+          {
+            "method": "embroidery",
+            "placements": [
+              "left chest",
+              "back"
+            ],
+            "price_breaks": [
+              {
+                "min": 1,
+                "cents": 1200
+              },
+              {
+                "min": 12,
+                "cents": 900
+              }
+            ],
+            "setup_cents": 2500
+          },
+          {
+            "method": "dtg",
+            "placements": [
+              "front"
+            ],
+            "price_breaks": [
+              {
+                "min": 1,
+                "cents": 1000
+              }
+            ],
+            "setup_cents": 0
+          }
+        ]
+      },
+      {
+        "sku": "tote-canvas",
+        "name": "Canvas tote",
+        "kind": "tote",
+        "cents": 600,
+        "colours": [
+          "Natural"
+        ],
+        "sizes": [
+          "One size"
+        ],
+        "methods": [
+          {
+            "method": "screen_print",
+            "placements": [
+              "front"
+            ],
+            "price_breaks": [
+              {
+                "min": 1,
+                "cents": 700
+              },
+              {
+                "min": 24,
+                "cents": 450
+              }
+            ],
+            "setup_cents": 3000
+          }
+        ]
+      }
+    ],
+    "shipping": {
+      "flat_cents": 899,
+      "per_extra_piece_cents": 50,
+      "free_over_cents": 30000
+    },
+    "currency": "usd"
+  }
+}

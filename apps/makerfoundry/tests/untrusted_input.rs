@@ -790,3 +790,33 @@ fn the_3d_samples_read() {
     assert_eq!(t.dropped, ["Metadata/plate_1.gcode"]);
     assert_eq!(t.pictures.len(), 1);
 }
+
+// ---------------------------------------------------------------- shop-order messages (MF-80)
+
+/// The valid example messages shared with StitchHub and StitchShop.
+fn shop_order_fixtures() -> Vec<Vec<u8>> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/contract/shop-orders/valid");
+    let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+    files.sort();
+    files.iter().map(|p| std::fs::read(p).unwrap()).collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+    #[test]
+    fn shop_order_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let _ = makerfoundry::shop_orders::contract::parse(&bytes);
+    }
+
+    #[test]
+    fn shop_order_damaged(which in 0usize..7, ds in damages()) {
+        let fixtures = shop_order_fixtures();
+        let good = &fixtures[which % fixtures.len()];
+        if let Ok((env, msg)) = makerfoundry::shop_orders::contract::parse(&damaged(good, &ds)) {
+            // whatever is accepted is a message that would be accepted again as written
+            prop_assert_eq!(env.kind.as_str(), msg.kind());
+            prop_assert!(serde_json::to_vec(&env).unwrap().len() <= makerfoundry::shop_orders::contract::MAX_MESSAGE_BYTES);
+        }
+    }
+}

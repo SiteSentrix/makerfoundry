@@ -302,6 +302,7 @@ async fn site_scanned(
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     Some(Site {
         app,
@@ -605,6 +606,7 @@ async fn without_the_account_service_people_are_told_to_try_later() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let s = Site {
         stored: Arc::default(),
@@ -639,6 +641,7 @@ async fn without_a_database_nobody_can_sign_in() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let req = Request::get("/signin")
         .header(header::HOST, HOST)
@@ -1050,6 +1053,7 @@ async fn without_storage_designs_can_only_be_previewed() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let s = Site {
         app,
@@ -1288,6 +1292,7 @@ async fn publishing_waits_for_the_launch_unless_allowed() {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     });
     let s = Site {
         app,
@@ -1710,6 +1715,34 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
                 Json(session_json(&id, &f, paid))
             }),
         )
+        // Stripe Tax (MF-86): 7% of the items, shipping untaxed
+        .route(
+            "/v1/tax/calculations",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                let items = f["line_items[0][amount]"].parse::<i64>().unwrap();
+                let shipping = f.get("shipping_cost[amount]").map_or(0, |a| a.parse::<i64>().unwrap());
+                let mut st = s.lock().unwrap();
+                st.posts.push(("/v1/tax/calculations".into(), f));
+                let n = st.posts.len();
+                Json(json!({"id": format!("taxcalc_test_{n}"), "object": "tax.calculation",
+                    "amount_total": items + shipping + items * 7 / 100, "tax_amount_exclusive": items * 7 / 100}))
+            }),
+        )
+        .route(
+            "/v1/tax/transactions/create_from_calculation",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                let id = format!("tax_test_{}", f["reference"].replace('-', "_"));
+                s.lock().unwrap().posts.push(("/v1/tax/transactions/create_from_calculation".into(), f));
+                Json(json!({"id": id, "object": "tax.transaction", "type": "transaction"}))
+            }),
+        )
+        .route(
+            "/v1/tax/transactions/create_reversal",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                s.lock().unwrap().posts.push(("/v1/tax/transactions/create_reversal".into(), f));
+                Json(json!({"id": "tax_test_reversal", "object": "tax.transaction", "type": "reversal"}))
+            }),
+        )
         .route(
             "/v1/refunds",
             post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
@@ -1783,6 +1816,12 @@ fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
     } else {
         0
     };
+    let mut metadata = json!({"app": f["metadata[app]"]});
+    for k in ["order", "shop_order"] {
+        if let Some(v) = f.get(&format!("metadata[{k}]")) {
+            metadata[k] = json!(v);
+        }
+    }
     json!({
         "id": id,
         "object": "checkout.session",
@@ -1792,7 +1831,9 @@ fn session_json(id: &str, f: &HashMap<String, String>, paid: bool) -> Value {
         "total_details": {"amount_tax": tax, "amount_discount": 0, "amount_shipping": 0},
         "currency": "usd",
         "payment_intent": format!("pi_{id}"),
-        "metadata": {"order": f["metadata[order]"], "app": f["metadata[app]"]},
+        "metadata": metadata,
+        "status": if paid { "complete" } else { "open" },
+        "url": format!("https://checkout.stripe.com/c/pay/{id}"),
     })
 }
 
@@ -4281,7 +4322,7 @@ async fn laser_files_are_ready_for_laserfoundrys_web_app() {
     );
 }
 
-/// MakerFoundry's side of ScreenFoundry (MF-67): an SVG it publishes lands as a laser draft with a
+/// MakerFoundry's side of ScreenFoundry (MF-87): an SVG it publishes lands as a laser draft with a
 /// title, and a published SVG's file is served for its web app under a plain name, whatever the
 /// title; no button shows until ScreenFoundry's web app opens links.
 #[tokio::test]
@@ -4313,7 +4354,7 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
         .await
         .unwrap();
     assert_eq!((title.as_str(), status.as_str()), ("Tiger shirt front", "draft"));
-    // it keeps the app's name, without the version (MF-68), for the admins' list
+    // it keeps the app's name, without the version (MF-88), for the admins' list
     let app: Option<String> = sqlx::query_scalar("SELECT from_app FROM mf_designs WHERE id = $1")
         .bind(id)
         .fetch_one(&s.pool)
@@ -8383,7 +8424,7 @@ async fn the_token_is_never_stored() {
 async fn social_site() -> Option<(Site, makerfoundry::model3d::social::stand_in::Calls)> {
     let (base, calls) = makerfoundry::model3d::social::stand_in::start().await.unwrap();
     let social = makerfoundry::model3d::social::Social::new("123", "page-token", "456", Some(&base));
-    Some((services_site(social, None, None, None, false).await?, calls))
+    Some((services_site(social, None, None, None, false, None).await?, calls))
 }
 
 /// A 3D site with the outside services given.
@@ -8393,6 +8434,7 @@ async fn services_site(
     step: Option<makerfoundry::model3d::step::Converter>,
     scad: Option<makerfoundry::model3d::scad::Renderer>,
     points: bool,
+    stitchhub: Option<makerfoundry::shop_orders::hub::Hub>,
 ) -> Option<Site> {
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
@@ -8418,6 +8460,7 @@ async fn services_site(
         step,
         scad,
         points,
+        stitchhub,
     });
     Some(Site {
         app,
@@ -8541,7 +8584,7 @@ async fn notices_site() -> Option<(
     let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
     let notices = makerfoundry::notices::Notices::new("re_test_key", None, Some(&base)).unwrap();
     Some((
-        services_site(None, Some(notices.clone()), None, None, false).await?,
+        services_site(None, Some(notices.clone()), None, None, false, None).await?,
         notices,
         sent,
     ))
@@ -8768,7 +8811,7 @@ async fn notices_are_in_the_data_download_and_go_with_the_data() {
 async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloaded() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter, None, false).await else {
+    let Some(s) = services_site(None, None, converter, None, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8819,7 +8862,7 @@ async fn a_step_file_gets_a_preview_from_the_converter_and_is_still_only_downloa
 async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     let (base, calls) = makerfoundry::model3d::step::stand_in::start().await.unwrap();
     let converter = makerfoundry::model3d::step::Converter::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, converter, None, false).await else {
+    let Some(s) = services_site(None, None, converter, None, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -8845,7 +8888,7 @@ async fn a_step_file_the_converter_cant_preview_is_still_taken() {
     );
     // without a converter, nothing is sent and STEP files have no preview, as before
     drop(s);
-    let Some(s) = services_site(None, None, None, None, false).await else {
+    let Some(s) = services_site(None, None, None, None, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9080,7 +9123,7 @@ async fn parametric_model(s: &Site, cookie: &str, price: &str) -> (i64, i64) {
 async fn a_parametric_model_is_customized_and_downloaded_as_a_checked_stl() {
     let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
     let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, None, scad, false).await else {
+    let Some(s) = services_site(None, None, None, scad, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9189,7 +9232,7 @@ async fn customizing_is_off_without_the_service_and_for_models_for_sale() {
     drop(s);
     let (base, calls) = makerfoundry::model3d::scad::stand_in::start().await.unwrap();
     let scad = makerfoundry::model3d::scad::Renderer::new(&base, Some("test-key"));
-    let Some(s) = services_site(None, None, None, scad, false).await else {
+    let Some(s) = services_site(None, None, None, scad, false, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9522,7 +9565,7 @@ async fn make_of(s: &Site, cookie: &str, model: i64) {
 
 #[tokio::test]
 async fn points_come_only_from_what_others_do_with_your_work() {
-    let Some(s) = services_site(None, None, None, None, true).await else {
+    let Some(s) = services_site(None, None, None, None, true, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9575,7 +9618,7 @@ async fn points_come_only_from_what_others_do_with_your_work() {
 
 #[tokio::test]
 async fn makes_of_others_models_count_up_to_twenty_a_month() {
-    let Some(s) = services_site(None, None, None, None, true).await else {
+    let Some(s) = services_site(None, None, None, None, true, None).await else {
         return;
     };
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
@@ -9606,4 +9649,1119 @@ async fn points_are_off_unless_switched_on() {
     let ann = model_maker(&s, "ann%40example.com", "ann").await;
     assert_eq!(s.get("/account/points", Some(&ann)).await.status, StatusCode::NOT_FOUND);
     assert!(!s.get("/account", Some(&ann)).await.body.contains("/account/points"));
+}
+
+// ---------------------------------------------------------------- ordering from shops (MF-82 to MF-84)
+
+/// A site with StitchHub (a stand-in) and Stripe (a fake) switched on → the site, its state (to run
+/// the hub's round), the hub and Stripe.
+async fn shops_site() -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    shops_site_taxed(false).await
+}
+
+/// The same, with sales tax on (Stripe Tax) when `tax`.
+async fn shops_site_taxed(
+    tax: bool,
+) -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    let (hub_url, hub) = makerfoundry::shop_orders::hub::stand_in::start().await.unwrap();
+    let (stripe, st) = fake_stripe().await;
+    let stripe = if tax {
+        stripe.with_tax(makerfoundry::stripe::DEFAULT_TAX_CODE).unwrap()
+    } else {
+        stripe
+    };
+    let pool = test_db().await?;
+    let (storage, stored) = fake_storage().await;
+    let storage_kept = storage.clone();
+    let (url, fake) = fake_cloud().await;
+    let state = AppState {
+        cloud: Cloud::new(&url).unwrap(),
+        db: Some(pool.clone()),
+        storage: Some(storage),
+        publishers: makerfoundry::listings::Publishers::Everyone,
+        admins: vec![1000],
+        limits: std::sync::Arc::default(),
+        stripe: Some(stripe),
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
+        three_d: true,
+        scanner: None,
+        thingiverse: None,
+        social: None,
+        notices: None,
+        step: None,
+        scad: None,
+        points: false,
+        stitchhub: makerfoundry::shop_orders::hub::Hub::new(&hub_url, "mf-test").map(|h| h.with_files_from(&hub_url)),
+    };
+    let app = makerfoundry::app(state.clone());
+    Some((
+        Site {
+            app,
+            pool,
+            fake,
+            stored,
+            storage: Some(storage_kept),
+        },
+        state,
+        hub,
+        st,
+    ))
+}
+
+/// The example catalogue (Main Street Threadworks, account 4217), as the hub delivers it.
+fn catalog_message(id: &str) -> Value {
+    let mut v: Value = serde_json::from_slice(
+        &std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/contract/shop-orders/valid/catalog.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    v["id"] = id.into();
+    v
+}
+
+/// Makes account 4217 (the example shop) able to be paid.
+async fn shop_can_be_paid(s: &Site) {
+    sqlx::query("INSERT INTO mf_accounts (account_id, email) VALUES (4217, 'shop@example.com') ON CONFLICT DO NOTHING")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO mf_sellers (account_id, stripe_account, details_submitted, charges_enabled, payouts_enabled)
+         VALUES (4217, 'acct_shop4217', true, true, true) ON CONFLICT DO NOTHING",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn shops_are_missing_until_stitchhub_is_switched_on() {
+    let Some(s) = site().await else { return };
+    assert_eq!(s.get("/shops", None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(s.get("/shops/mainst", None).await.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
+    let Some((s, state, hub, _)) = shops_site().await else {
+        return;
+    };
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001"));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shops WHERE handle = 'mainst' AND account_id = 4217")
+            .await,
+        1
+    );
+    // kept, but not offered: the shop can't be paid yet
+    assert!(s.get("/shops", None).await.body.contains("No shops take orders yet"));
+    assert_eq!(s.get("/shops/mainst", None).await.status, StatusCode::NOT_FOUND);
+    shop_can_be_paid(&s).await;
+    let list = s.get("/shops", None).await.body;
+    assert!(
+        list.contains(r#"href="/shops/mainst""#)
+            && list.contains("Main Street Threadworks")
+            && list.contains("Elmwood"),
+        "{list}"
+    );
+    let page = s.get("/shops/mainst", None).await.body;
+    for want in [
+        "Heavy cotton tee",
+        "$8.00 a piece before decoration",
+        "Black, Navy",
+        "S, M, L, XL",
+        "Embroidery",
+        "left chest, back",
+        "1+: $12.00 · 12+: $9.00",
+        "set-up $25.00 an order",
+        "Direct to garment (DTG)",
+        "Screen print",
+        "Shipping $8.99 an order, plus $0.50 for each piece after the first; free on orders of $300.00 or more.",
+        r#"href="/shops/mainst/order/tee-heavy""#,
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop", &page, None).await;
+    // the shop changes its prices: the page follows
+    let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c002");
+    again["body"]["products"][0]["cents"] = 950.into();
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(
+        s.get("/shops/mainst", None)
+            .await
+            .body
+            .contains("$9.50 a piece before decoration")
+    );
+    assert_eq!(s.get("/shops/nobody", None).await.status, StatusCode::NOT_FOUND);
+    // a shop's text can't reach the page as HTML
+    let mut evil = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c003");
+    evil["body"]["shop"]["name"] = "<script>alert(1)</script>".into();
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, evil);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let list = s.get("/shops", None).await.body;
+    assert!(
+        !list.contains("<script>alert") && list.contains("&lt;script&gt;"),
+        "{list}"
+    );
+}
+
+/// The order form sent from our own page: text fields, and the art if given.
+fn order_form(path: &str, fields: &[(&str, &str)], art: Option<(&str, &[u8])>, cookie: &str) -> Request<Body> {
+    let boundary = "----mf-test-order";
+    let mut body = Vec::new();
+    for (k, v) in fields {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes(),
+        );
+    }
+    if let Some((name, bytes)) = art {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"art\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Request::post(path)
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, format!("https://{HOST}"))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A shops site with Main Street Threadworks' catalogue kept and the shop able to be paid.
+async fn open_shop() -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    open_shop_taxed(false).await
+}
+
+async fn open_shop_taxed(
+    tax: bool,
+) -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    let (s, state, hub, st) = shops_site_taxed(tax).await?;
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001"));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    shop_can_be_paid(&s).await;
+    Some((s, state, hub, st))
+}
+
+const TEE: &str = "/shops/mainst/order/tee-heavy";
+
+/// 10 Navy M and 2 Navy L, embroidered on the left chest, shipped: 12 pieces at $8 + $9.
+fn tee_order<'a>() -> Vec<(&'a str, &'a str)> {
+    vec![
+        ("colour", "1"),
+        ("q1", "10"),
+        ("q2", "2"),
+        ("decoration", "m0p0"),
+        ("name", "Bea Example"),
+        ("delivery", "ship"),
+        ("line1", "12 Oak Street"),
+        ("city", "Elmwood"),
+        ("region", "OH"),
+        ("postcode", "44000"),
+        ("country", "US"),
+        ("note", "Thread to match the logo, please."),
+        ("rights", "yes"),
+    ]
+}
+
+#[tokio::test]
+async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    // signing in comes first
+    assert!(s.get(TEE, None).await.location().starts_with("/signin"));
+    let bea = s.sign_up("bea%40example.com").await;
+    let form = s.get(TEE, Some(&bea)).await.body;
+    for want in [
+        "Order: Heavy cotton tee",
+        "Navy",
+        "XL",
+        "Embroidery on the left chest",
+        "Direct to garment (DTG) on the front",
+        "Ship it to me",
+    ] {
+        assert!(form.contains(want), "{want}: {form}");
+    }
+    s.dump_page("shop-order-form", &form, Some(&bea)).await;
+    assert_eq!(
+        s.get("/shops/mainst/order/nothing", Some(&bea)).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    let pes = sample(sf_formats::Format::Pes);
+    let made = s
+        .send(order_form(TEE, &tee_order(), Some(("logo.pes", &pes)), &bea))
+        .await;
+    let path = made.location().to_string();
+    assert!(path.starts_with("/shop-orders/mf-"), "{} {}", made.status, made.body);
+    let reference = path.trim_start_matches("/shop-orders/").to_string();
+    // 12 × ($8 + $9) + $25 set-up + $8.99 + 11 × 50¢ shipping; 10% and the card fee from the shop's share
+    let amounts: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT goods_cents, setup_cents, shipping_cents, paid_cents, fee_cents, card_fee_cents FROM mf_shop_orders",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(amounts, (20_400, 2_500, 1_449, 24_349, 2_435, 736));
+    assert_eq!(s.scalar("SELECT shop_cents FROM mf_shop_orders").await, 21_178);
+    let page = s.get(&path, Some(&bea)).await.body;
+    for want in [
+        "Your order from Main Street Threadworks",
+        "Not paid yet",
+        "Pay $243.49",
+        "tee-heavy, Navy: L × 2, M × 10",
+        "Embroidery on the left chest (logo.pes)",
+        "Shipping to 12 Oak Street, Elmwood, OH 44000",
+        "$204.00",
+        "$25.00",
+        "$14.49",
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop-order", &page, Some(&bea)).await;
+    // nobody else sees it; nothing goes to the shop before it's paid
+    let sam = s.sign_up("sam%40example.com").await;
+    assert_eq!(s.get(&path, Some(&sam)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        s.post(&format!("{path}/pay"), "", Some(&sam)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 0);
+    let token: String = sqlx::query_scalar("SELECT token FROM mf_shop_orders")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let sha: String = sqlx::query_scalar("SELECT art->0->>'sha256' FROM mf_shop_orders")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let art = format!("{path}/art/{sha}?t={token}");
+    assert_eq!(s.get(&art, None).await.status, StatusCode::NOT_FOUND);
+
+    // paying: Stripe Checkout, MakerFoundry's 10% and the card fee as the application fee
+    let pay = s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    assert_eq!(pay.location(), "https://checkout.stripe.com/c/pay/cs_test_1");
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(f["line_items[0][price_data][unit_amount]"], "24349");
+    assert_eq!(f["payment_intent_data[application_fee_amount]"], "3171");
+    assert_eq!(f["payment_intent_data[transfer_data][destination]"], "acct_shop4217");
+    assert_eq!(f["metadata[shop_order]"], reference);
+    assert_eq!(f["metadata[app]"], "makerfoundry");
+    // a second click goes to the same checkout, so the order can't be paid twice
+    assert_eq!(
+        s.post(&format!("{path}/pay"), "", Some(&bea)).await.location(),
+        "https://checkout.stripe.com/c/pay/cs_test_1"
+    );
+    assert_eq!(st.lock().unwrap().sessions.len(), 1);
+    // a session that isn't paid, or isn't this order's, changes nothing
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_so_0",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, false),
+    )
+    .await;
+    let mut other = session_json("cs_test_1", &f, true);
+    other["metadata"]["shop_order"] = json!("mf-0000000000000000");
+    s.stripe_event(WEBHOOK_SECRET, "evt_so_1", "checkout.session.completed", other)
+        .await;
+    let mut short = session_json("cs_test_1", &f, true);
+    short["amount_total"] = json!(100);
+    s.stripe_event(WEBHOOK_SECRET, "evt_so_2", "checkout.session.completed", short)
+        .await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'pending'")
+            .await,
+        1
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 0);
+
+    // paid: the ledger and order.placed, once
+    for evt in ["evt_so_3", "evt_so_4"] {
+        let a = s
+            .stripe_event(
+                WEBHOOK_SECRET,
+                evt,
+                "checkout.session.completed",
+                session_json("cs_test_1", &f, true),
+            )
+            .await;
+        assert_eq!(a.status, StatusCode::OK);
+    }
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'sent' AND paid_at IS NOT NULL")
+            .await,
+        1
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 24_349);
+    assert_eq!(
+        s.scalar("SELECT cents FROM mf_shop_ledger WHERE kind = 'shop' AND account_id = 4217")
+            .await,
+        21_178
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE kind = 'order.placed'")
+            .await,
+        1
+    );
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Sent to the shop"));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let placed = hub
+        .lock()
+        .unwrap()
+        .received
+        .iter()
+        .find(|m| m["type"] == "order.placed")
+        .cloned()
+        .unwrap();
+    assert_eq!(placed["order"], json!(reference));
+    assert_eq!(placed["to"], "shop:mainst");
+    assert_eq!(placed["seq"], 1);
+    assert_eq!(placed["body"]["totals"]["paid_cents"], 24_349);
+    assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 21_178);
+    assert_eq!(placed["body"]["customer"]["ship_to"]["city"], "Elmwood");
+    assert_eq!(placed["body"]["lines"][0]["sizes"]["M"], 10);
+    let url = placed["body"]["art_urls"][&sha].as_str().unwrap().to_string();
+    assert_eq!(url, format!("https://makerfoundry.test{art}"));
+    // the message passes the contract's own checks
+    makerfoundry::shop_orders::contract::parse(placed.to_string().as_bytes()).unwrap();
+
+    // the shop fetches the art with the order's secret, and only with it
+    let got = s.get(&art, None).await;
+    assert_eq!(got.status, StatusCode::OK);
+    assert!(
+        got.headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("attachment; filename=\"logo.pes\"")
+    );
+    assert!(s.stored.lock().unwrap().values().any(|(_, b)| *b == pes));
+    assert_eq!(
+        s.get(&format!("{path}/art/{sha}?t=wrong"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.get(&format!("{path}/art/{sha}"), None).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // and paying again does nothing
+    assert_eq!(s.post(&format!("{path}/pay"), "", Some(&bea)).await.location(), path);
+}
+
+#[tokio::test]
+async fn coming_back_from_checkout_sends_a_shop_order_without_waiting_for_the_webhook() {
+    let Some((s, _, _, st)) = open_shop().await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let photo = photo_with_location();
+    let mut fields = tee_order();
+    fields.retain(|(k, _)| *k != "decoration" && *k != "delivery");
+    fields.push(("decoration", "m1p0"));
+    fields.push(("delivery", "pickup"));
+    let path = s
+        .send(order_form(TEE, &fields, Some(("front.jpg", &photo)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert!(path.starts_with("/shop-orders/mf-"));
+    // picked up: no shipping; DTG at $10 a piece, no set-up
+    assert_eq!(s.scalar("SELECT paid_cents FROM mf_shop_orders").await, 12 * 1_800);
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Pick up at the shop"));
+    s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    // back from Stripe before it's paid: nothing changes
+    assert!(
+        s.get(&format!("{path}?session=cs_test_1"), Some(&bea))
+            .await
+            .body
+            .contains("Not paid yet")
+    );
+    // another paid session of the same amount (a design bought, say) doesn't pay for this order
+    let mut design = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    design.remove("metadata[shop_order]");
+    design.insert("metadata[order]".into(), "1".into());
+    st.lock()
+        .unwrap()
+        .sessions
+        .insert("cs_test_other".into(), (design, true));
+    assert!(
+        s.get(&format!("{path}?session=cs_test_other"), Some(&bea))
+            .await
+            .body
+            .contains("Not paid yet")
+    );
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = true;
+    // someone else's visit with the session checks nothing
+    let sam = s.sign_up("sam%40example.com").await;
+    assert_eq!(
+        s.get(&format!("{path}?session=cs_test_1"), Some(&sam)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 0);
+    let page = s.get(&format!("{path}?session=cs_test_1"), Some(&bea)).await.body;
+    assert!(page.contains("Sent to the shop"), "{page}");
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 1);
+    // the webhook arriving later adds nothing
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_so_9",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, true),
+    )
+    .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 3);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 1);
+}
+
+#[tokio::test]
+async fn order_problems_are_explained_and_nothing_is_kept() {
+    let Some((s, _, _, _)) = open_shop().await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let pes = sample(sf_formats::Format::Pes);
+    let photo = photo_with_location();
+    let without = |drop: &str| {
+        let mut f = tee_order();
+        f.retain(|(k, _)| *k != drop);
+        f
+    };
+    let mut no_pieces = without("q1");
+    no_pieces.retain(|(k, _)| *k != "q2");
+    let mut too_many = without("q1");
+    too_many.push(("q1", "100000"));
+    let mut no_address = without("line1");
+    no_address.push(("line1", ""));
+    let mut bad_choice = without("decoration");
+    bad_choice.push(("decoration", "m9p0"));
+    for (fields, art, want) in [
+        (
+            without("rights"),
+            Some(("logo.pes", &pes[..])),
+            "Confirm the art is yours",
+        ),
+        (no_pieces, Some(("logo.pes", &pes[..])), "Say how many of each size"),
+        (too_many, Some(("logo.pes", &pes[..])), "at most"),
+        (no_address, Some(("logo.pes", &pes[..])), "Give the shipping address"),
+        (bad_choice, Some(("logo.pes", &pes[..])), "Choose a decoration"),
+        (tee_order(), None, "Choose your art"),
+        // embroidery needs an embroidery file
+        (tee_order(), Some(("photo.jpg", &photo[..])), "The art:"),
+        (without("name"), Some(("logo.pes", &pes[..])), "Give your name"),
+    ] {
+        let a = s.send(order_form(TEE, &fields, art, &bea)).await;
+        assert_eq!(a.status, StatusCode::OK, "{want}");
+        assert!(a.body.contains(want), "{want}: {}", a.body);
+    }
+    // printing needs a picture
+    let mut dtg = without("decoration");
+    dtg.push(("decoration", "m1p0"));
+    let a = s.send(order_form(TEE, &dtg, Some(("logo.pes", &pes)), &bea)).await;
+    assert!(a.body.contains("The art:"), "{}", a.body);
+    // from another site
+    let mut req = order_form(TEE, &tee_order(), Some(("logo.pes", &pes)), &bea);
+    req.headers_mut()
+        .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+    assert_eq!(s.send(req).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_orders").await, 0);
+    assert!(s.stored.lock().unwrap().is_empty());
+}
+
+/// A paid order (the tee, shipped) from bea → bea's cookie, the order's page and its reference.
+async fn paid_order(s: &Site, st: &StripeShared) -> (String, String, String) {
+    let bea = s.sign_up("bea%40example.com").await;
+    let pes = sample(sf_formats::Format::Pes);
+    let path = s
+        .send(order_form(TEE, &tee_order(), Some(("logo.pes", &pes)), &bea))
+        .await
+        .location()
+        .to_string();
+    let reference = path.trim_start_matches("/shop-orders/").to_string();
+    s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_paid",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, true),
+    )
+    .await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'sent'")
+            .await,
+        1
+    );
+    (bea, path, reference)
+}
+
+/// A message from the shop (or the hub) about `order`, made from the contract's example of `kind`.
+fn from_shop(kind: &str, n: u32, order: &str, seq: u64, body: Value) -> Value {
+    let mut v: Value = serde_json::from_slice(
+        &std::fs::read(format!(
+            "{}/../../docs/contract/shop-orders/valid/{kind}.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    v["id"] = json!(format!("0192f0c4-7a1b-7c2d-8e3f-{n:012}"));
+    if kind != "message.expired" {
+        v["order"] = json!(order);
+        v["from"] = json!("shop:mainst");
+        v["to"] = json!("makerfoundry");
+    }
+    v["seq"] = json!(seq);
+    v["body"] = body;
+    v
+}
+
+/// A small PNG, as a shop's mock-up.
+fn mockup_png() -> Vec<u8> {
+    let picture = image::RgbImage::from_fn(60, 40, |x, y| image::Rgb([(x * 4) as u8, (y * 6) as u8, 90]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    picture.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn mockup(hub: &makerfoundry::shop_orders::hub::stand_in::Shared, name: &str, bytes: &[u8]) -> Value {
+    use sha2::Digest;
+    hub.lock().unwrap().files.insert(name.into(), bytes.to_vec());
+    json!({
+        "size": bytes.len(),
+        "sha256": format!("{:x}", sha2::Sha256::digest(bytes)),
+        "type": "image/png",
+        "url": format!("https://files.hub.test/files/{name}?sig=1"),
+    })
+}
+
+/// What MakerFoundry sent the hub of `kind`, oldest first.
+fn sent_of(hub: &makerfoundry::shop_orders::hub::stand_in::Shared, kind: &str) -> Vec<Value> {
+    hub.lock()
+        .unwrap()
+        .received
+        .iter()
+        .filter(|m| m["type"] == kind)
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn the_shop_reports_progress_and_the_customer_answers_proofs() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    let (bea, path, r) = paid_order(&s, &st).await;
+    let deliver = |m: Value| makerfoundry::shop_orders::hub::stand_in::deliver(&hub, m);
+    deliver(from_shop("order.status", 1, &r, 1, json!({"status": "received"})));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Received by the shop"));
+
+    // a proof: fetched from the hub, checked, re-drawn, shown only to the customer
+    let png = mockup_png();
+    let m1 = mockup(&hub, "m1", &png);
+    deliver(from_shop(
+        "proof.sent",
+        2,
+        &r,
+        2,
+        json!({"proof": 1, "mockup": m1, "note": "At 3.5 inches."}),
+    ));
+    // another shop's word about this order, and a mock-up that isn't the one described, are left
+    let mut stranger = from_shop("order.status", 3, &r, 1, json!({"status": "shipped"}));
+    stranger["from"] = json!("shop:other");
+    deliver(stranger);
+    let mut wrong = mockup(&hub, "m9", &png);
+    wrong["sha256"] = json!("c".repeat(64));
+    deliver(from_shop("proof.sent", 4, &r, 3, json!({"proof": 9, "mockup": wrong})));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(
+        hub.lock().unwrap().queues.get("makerfoundry").is_none_or(Vec::is_empty),
+        "all taken"
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_proofs").await, 1);
+    let page = s.get(&path, Some(&bea)).await.body;
+    for want in [
+        "A proof is waiting for you",
+        &format!(r#"src="{path}/proofs/1/image""#),
+        "Proof 1: At 3.5 inches.",
+        "Approve this proof",
+        "Ask for changes",
+        "Cancel the order",
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop-order-proof", &page, Some(&bea)).await;
+    let img = s.get(&format!("{path}/proofs/1/image"), Some(&bea)).await;
+    assert_eq!(img.status, StatusCode::OK);
+    assert_eq!(img.headers[header::CONTENT_TYPE], "image/png");
+    let sam = s.sign_up("sam%40example.com").await;
+    assert_eq!(
+        s.get(&format!("{path}/proofs/1/image"), Some(&sam)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.post(&format!("{path}/proofs/1"), "answer=approved", Some(&sam))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+
+    // changes need a note
+    s.post(&format!("{path}/proofs/1"), "answer=changes&note=", Some(&bea))
+        .await;
+    assert!(sent_of(&hub, "proof.answer").is_empty());
+    s.post(
+        &format!("{path}/proofs/1"),
+        "answer=changes&note=A+little+smaller",
+        Some(&bea),
+    )
+    .await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let answers = sent_of(&hub, "proof.answer");
+    assert_eq!(answers.len(), 1);
+    assert_eq!(
+        answers[0]["body"],
+        json!({"proof": 1, "answer": "changes", "note": "A little smaller"})
+    );
+    assert_eq!(answers[0]["seq"], 2, "after order.placed");
+    // answered once
+    s.post(&format!("{path}/proofs/1"), "answer=approved", Some(&bea)).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(sent_of(&hub, "proof.answer").len(), 1);
+
+    let m2 = mockup(&hub, "m2", &png);
+    deliver(from_shop("proof.sent", 5, &r, 4, json!({"proof": 2, "mockup": m2})));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("You asked for changes:</strong> A little smaller"),
+        "{page}"
+    );
+    // only the latest proof can be answered
+    s.post(&format!("{path}/proofs/1"), "answer=approved", Some(&bea)).await;
+    s.post(&format!("{path}/proofs/2"), "answer=approved", Some(&bea)).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let answers = sent_of(&hub, "proof.answer");
+    assert_eq!(answers.len(), 2);
+    assert_eq!(answers[1]["body"]["proof"], 2);
+    assert_eq!(answers[1]["body"]["answer"], "approved");
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Proof approved"));
+
+    // production: no more cancelling
+    deliver(from_shop(
+        "order.status",
+        6,
+        &r,
+        5,
+        json!({"status": "in_production", "note": "On the machine today."}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("Being made") && page.contains("The shop says: On the machine today."),
+        "{page}"
+    );
+    assert!(!page.contains("Cancel the order"));
+    s.post(&format!("{path}/cancel"), "why=changed+my+mind", Some(&bea))
+        .await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'in_production'")
+            .await,
+        1
+    );
+    deliver(from_shop(
+        "order.status",
+        7,
+        &r,
+        6,
+        json!({"status": "shipped", "tracking": "1Z999AA10123456784"}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("Shipped") && page.contains("Tracking: 1Z999AA10123456784"),
+        "{page}"
+    );
+    assert!(st.lock().unwrap().refunds.is_empty());
+}
+
+#[tokio::test]
+async fn a_cancelled_order_is_refunded_and_the_shop_is_out_only_the_card_fee() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    let (bea, path, r) = paid_order(&s, &st).await;
+    st.lock().unwrap().fee_refunds_fail = true;
+    s.post(&format!("{path}/cancel"), "why=Wrong+colour", Some(&bea)).await;
+    // the shop is told; the payment comes back, taken from the shop
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let cancels = sent_of(&hub, "order.cancel");
+    assert_eq!(cancels.len(), 1);
+    assert_eq!(cancels[0]["body"], json!({"by": "customer", "why": "Wrong colour"}));
+    let refund = st.lock().unwrap().refunds[0].clone();
+    assert_eq!(refund["payment_intent"], "pi_cs_test_1");
+    assert_eq!(refund["reverse_transfer"], "true");
+    assert_eq!(refund["refund_application_fee"], "false");
+    assert_eq!(refund["metadata[shop_order]"], r);
+    assert_eq!(
+        s.scalar("SELECT cents FROM mf_shop_ledger WHERE reason = 'refund'")
+            .await,
+        -24_349
+    );
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("You cancelled this order: Wrong colour.") && page.contains("Refunded: $243.49"),
+        "{page}"
+    );
+    assert!(!page.contains("Cancel the order"));
+    s.dump_page("shop-order-cancelled", &page, Some(&bea)).await;
+    // Stripe couldn't give the 10% back: the sweep does, once
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_ledger WHERE reason = 'fee_return'")
+            .await,
+        0
+    );
+    st.lock().unwrap().fee_refunds_fail = false;
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    let fee_refunds = st.lock().unwrap().fee_refunds.clone();
+    assert_eq!(fee_refunds.len(), 1);
+    assert_eq!(fee_refunds[0].0, "fee_pi_cs_test_1");
+    assert_eq!(fee_refunds[0].1["amount"], "2435");
+    assert_eq!(st.lock().unwrap().refunds.len(), 1, "refunded once");
+    // in the end: the customer has it all back, MakerFoundry keeps nothing but the card fee it
+    // paid Stripe, and the shop is out the card fee
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 0);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'shop'")
+            .await,
+        -736
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'fee'")
+            .await,
+        0
+    );
+    // Stripe's charge.refunded, coming later, adds nothing
+    let charge = json!({"id": "ch_1", "object": "charge", "payment_intent": "pi_cs_test_1", "refunded": true});
+    s.stripe_event(WEBHOOK_SECRET, "evt_refunded", "charge.refunded", charge)
+        .await;
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 6);
+    // and cancelling again does nothing
+    s.post(&format!("{path}/cancel"), "", Some(&bea)).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(sent_of(&hub, "order.cancel").len(), 1);
+}
+
+#[tokio::test]
+async fn an_order_the_shop_never_takes_or_turns_down_is_refunded() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    let (bea, path, r) = paid_order(&s, &st).await;
+    let deliver = |m: Value| makerfoundry::shop_orders::hub::stand_in::deliver(&hub, m);
+    // the hub gave up delivering it
+    deliver(from_shop(
+        "message.expired",
+        1,
+        &r,
+        0,
+        json!({"id": "0192f0c4-7a1b-7c2d-8e3f-0123456789ff", "type": "order.placed", "order": r}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("didn't take the order in time") && page.contains("Refunded: $243.49"),
+        "{page}"
+    );
+    assert_eq!(st.lock().unwrap().refunds.len(), 1);
+    assert_eq!(st.lock().unwrap().fee_refunds.len(), 1);
+
+    // a second order the shop turns down before production: refunded
+    sqlx::query("DELETE FROM mf_shop_ledger")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE mf_shop_orders SET status = 'received', refund_due = false, refunded_at = NULL, fee_returned_at = NULL",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    st.lock().unwrap().refunds.clear();
+    deliver(from_shop(
+        "order.cancel",
+        2,
+        &r,
+        1,
+        json!({"by": "shop", "why": "Out of navy tees."}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("The shop cancelled this order: Out of navy tees."),
+        "{page}"
+    );
+    assert_eq!(st.lock().unwrap().refunds.len(), 1);
+    // and after production starts, a refund is the shop's to decide
+    sqlx::query("DELETE FROM mf_shop_ledger")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mf_shop_orders SET status = 'in_production', cancelled_by = NULL, refund_due = false, refunded_at = NULL, fee_returned_at = NULL")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    st.lock().unwrap().refunds.clear();
+    deliver(from_shop(
+        "order.cancel",
+        3,
+        &r,
+        2,
+        json!({"by": "shop", "why": "The machine broke."}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert!(st.lock().unwrap().refunds.is_empty());
+    assert!(
+        s.get(&path, Some(&bea))
+            .await
+            .body
+            .contains("a refund is the shop's to decide")
+    );
+}
+
+#[tokio::test]
+async fn unpaid_orders_are_given_up_and_a_customers_data_is_exported_and_erased() {
+    let Some((s, state, _, st)) = open_shop().await else {
+        return;
+    };
+    let (bea, path, _) = paid_order(&s, &st).await;
+    let pes = sample(sf_formats::Format::Pes);
+    let unpaid = s
+        .send(order_form(TEE, &tee_order(), Some(("logo.pes", &pes)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert_eq!(s.stored.lock().unwrap().len(), 2);
+    // a day old: it can't be paid any more; two days: given up and its art deleted
+    sqlx::query("UPDATE mf_shop_orders SET created_at = now() - interval '21 hours' WHERE status = 'pending'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert!(
+        s.post(&format!("{unpaid}/pay"), "", Some(&bea))
+            .await
+            .body
+            .contains("over a day old")
+    );
+    assert_eq!(st.lock().unwrap().sessions.len(), 1);
+    sqlx::query("UPDATE mf_shop_orders SET created_at = now() - interval '3 days' WHERE status = 'pending'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'abandoned'")
+            .await,
+        1
+    );
+    assert_eq!(s.stored.lock().unwrap().len(), 1, "only the paid order's art is kept");
+    // the customer's data: exported, then erased (the paid order keeps its amounts)
+    let export = s.get("/account/data.json", Some(&bea)).await.body;
+    for want in [
+        "\"shop_orders\"",
+        "Main Street Threadworks",
+        "12 Oak Street",
+        "logo.pes",
+        "24349",
+    ] {
+        assert!(export.contains(want), "{want}: {export}");
+    }
+    s.post("/account/data/delete", "confirm=delete", Some(&bea)).await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders").await,
+        1,
+        "the unpaid one went"
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE customer_name = '' AND ship_to IS NULL AND art = '[]'::jsonb AND paid_cents = 24349")
+            .await,
+        1
+    );
+    assert!(s.stored.lock().unwrap().is_empty());
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_ledger").await,
+        3,
+        "the amounts are kept"
+    );
+    let _ = path;
+}
+
+/// What was posted to the fake Stripe at `path`.
+fn posted(st: &StripeShared, path: &str) -> Vec<HashMap<String, String>> {
+    st.lock()
+        .unwrap()
+        .posts
+        .iter()
+        .filter(|(p, _)| p == path)
+        .map(|(_, f)| f.clone())
+        .collect()
+}
+
+async fn calc_id(s: &Site) -> String {
+    sqlx::query_scalar("SELECT tax_calculation FROM mf_shop_orders")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn sales_tax_on_a_shop_order_is_makerfoundrys_and_comes_back_with_a_refund() {
+    let Some((s, state, hub, st)) = open_shop_taxed(true).await else {
+        return;
+    };
+    let (bea, path, r) = paid_order(&s, &st).await;
+    // worked out before checkout, from where it ships, under the clothing tax code
+    let calc = posted(&st, "/v1/tax/calculations")[0].clone();
+    assert_eq!(calc["line_items[0][amount]"], "22900");
+    assert_eq!(calc["line_items[0][tax_code]"], "txcd_30011000");
+    assert_eq!(calc["line_items[0][tax_behavior]"], "exclusive");
+    assert_eq!(calc["shipping_cost[amount]"], "1449");
+    assert_eq!(calc["customer_details[address][line1]"], "12 Oak Street");
+    assert_eq!(calc["customer_details[address][state]"], "OH");
+    assert_eq!(calc["customer_details[address][postal_code]"], "44000");
+    // $243.49 + 7% of $229.00; the 10% of the price before tax, the card fee of all that's paid
+    let amounts: (i64, i64, i64, i64, i64) =
+        sqlx::query_as("SELECT tax_cents, paid_cents, fee_cents, card_fee_cents, shop_cents FROM mf_shop_orders")
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(amounts, (1_603, 25_952, 2_435, 783, 21_131));
+    // the tax goes to MakerFoundry inside the application fee
+    let session = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(session["line_items[0][price_data][unit_amount]"], "25952");
+    assert_eq!(
+        session["payment_intent_data[application_fee_amount]"],
+        (2_435 + 783 + 1_603).to_string()
+    );
+    assert_eq!(
+        s.scalar("SELECT cents FROM mf_shop_ledger WHERE kind = 'tax' AND account_id = 0")
+            .await,
+        1_603
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 25_952);
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("Sales tax") && page.contains("$16.03") && page.contains("$259.52"),
+        "{page}"
+    );
+    // the shop is told what was paid, the tax outside its share
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let placed = sent_of(&hub, "order.placed").remove(0);
+    assert_eq!(placed["body"]["totals"]["tax_cents"], 1_603);
+    assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 21_131);
+    // recorded with Stripe for its tax reports, once
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    let recorded = posted(&st, "/v1/tax/transactions/create_from_calculation");
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0]["calculation"], calc_id(&s).await);
+    assert_eq!(recorded[0]["reference"], r);
+
+    // cancelled: the customer gets it all back, the tax transaction is reversed, and the shop is
+    // still out only the card fee
+    s.post(&format!("{path}/cancel"), "", Some(&bea)).await;
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    let reversal = posted(&st, "/v1/tax/transactions/create_reversal");
+    assert_eq!(reversal.len(), 1);
+    assert_eq!(reversal[0]["mode"], "full");
+    assert_eq!(
+        reversal[0]["original_transaction"],
+        format!("tax_test_{}", r.replace('-', "_"))
+    );
+    assert_eq!(reversal[0]["reference"], format!("{r}-refund"));
+    assert_eq!(
+        st.lock().unwrap().fee_refunds[0].1["amount"],
+        (2_435 + 1_603).to_string()
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 0);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'tax'")
+            .await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'shop'")
+            .await,
+        -783
+    );
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Refunded: $259.52"));
+}
+
+#[tokio::test]
+async fn a_pick_up_order_is_taxed_where_the_shop_is_and_needs_its_address() {
+    let Some((s, state, hub, st)) = open_shop_taxed(true).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let pes = sample(sf_formats::Format::Pes);
+    let mut pickup = tee_order();
+    pickup.retain(|(k, _)| *k != "delivery");
+    pickup.push(("delivery", "pickup"));
+    let path = s
+        .send(order_form(TEE, &pickup, Some(("logo.pes", &pes)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert!(path.starts_with("/shop-orders/"), "{path}");
+    let calc = posted(&st, "/v1/tax/calculations")[0].clone();
+    assert_eq!(calc["customer_details[address][line1]"], "210 Main Street");
+    assert_eq!(calc["customer_details[address][postal_code]"], "44001");
+    assert!(!calc.contains_key("shipping_cost[amount]"));
+    // a shop that hasn't given its address can only ship while tax is collected
+    let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c009");
+    again["body"]["shop"].as_object_mut().unwrap().remove("address");
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let a = s.send(order_form(TEE, &pickup, Some(("logo.pes", &pes)), &bea)).await;
+    assert!(a.body.contains("can&#39;t take pick-up orders yet"), "{}", a.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_orders").await, 1);
 }
