@@ -828,6 +828,8 @@ async fn handle_event(pool: &PgPool, event: &Value, public_url: &str) -> Result<
                 if let Some(order) = order {
                     record_refund(&mut tx, order).await?;
                 }
+                // an order from a shop (MF-64)
+                crate::shop_orders::after::refunded_by_stripe(&mut tx, intent).await?;
             }
         }
         "account.updated" => save_status(&mut tx, object).await?,

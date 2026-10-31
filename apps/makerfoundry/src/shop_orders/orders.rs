@@ -506,8 +506,22 @@ pub async fn pay(State(state): State<AppState>, headers: HeaderMap, Path(referen
         return crate::designs::not_found();
     };
     let back = Redirect::to(&format!("/shop-orders/{reference}")).into_response();
+    // (an order is paid within a day, so no checkout outlives the two days it's kept unpaid)
+    let fresh: bool =
+        sqlx::query_scalar("SELECT created_at > now() - interval '20 hours' FROM mf_shop_orders WHERE id = $1")
+            .bind(o.id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
     if o.status != "pending" {
         return back;
+    }
+    if !fresh {
+        return private(
+            "Order · MakerFoundry",
+            r#"<section class="form"><h1>This order is over a day old</h1><p>Prices may have changed: please start the order again from the shop's page.</p></section>"#,
+            true,
+        );
     }
     let Some(seller) = crate::selling::seller(pool, o.shop_account)
         .await
@@ -723,7 +737,8 @@ pub fn status_name(s: &str) -> &'static str {
         "collected" => "Picked up",
         "cancelled" => "Cancelled",
         "refunded" => "Refunded",
-        "expired" => "The shop didn't answer; refunded",
+        "expired" => "The shop didn't take the order in time, so it's refunded",
+        "abandoned" => "Not paid, and given up after two days",
         _ => "Unknown",
     }
 }
@@ -828,6 +843,7 @@ pub async fn page(
     } else {
         String::new()
     };
+    let after = super::after::page_html(pool, &o).await;
     let delivery = match &o.customer.ship_to {
         Some(a) => format!(
             "Shipping to {}, {}, {} {}",
@@ -846,6 +862,7 @@ pub async fn page(
 <p class="muted">Order {r}{shop_link}</p>
 <ul class="order-lines">{lines}</ul>
 <p>{delivery}</p>
+{after}
 {totals}
 {action}</section>"#,
             shop = escape(&shop_name),

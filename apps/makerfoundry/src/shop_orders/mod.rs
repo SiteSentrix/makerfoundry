@@ -3,6 +3,7 @@
 //! `docs/shop-orders-contract.md`. Switched off until `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY`
 //! are set.
 
+pub mod after;
 pub mod contract;
 pub mod hub;
 pub mod orders;
@@ -17,11 +18,18 @@ use crate::AppState;
 use contract::{Envelope, Message};
 
 /// Applies a checked message from a shop (or the hub), once and in order (`hub::sync`).
-pub async fn apply(pool: PgPool, env: Envelope, msg: Message) -> Result<(), String> {
+pub async fn apply(state: AppState, pool: PgPool, env: Envelope, msg: Message) -> Result<(), String> {
     match &msg {
         Message::Catalog(c) => shops::keep(&pool, &env.from, c).await,
-        // (orders come with MF-63 and MF-64; until then nothing sends any)
-        _ => Err(format!("{} isn't handled yet", msg.kind())),
+        Message::OrderStatus(s) => after::status(&pool, &env, s).await,
+        Message::ProofSent(p) => after::proof(&state, &pool, &env, p).await,
+        Message::OrderCancel(c) => after::shop_cancelled(&state, &pool, &env, c).await,
+        Message::MessageExpired(e) => after::expired(&state, &pool, &env, e).await,
+        // (MakerFoundry's own messages never come back to it)
+        Message::OrderPlaced(_) | Message::ProofAnswer(_) => {
+            eprintln!("stitchhub: {} {} left: not for MakerFoundry", env.kind, env.id);
+            Ok(())
+        }
     }
 }
 
@@ -30,10 +38,10 @@ pub async fn sync(state: &AppState) -> Result<(), String> {
     let (Some(hub), Some(pool)) = (state.stitchhub.as_ref(), state.db.as_ref()) else {
         return Ok(());
     };
-    let p = pool.clone();
+    let (p, s) = (pool.clone(), state.clone());
     let run = move |env: Envelope, msg: Message| {
-        let p = p.clone();
-        Box::pin(apply(p, env, msg)) as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+        let (p, s) = (p.clone(), s.clone());
+        Box::pin(apply(s, p, env, msg)) as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
     };
     hub::sync(pool, hub, &run).await
 }

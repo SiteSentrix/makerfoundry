@@ -197,6 +197,15 @@ pub fn app(state: AppState) -> Router {
         .route("/shop-orders/{reference}", get(shop_orders::orders::page))
         .route("/shop-orders/{reference}/pay", post(shop_orders::orders::pay))
         .route("/shop-orders/{reference}/art/{sha}", get(shop_orders::orders::art))
+        .route("/shop-orders/{reference}/cancel", post(shop_orders::after::cancel))
+        .route(
+            "/shop-orders/{reference}/proofs/{proof}",
+            post(shop_orders::after::answer),
+        )
+        .route(
+            "/shop-orders/{reference}/proofs/{proof}/image",
+            get(shop_orders::after::image),
+        )
         .route("/contests", get(model3d::contests::list))
         .route("/contests/{slug}", get(model3d::contests::page))
         .route("/contests/{slug}/enter", post(model3d::contests::enter))

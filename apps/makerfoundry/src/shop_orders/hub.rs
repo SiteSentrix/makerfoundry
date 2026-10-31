@@ -34,6 +34,8 @@ pub struct Hub {
     url: String,
     key: String,
     http: reqwest::Client,
+    /// Tests only: where `https://` file links are fetched from instead (their path kept).
+    files_from: Option<String>,
 }
 
 impl std::fmt::Debug for Hub {
@@ -91,7 +93,15 @@ impl Hub {
             url: url.to_string(),
             key: key.to_string(),
             http,
+            files_from: None,
         })
+    }
+
+    /// For tests: `https://` file links fetched from `base` (a stand-in), their path kept.
+    #[must_use]
+    pub fn with_files_from(mut self, base: &str) -> Self {
+        self.files_from = Some(base.trim_end_matches('/').to_string());
+        self
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
@@ -101,6 +111,43 @@ impl Hub {
             .bearer_auth(&self.key)
             .header("X-Client", format!("makerfoundry/{}", crate::VERSION))
             .header("X-Understands", understood.join(","))
+    }
+
+    /// A file a message points at (a proof's mock-up), at most `max` bytes. The hub's own
+    /// addresses are asked with MakerFoundry's key; any other address only over HTTPS and
+    /// without it (a signed storage link).
+    pub async fn fetch_file(&self, url: &str, max: usize) -> Result<Vec<u8>, String> {
+        let ours = url
+            .strip_prefix(self.url.as_str())
+            .is_some_and(|rest| rest.starts_with('/'));
+        let req = if ours {
+            self.request(reqwest::Method::GET, url.get(self.url.len()..).unwrap_or("/"))
+        } else if let Some(rest) = url.strip_prefix("https://") {
+            match &self.files_from {
+                Some(base) => {
+                    let path = rest.find('/').and_then(|i| rest.get(i..)).unwrap_or("/");
+                    self.http.get(format!("{base}{path}"))
+                }
+                None => self.http.get(url),
+            }
+        } else {
+            return Err("not an HTTPS address".into());
+        };
+        let mut answer = req.send().await.map_err(|e| format!("hub: {}", e.without_url()))?;
+        if !answer.status().is_success() {
+            return Err(format!("hub: file {}", answer.status()));
+        }
+        if answer.content_length().is_some_and(|n| n > max as u64) {
+            return Err("the file is too large".into());
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = answer.chunk().await.map_err(|e| format!("hub: {}", e.without_url()))? {
+            if bytes.len() + chunk.len() > max {
+                return Err("the file is too large".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
     }
 
     /// Reads at most 1 MB of an answer as JSON.
@@ -509,7 +556,7 @@ pub mod stand_in {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    use axum::extract::{Query, State};
+    use axum::extract::{Path, Query, State};
     use axum::http::{HeaderMap, StatusCode};
     use axum::routing::{get, post};
     use axum::{Json, Router};
@@ -526,6 +573,8 @@ pub mod stand_in {
         pub sends_down: bool,
         pub min_makerfoundry: String,
         pub deprecated: Vec<Value>,
+        /// Files shops sent (proofs' mock-ups), at `/files/<name>`, as signed links (no key).
+        pub files: BTreeMap<String, Vec<u8>>,
     }
 
     pub type Shared = Arc<Mutex<Hub>>;
@@ -617,7 +666,16 @@ pub mod stand_in {
             }
             StatusCode::OK
         }
+        // (signed links: no key needed, and none should be sent)
+        async fn file(State(s): State<Shared>, h: HeaderMap, Path(name): Path<String>) -> (StatusCode, Vec<u8>) {
+            let hub = lock(&s);
+            match hub.files.get(&name) {
+                Some(b) if h.get("authorization").is_none() => (StatusCode::OK, b.clone()),
+                _ => (StatusCode::NOT_FOUND, Vec::new()),
+            }
+        }
         let app = Router::new()
+            .route("/files/{name}", get(file))
             .route("/v2/hello", get(hello))
             .route("/v2/messages", post(send).get(fetch))
             .route("/v2/messages/ack", post(ack))

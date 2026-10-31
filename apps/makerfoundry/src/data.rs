@@ -35,7 +35,7 @@ fn page_html(problem: &str) -> String {
 <p><a class="button" href="/account/data.json">Download a copy</a></p>
 <h2>Delete your MakerFoundry data</h2>
 <p>This deletes your maker profile, your designs with their files and photos, your makes, comments, collections and follows, and signs you out everywhere. It can't be undone.</p>
-<p>Kept, because the law asks us to: your purchases and sales and their amounts, which legal pages you agreed to, and reports and copyright notices. A design people have bought is unpublished but kept, so they keep their downloads.</p>
+<p>Kept, because the law asks us to: your purchases and sales and their amounts, which legal pages you agreed to, and reports and copyright notices. A design people have bought is unpublished but kept, so they keep their downloads. Orders from shops keep their amounts; your name, address, notes, art and the shops' proofs are deleted.</p>
 <p>Your Foundry Account itself (email, password, credits) is kept by StitchFoundry, and closed there.</p>
 {problem}
 <form method="post" action="/account/data/delete" class="add-file">
@@ -92,6 +92,15 @@ pub async fn export(pool: &PgPool, user: &User) -> Result<Value, sqlx::Error> {
         "imports": rows(pool, "SELECT i.id, i.created_at, f.path, f.problem FROM mf_imports i JOIN mf_import_files f ON f.import_id = i.id WHERE i.account_id = $1 ORDER BY i.id, f.position", a).await?,
         "comments": rows(pool, "SELECT design_id, body, created_at FROM mf_comments WHERE account_id = $1 ORDER BY id", a).await?,
         "makes": rows(pool, "SELECT design_id, note, created_at FROM mf_makes WHERE account_id = $1 ORDER BY id", a).await?,
+        "shop_orders": rows(pool,
+            "SELECT o.ref, s.name AS shop, o.status, o.lines, o.customer_name, o.ship_to, o.note, o.goods_cents,
+                    o.setup_cents, o.shipping_cents, o.tax_cents, o.paid_cents, o.tracking, o.shop_note, o.cancelled_by,
+                    o.cancel_why, o.created_at, o.paid_at, o.refunded_at,
+                    (SELECT json_agg(json_build_object('proof', p.proof, 'note', p.note, 'answer', p.answer,
+                         'answer_note', p.answer_note, 'sent', p.sent_at, 'answered', p.answered_at) ORDER BY p.proof)
+                       FROM mf_shop_proofs p WHERE p.order_id = o.id) AS proofs
+             FROM mf_shop_orders o LEFT JOIN mf_shops s ON s.party = o.shop_party
+             WHERE o.buyer_account = $1 ORDER BY o.id", a).await?,
         "purchases": rows(pool,
             "SELECT id, design_id, title, price_cents, status, created_at, paid_at, refunded_at
              FROM mf_orders WHERE buyer_account = $1 ORDER BY id", a).await?,
@@ -225,6 +234,22 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         .fetch_all(&mut *tx)
         .await?;
     keys.extend(crate::proofs::erase(&mut tx, &proofs).await?);
+    // orders from shops (MF-64): the art, mock-ups and the customer's details go; unpaid orders go
+    // whole; paid ones keep their amounts (the ledger)
+    let arts: Vec<Value> = sqlx::query_scalar("SELECT art FROM mf_shop_orders WHERE buyer_account = $1")
+        .bind(account)
+        .fetch_all(&mut *tx)
+        .await?;
+    keys.extend(crate::shop_orders::after::art_keys(arts.iter()));
+    keys.extend(
+        sqlx::query_scalar::<_, String>(
+            "DELETE FROM mf_shop_proofs WHERE order_id IN (SELECT id FROM mf_shop_orders WHERE buyer_account = $1)
+             RETURNING image_key",
+        )
+        .bind(account)
+        .fetch_all(&mut *tx)
+        .await?,
+    );
     keys.sort();
     keys.dedup();
     for sql in [
@@ -253,6 +278,10 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         "UPDATE mf_showcase_consents SET withdrawn_at = now() WHERE account_id = $1 AND withdrawn_at IS NULL",
         "UPDATE mf_designs SET import_id = NULL WHERE import_id IN (SELECT id FROM mf_imports WHERE account_id = $1)",
         "DELETE FROM mf_imports WHERE account_id = $1",
+        "DELETE FROM mf_shop_orders WHERE buyer_account = $1 AND status IN ('pending', 'abandoned')",
+        "UPDATE mf_shop_orders SET customer_name = '', ship_to = NULL, note = '', cancel_why = '', art = '[]'::jsonb
+         WHERE buyer_account = $1",
+        "DELETE FROM mf_shops WHERE account_id = $1",
         "UPDATE mf_accounts SET email = '' WHERE account_id = $1",
     ] {
         sqlx::query(sql).bind(account).execute(&mut *tx).await?;

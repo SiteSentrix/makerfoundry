@@ -311,3 +311,8 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .totals td, .totals th { padding: 0.25rem 0; text-align: left; }
 .totals td + td, .totals th + th { text-align: right; padding-left: 2rem; font-variant-numeric: tabular-nums; }
 .totals tr:last-child th { border-top: 1px solid currentColor; padding-top: 0.4rem; }
+.proof { margin: 1rem 0; }
+.proof img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line, #ddd); border-radius: 6px; }
+.proof figcaption { margin-top: 0.4rem; }
+.cancel { margin: 1.5rem 0; }
+.cancel summary { cursor: pointer; }

@@ -204,6 +204,10 @@ async fn main() -> ExitCode {
                 if let Err(e) = makerfoundry::shop_orders::sync(&hub_state).await {
                     eprintln!("stitchhub: {e}");
                 }
+                // refunds due, unpaid orders and old files (MF-64)
+                if let Err(e) = makerfoundry::shop_orders::after::sweep(&hub_state).await {
+                    eprintln!("shop orders: {e}");
+                }
             }
         });
     }

@@ -444,8 +444,20 @@ StitchShop's side is stitchbench#74).
   `order.placed` is queued for the shop, in one transaction, once. The shop fetches the art from
   `/shop-orders/<ref>/art/<sha256>?t=<the order's secret>` while the order is open. Sales tax on
   physical goods isn't collected (`tax_cents` 0) until the owner decides.
-- **MF-64** the
-  customer's order page: status, proofs, cancelling, refunds when an order expires undelivered.
+- **MF-64 after payment, built 2026-10-31** (`src/shop_orders/after.rs`, tables in
+  `migrations/0041_shop_order_updates.sql`): the shop's `order.status` (with its note and
+  tracking), `proof.sent` (the mock-up fetched from its signed link, checked by size and SHA-256,
+  re-drawn and kept; shown only to the customer) and `order.cancel` are applied to the order when
+  it's that shop's; anything else is logged by id and left. The customer approves the latest proof
+  or asks for changes (with a note), or cancels before production; each sends its message in the
+  same transaction. Refunds, as for designs: the payment back with the transfer reversed, then the
+  10% back to the shop (the shop is out only the card fee), each recorded once in
+  `mf_shop_ledger`; due when either side cancels before production or the hub gives up on
+  `order.placed` (`message.expired`); after production a shop's cancel refunds nothing (Seller
+  Terms). The minute sweep retries due refunds, gives up unpaid orders after 2 days (checkout
+  closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
+  lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
+  keeps the amounts.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
