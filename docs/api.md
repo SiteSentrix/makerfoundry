@@ -121,6 +121,33 @@ LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as Sti
 
 Once it ships, tell the MakerFoundry chat to switch the button on.
 
+## For ScreenFoundry (MF-67): Open in ScreenFoundry, and publishing
+ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens **SVG only**.
+
+- **The button** shows on the page of a free, published SVG design (a paid one: for its buyers,
+  its maker and the admins, through `/d/<id>/open?app=screenfoundry`, which makes the ten-minute
+  `?t=` link). Not on DXF, PDF, embroidery or 3D designs. It's off until ScreenFoundry's web app
+  opens links: `SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`. The link:
+  `https://stitchwright.github.io/screenfoundry/?open=<the file's address, URL-encoded>`, for
+  example
+  `https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
+  for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design can show
+  both Open in LaserFoundry and Open in ScreenFoundry, side by side.
+- **The file's name** (`{name}`, and `Content-Disposition`'s `filename`) is the design's title as
+  a slug (lowercase ASCII letters, digits and `-`, at most 60) and the file's extension (letters and
+  digits); when the title leaves no slug (empty, only symbols, or not in Latin letters) it's
+  `design-<id>`. So the path is only `a-z 0-9 - .` and the query only `t=<48 hex digits>`: every
+  address meets ScreenFoundry's rules (tested against them, with random titles).
+- **The file's answer:** the SVG as `application/octet-stream` with `Content-Disposition:
+  attachment; filename="<name>.svg"` (never shown as a page from MakerFoundry's site), CORS for
+  `MF_API_ORIGINS` (keep `https://stitchwright.github.io`) with `Content-Disposition` exposed, no
+  redirects, `403`/`404`/`429` as `{"error":{"message"}}`. SVG designs are at most 8 MB, well
+  under ScreenFoundry's 32 MB.
+- **Publishing** is unchanged: an SVG sent with `"app": "ScreenFoundry 0.1.0"` becomes a draft of
+  the laser kind. A draft from any app is now titled after its file (`Tiger_shirt-front.svg` →
+  "Tiger shirt front"; "Untitled design" if that leaves nothing), so it's never left untitled.
+  The app's name is only logged today; keeping it on the draft is proposed (`docs/plan.md`, MF-67).
+
 
 ## Reading 3D models (issue #36)
 Read-only JSON about **published** 3D models, for slicers and apps (`apps/makerfoundry/src/model3d/api.rs`).

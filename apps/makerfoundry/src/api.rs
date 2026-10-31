@@ -36,14 +36,64 @@ pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/
 /// show no button (their files are served all the same, for when it does).
 pub const LASERFOUNDRY_OPENS_LINKS: bool = false;
 
-/// The web app that opens design `d`, by its kind: (address, name). Embroidery opens in
-/// StitchFoundry; an SVG or DXF laser design in LaserFoundry (what it imports), once it opens links.
-pub fn web_app(d: &designs::DesignRow) -> Option<(&'static str, &'static str)> {
-    match d.kind.as_str() {
-        "embroidery" => Some((STITCHFOUNDRY_WEB, "StitchFoundry")),
-        "laser" if LASERFOUNDRY_OPENS_LINKS && opens_in_laserfoundry(d) => Some((LASERFOUNDRY_WEB, "LaserFoundry")),
-        _ => None,
+/// ScreenFoundry's web app (screen-printing prepress, MF-67), which opens SVG designs the same way
+/// once it reads `?open=`.
+pub const SCREENFOUNDRY_WEB: &str = "https://stitchwright.github.io/screenfoundry/";
+/// Whether ScreenFoundry's web app opens a design from an address yet: until the owner says it
+/// does, SVG designs show no Open in ScreenFoundry button.
+pub const SCREENFOUNDRY_OPENS_LINKS: bool = false;
+
+/// The web apps that open design `d`, by its kind and format: (address, name), in the order their
+/// buttons show. Embroidery opens in StitchFoundry; an SVG or DXF laser design in LaserFoundry, and
+/// an SVG one in ScreenFoundry, each once its web app opens links.
+pub fn web_apps(d: &designs::DesignRow) -> Vec<(&'static str, &'static str)> {
+    let format = d.facts.get("format").and_then(serde_json::Value::as_str);
+    apps_for(&d.kind, format, LASERFOUNDRY_OPENS_LINKS, SCREENFOUNDRY_OPENS_LINKS)
+}
+
+/// `web_apps`, with the switches given (for tests).
+pub fn apps_for(kind: &str, format: Option<&str>, laser: bool, screen: bool) -> Vec<(&'static str, &'static str)> {
+    let mut apps = Vec::new();
+    match kind {
+        "embroidery" => apps.push((STITCHFOUNDRY_WEB, "StitchFoundry")),
+        "laser" => {
+            if laser && matches!(format, Some("SVG" | "DXF")) {
+                apps.push((LASERFOUNDRY_WEB, "LaserFoundry"));
+            }
+            if screen && format == Some("SVG") {
+                apps.push((SCREENFOUNDRY_WEB, "ScreenFoundry"));
+            }
+        }
+        _ => {}
     }
+    apps
+}
+
+/// The name design `id`'s file goes by in the links and the download: its title as a slug
+/// (lowercase ASCII letters, digits and dashes), or `design-<id>` when that leaves nothing, and its
+/// file's extension (letters and digits only). Every web app takes it as one plain path part.
+pub fn file_name(d: &designs::DesignRow, id: i64) -> String {
+    let format = d.facts.get("format").and_then(serde_json::Value::as_str);
+    name_of(&d.title, &d.file_name, format, id)
+}
+
+/// `file_name`, from the design's title, its file's name and format.
+pub fn name_of(title: &str, file: &str, format: Option<&str>, id: i64) -> String {
+    let stem = crate::listings::slug(title);
+    let stem = if stem.is_empty() { format!("design-{id}") } else { stem };
+    let ext: String = file.rsplit_once('.').map(|(_, e)| e).unwrap_or("").to_ascii_lowercase();
+    let ext = if !ext.is_empty() && ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        ext
+    } else {
+        format
+            .unwrap_or("file")
+            .to_ascii_lowercase()
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(8)
+            .collect()
+    };
+    if ext.is_empty() { stem } else { format!("{stem}.{ext}") }
 }
 
 /// Whether design `d`'s file is one a web app can open: any embroidery file; an SVG or DXF laser file.
@@ -91,11 +141,23 @@ fn token_hash(token: &str) -> String {
         .collect()
 }
 
-/// `GET /d/{id}/open`: Open in StitchFoundry for a paid design. The web app fetches without
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct OpenQuery {
+    /// Which web app (its name in lowercase); the first that opens the design if not given.
+    app: String,
+}
+
+/// `GET /d/{id}/open?app=<name>`: Open in StitchFoundry (or another web app) for a paid design. The web app fetches without
 /// anyone's sign-in, so this checks here that the person may download it (a buyer, its maker or an
 /// admin), makes a link good for this design for ten minutes (kept only as its hash), and sends
 /// them to the web app with it.
-pub async fn open_paid(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+pub async fn open_paid(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<OpenQuery>,
+) -> Response {
     let back = Redirect::to(&format!("/d/{id}")).into_response();
     let Some(viewer) = crate::accounts::current_user(&state, &headers).await else {
         return Redirect::to(&format!("/signin?next=/d/{id}")).into_response();
@@ -105,7 +167,12 @@ pub async fn open_paid(State(state): State<AppState>, headers: HeaderMap, Path(i
         return back;
     };
     let (_, may) = crate::listings::access(&state, pool, Some(&viewer), &d, id).await;
-    let Some((app, _)) = web_app(&d).filter(|_| may) else {
+    let apps = web_apps(&d);
+    let chosen = apps
+        .iter()
+        .find(|(_, name)| name.eq_ignore_ascii_case(&q.app))
+        .or_else(|| apps.first());
+    let Some(&(app, _)) = chosen.filter(|_| may) else {
         return back;
     };
     let mut bytes = [0u8; 24];
@@ -125,9 +192,7 @@ pub async fn open_paid(State(state): State<AppState>, headers: HeaderMap, Path(i
         eprintln!("api: open link {id}: {e}");
         return back;
     }
-    let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    let name = format!("{}.{ext}", crate::listings::slug(&d.title));
-    Redirect::to(&open_link(app, &state.public_url, id, &name, Some(&token))).into_response()
+    Redirect::to(&open_link(app, &state.public_url, id, &file_name(&d, id), Some(&token))).into_response()
 }
 
 /// Whether `token` is a buyer's link to design `id` that hasn't run out.
@@ -252,11 +317,7 @@ async fn design_file_answer(state: &AppState, headers: &HeaderMap, id: i64, toke
         .bind(id)
         .execute(pool)
         .await; // (a count; the file goes out anyway)
-    let ext = d.file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    let name: String = format!("{}.{ext}", crate::listings::slug(&d.title))
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c))
-        .collect();
+    let name = file_name(&d, id);
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{name}\""))
         .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
     (
@@ -388,6 +449,13 @@ async fn answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Response 
     }
     match designs::add(state, pool, account.id, &file_name, bytes, photos).await {
         Ok(id) => {
+            // a draft from an app is named after its file, so it's never left without a title
+            let _ = sqlx::query("UPDATE mf_designs SET title = $2 WHERE id = $1 AND title = ''")
+                .bind(id)
+                .bind(title_from(&file_name))
+                .execute(pool)
+                .await
+                .map_err(|e| eprintln!("api: title of {id}: {e}"));
             let app: String = d.app.chars().filter(|c| !c.is_control()).take(60).collect();
             eprintln!("api: design {id} from {}", if app.is_empty() { "an app" } else { &app });
             let read: Option<(String, String)> = sqlx::query_as("SELECT kind, format FROM mf_designs WHERE id = $1")
@@ -412,6 +480,23 @@ async fn answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Response 
         Err(r @ Refused::TooMany(_)) => error(StatusCode::TOO_MANY_REQUESTS, &r.message()),
         Err(r @ Refused::Bad(_)) => error(StatusCode::UNPROCESSABLE_ENTITY, &r.message()),
         Err(r @ Refused::Failed) => error(StatusCode::SERVICE_UNAVAILABLE, &r.message()),
+    }
+}
+
+/// A title made from a file's name: without its extension, `_` and `-` as spaces, at most 100
+/// characters; "Untitled design" when that leaves nothing.
+pub fn title_from(file_name: &str) -> String {
+    let stem = file_name.rsplit_once('.').map_or(file_name, |(s, _)| s);
+    let words: Vec<&str> = stem
+        .split(|c: char| c == '_' || c == '-' || c.is_whitespace() || c.is_control())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let title: String = words.join(" ").chars().take(100).collect();
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        "Untitled design".into()
+    } else {
+        title
     }
 }
 
@@ -452,6 +537,197 @@ mod tests {
         assert_eq!(clean_name("a\u{0}b\nc.svg"), "abc.svg");
         assert_eq!(clean_name("dir/"), "");
         assert_eq!(clean_name(&"x".repeat(300)).len(), 200);
+    }
+
+    #[test]
+    fn each_web_app_opens_only_what_it_reads() {
+        let names = |kind, format, laser, screen| -> Vec<&str> {
+            apps_for(kind, format, laser, screen).iter().map(|(_, n)| *n).collect()
+        };
+        assert_eq!(names("embroidery", Some("PES"), true, true), ["StitchFoundry"]);
+        assert_eq!(
+            names("laser", Some("SVG"), true, true),
+            ["LaserFoundry", "ScreenFoundry"]
+        );
+        assert_eq!(names("laser", Some("SVG"), false, true), ["ScreenFoundry"]);
+        assert_eq!(names("laser", Some("DXF"), true, true), ["LaserFoundry"]);
+        // ScreenFoundry opens SVG only: no DXF, PDF, embroidery or 3D
+        for (kind, format) in [
+            ("laser", Some("DXF")),
+            ("laser", Some("PDF")),
+            ("embroidery", Some("DST")),
+            ("model3d", Some("STL")),
+            ("laser", None),
+        ] {
+            assert!(
+                !names(kind, format, false, true).contains(&"ScreenFoundry"),
+                "{kind} {format:?}"
+            );
+        }
+        // off until the owner says its web app opens links
+        assert!(names("laser", Some("SVG"), false, false).is_empty());
+    }
+
+    /// ScreenFoundry's rules for an address it will fetch (SC-11, as its owner gave them):
+    /// `Some(reason)` when it would refuse `url`.
+    fn screenfoundry_refuses(url: &str) -> Option<&'static str> {
+        if url.len() > 2048 || !url.is_ascii() {
+            return Some("too long or not ASCII");
+        }
+        if url
+            .bytes()
+            .any(|b| b.is_ascii_control() || b == b' ' || b == b'\\' || b == b'#')
+        {
+            return Some("space, control, backslash or fragment");
+        }
+        let Some(rest) = url.strip_prefix("https://") else {
+            return Some("not https");
+        };
+        let (host, rest) = rest.split_once('/').unwrap_or((rest, ""));
+        if host != "makerfoundry.app" && host != "www.makerfoundry.app" {
+            return Some("host");
+        }
+        let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+        if !path.starts_with("api/v1/") {
+            return Some("not under /api/v1/");
+        }
+        for part in path.split('/') {
+            if !part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-._~%+()!',;=".contains(&b))
+            {
+                return Some("a character a path part may not have");
+            }
+            let Some(decoded) = percent_decode(part) else {
+                return Some("bad %XX");
+            };
+            if decoded.is_empty() || decoded == "." || decoded == ".." {
+                return Some("an empty, . or .. path part");
+            }
+            if decoded.chars().any(|c| c == '/' || c == '\\' || c.is_control())
+                || percent_decode(&decoded) != Some(decoded.clone())
+            {
+                return Some("a path part that isn't a plain name");
+            }
+        }
+        if !query
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._~%+=&".contains(&b))
+        {
+            return Some("a character the query may not have");
+        }
+        None
+    }
+
+    fn percent_decode(s: &str) -> Option<String> {
+        let b = s.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' {
+                let hex = s.get(i + 1..i + 3)?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).ok()
+    }
+
+    /// The file address inside an `?open=` link.
+    fn opened(link: &str) -> String {
+        percent_decode(link.split_once("?open=").unwrap().1).unwrap()
+    }
+
+    #[test]
+    fn the_checker_refuses_what_screenfoundry_refuses() {
+        // (so that passing it means something)
+        for bad in [
+            "http://makerfoundry.app/api/v1/designs/1/file/a.svg",
+            "https://makerfoundry.app.evil.com/api/v1/designs/1/file/a.svg",
+            "https://makerfoundry.app@evil.com/api/v1/designs/1/file/a.svg",
+            "https://makerfoundry.app:443/api/v1/designs/1/file/a.svg",
+            "https://makerfoundry.app./api/v1/designs/1/file/a.svg",
+            "https://makerfoundry.app/designs/1/file/a.svg",
+            "https://makerfoundry.app/api/v1/designs/1/file/..",
+            "https://makerfoundry.app/api/v1/designs/1/file/%2e%2e",
+            "https://makerfoundry.app/api/v1/designs/1/file/a%2Fb.svg",
+            "https://makerfoundry.app/api/v1/designs/1/file/a%252Fb.svg",
+            "https://makerfoundry.app/api/v1/designs/1/file/a b.svg",
+            "https://makerfoundry.app/api/v1/designs/1/file/a:b.svg",
+            "https://makerfoundry.app/api/v1/designs/1/file/a.svg#x",
+            "https://makerfoundry.app/api/v1/designs/1/file/a.svg?t=<x>",
+            "https://makerfoundry.app/api/v1/designs/1/file/ä.svg",
+        ] {
+            assert!(screenfoundry_refuses(bad).is_some(), "{bad}");
+        }
+        assert_eq!(
+            screenfoundry_refuses("https://makerfoundry.app/api/v1/designs/1/file/a.svg?t=ab12"),
+            None
+        );
+    }
+
+    #[test]
+    fn every_title_makes_an_address_screenfoundry_takes() {
+        for title in [
+            "Box",
+            "",
+            "   ",
+            "..",
+            ".",
+            "%2e%2e",
+            "a/b\\c",
+            "日本の箱",
+            "☃",
+            "Rose & \"Fern\"",
+            "<script>",
+            "a:b@c#d?e",
+            "x\u{0}y",
+            "café crème",
+            "C:\\Users\\x",
+            &"long ".repeat(100),
+        ] {
+            for (file, format) in [
+                ("box.svg", Some("SVG")),
+                ("weird.s v/g", Some("SVG")),
+                ("noext", Some("SVG")),
+                ("x.SVG", None),
+            ] {
+                let name = name_of(title, file, format, 42);
+                for token in [None, Some("0123456789abcdef0123456789abcdef0123456789abcdef")] {
+                    let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 42, &name, token);
+                    assert!(link.starts_with("https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
+                    let address = opened(&link);
+                    assert_eq!(screenfoundry_refuses(&address), None, "{title:?} {file} → {address}");
+                }
+                assert!(name.ends_with(".svg"), "{title:?} {file} → {name}");
+            }
+        }
+        assert_eq!(name_of("", "box.svg", Some("SVG"), 42), "design-42.svg");
+        assert_eq!(name_of("日本", "box.svg", Some("SVG"), 7), "design-7.svg");
+        assert_eq!(name_of("Rose & Fern", "x.svg", Some("SVG"), 1), "rose-fern.svg");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn any_title_and_file_name_make_a_plain_name(title in "\\PC{0,120}", file in "\\PC{0,40}") {
+            let name = name_of(&title, &file, Some("SVG"), 9);
+            let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 9, &name, None);
+            proptest::prop_assert_eq!(screenfoundry_refuses(&opened(&link)), None);
+            proptest::prop_assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'));
+        }
+    }
+
+    #[test]
+    fn a_draft_from_an_app_is_named_after_its_file() {
+        assert_eq!(title_from("Tiger_shirt-front.svg"), "Tiger shirt front");
+        assert_eq!(title_from("tiger.svg"), "tiger");
+        assert_eq!(title_from(".svg"), "Untitled design");
+        assert_eq!(title_from("___.svg"), "Untitled design");
+        assert_eq!(title_from("a\u{7}b.svg"), "a b");
+        assert_eq!(title_from(&format!("{}.svg", "x".repeat(300))).chars().count(), 100);
     }
 
     #[test]

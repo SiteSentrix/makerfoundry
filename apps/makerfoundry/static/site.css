@@ -305,3 +305,6 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 
 /* Founding creators (MF-54): the numbered badge, filled so it stands apart from other badges */
 .badge.founding { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; white-space: nowrap; }
+
+/* Open in … buttons (MF-67): several on one row, spaced, wrapping on a phone */
+.open-in { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
