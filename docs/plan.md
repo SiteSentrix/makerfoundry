@@ -442,8 +442,8 @@ StitchShop's side is stitchbench#74).
   verified webhook or the return from Checkout shows a paid session labelled with this order, its
   amount and currency, the order is paid, three `mf_shop_ledger` rows are written and
   `order.placed` is queued for the shop, in one transaction, once. The shop fetches the art from
-  `/shop-orders/<ref>/art/<sha256>?t=<the order's secret>` while the order is open. Sales tax on
-  physical goods isn't collected (`tax_cents` 0) until the owner decides.
+  `/shop-orders/<ref>/art/<sha256>?t=<the order's secret>` while the order is open. (Sales tax:
+  MF-66.)
 - **MF-64 after payment, built 2026-10-31** (`src/shop_orders/after.rs`, tables in
   `migrations/0041_shop_order_updates.sql`): the shop's `order.status` (with its note and
   tracking), `proof.sent` (the mock-up fetched from its signed link, checked by size and SHA-256,
@@ -462,6 +462,17 @@ StitchShop's side is stitchbench#74).
   `shipping` may add `per_extra_piece_cents` and `free_over_cents` (both optional, so v1
   catalogues still read), and `shop.address` gives the pick-up address for sales tax. The form
   and the shop's page say the shipping in words.
+- **MF-66 sales tax on orders from shops, built 2026-10-31** (the owner's decision: Stripe Tax,
+  MakerFoundry collecting as the marketplace; `src/shop_orders/tax.rs`,
+  `migrations/0042_shop_order_tax.sql`): on with `MF_STRIPE_TAX`, like designs. The tax is worked
+  out before checkout (Stripe Tax calculations, under `MF_SHOP_TAX_CODE`, default
+  `txcd_30011000` Clothing & Footwear) from the ship-to address, or the shop's for pick-up (a shop
+  without one can only ship), and shown on the order. It's paid to MakerFoundry inside the
+  application fee and is outside the shop's share (10% of the price before tax, the card fee of
+  all that's paid; a `tax` ledger row). Once paid it's recorded as a Stripe tax transaction; a
+  refund reverses it, takes the price back from the shop and gives the shop the 10% and the tax
+  it paid over, so the shop is still out only the card fee. Confirm the tax code and
+  registrations with an accountant before the first registration.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)

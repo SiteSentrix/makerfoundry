@@ -31,20 +31,22 @@ pub const BODY_LIMIT_BYTES: usize = MAX_ART_BYTES + 512 * 1024;
 const ORDER_DAYS: i64 = 7;
 
 /// An order's amounts: what the customer pays, and how it's shared. Exact cents; MakerFoundry's
-/// 10% and the card fee (2.9% + 30¢) each rounded to the nearest cent, the shop getting the rest.
-pub fn totals(goods: i64, setup: i64, shipping: i64) -> Option<Totals> {
-    let paid = goods.checked_add(setup)?.checked_add(shipping)?;
-    if !(1..=contract::MAX_CENTS).contains(&paid) {
+/// 10% (of the price before tax) and the card fee (2.9% + 30¢ of what's paid) each rounded to the
+/// nearest cent, the sales tax MakerFoundry's to pay over (MF-66), the shop getting the rest.
+pub fn totals(goods: i64, setup: i64, shipping: i64, tax: i64) -> Option<Totals> {
+    let price = goods.checked_add(setup)?.checked_add(shipping)?;
+    let paid = price.checked_add(tax)?;
+    if !(1..=contract::MAX_CENTS).contains(&paid) || tax < 0 {
         return None;
     }
-    let fee = (paid * 10 + 50) / 100;
+    let fee = (price * 10 + 50) / 100;
     let card_fee = (paid * 29 + 500) / 1000 + 30;
-    let shop = paid - fee - card_fee;
+    let shop = price - fee - card_fee;
     (shop > 0).then_some(Totals {
         goods_cents: goods,
         setup_cents: setup,
         shipping_cents: shipping,
-        tax_cents: 0,
+        tax_cents: tax,
         paid_cents: paid,
         fee_cents: fee,
         card_fee_cents: card_fee,
@@ -318,7 +320,8 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
     } else {
         0
     };
-    let totals = totals(goods, method.setup_cents, shipping).ok_or("The order is too large or too small to take.")?;
+    let totals =
+        totals(goods, method.setup_cents, shipping, 0).ok_or("The order is too large or too small to take.")?;
     let sha = format!("{:x}", Sha256::digest(&bytes));
     let line = Line {
         sku: p.sku.clone(),
@@ -383,6 +386,26 @@ pub async fn create(
         Ok(Err(why)) => return again(&why),
         Err(_) => return again("The order couldn't be worked out. Please try again."),
     };
+    // sales tax, when it's on (MF-66): from where it ships, or the shop's address for pick-up
+    let mut d = d;
+    let mut calculation: Option<String> = None;
+    if let Some(stripe) = state.stripe.as_ref().filter(|s| s.tax_code.is_some()) {
+        let Some(to) = d.customer.ship_to.clone().or_else(|| shop.catalog.shop.address.clone()) else {
+            return again("This shop can't take pick-up orders yet. Please choose shipping.");
+        };
+        let t = d.totals.clone();
+        let items = t.goods_cents + t.setup_cents;
+        match super::tax::calculate(stripe, &d.line.sku, items, t.shipping_cents, &to).await {
+            Ok((tax, id)) => {
+                let Some(taxed) = totals(t.goods_cents, t.setup_cents, t.shipping_cents, tax) else {
+                    return again("The order is too large to take.");
+                };
+                d.totals = taxed;
+                calculation = Some(id);
+            }
+            Err(why) => return again(&why),
+        }
+    }
     let made = async {
         let reference = format!("mf-{}", random_hex(8)?);
         let token = random_hex(16)?;
@@ -395,8 +418,9 @@ pub async fn create(
         let t = &d.totals;
         sqlx::query(
             "INSERT INTO mf_shop_orders (ref, token, buyer_account, shop_party, shop_account, lines, art, customer_name, ship_to, note,
-                 goods_cents, setup_cents, shipping_cents, tax_cents, paid_cents, fee_cents, card_fee_cents, shop_cents)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+                 goods_cents, setup_cents, shipping_cents, tax_cents, paid_cents, fee_cents, card_fee_cents, shop_cents,
+                 tax_calculation)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
         )
         .bind(&reference)
         .bind(&token)
@@ -416,6 +440,7 @@ pub async fn create(
         .bind(t.fee_cents)
         .bind(t.card_fee_cents)
         .bind(t.shop_gets_cents)
+        .bind(&calculation)
         .execute(&pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -595,7 +620,8 @@ pub async fn pay(State(state): State<AppState>, headers: HeaderMap, Path(referen
         ),
         (
             "payment_intent_data[application_fee_amount]",
-            (t.fee_cents + t.card_fee_cents).to_string(),
+            // (the sales tax is MakerFoundry's to pay over, as the marketplace)
+            (t.fee_cents + t.card_fee_cents + t.tax_cents).to_string(),
         ),
         (
             "payment_intent_data[transfer_data][destination]",
@@ -681,7 +707,11 @@ pub async fn confirm_paid(
         (o.shop_account, "shop", o.totals.shop_gets_cents),
         (crate::selling::MAKERFOUNDRY, "fee", o.totals.fee_cents),
         (crate::selling::MAKERFOUNDRY, "processing", o.totals.card_fee_cents),
+        (crate::selling::MAKERFOUNDRY, "tax", o.totals.tax_cents),
     ] {
+        if kind == "tax" && cents == 0 {
+            continue;
+        }
         sqlx::query(
             "INSERT INTO mf_shop_ledger (order_id, account_id, kind, cents, reason) VALUES ($1, $2, $3, $4, 'sale')
              ON CONFLICT (order_id, kind, reason) DO NOTHING",
@@ -786,6 +816,9 @@ fn totals_html(t: &Totals) -> String {
     if t.shipping_cents > 0 {
         rows.push(("Shipping", t.shipping_cents));
     }
+    if t.tax_cents > 0 {
+        rows.push(("Sales tax", t.tax_cents));
+    }
     let body: String = rows
         .iter()
         .map(|(k, v)| format!("<tr><td>{k}</td><td>{}</td></tr>", dollars(*v)))
@@ -827,8 +860,12 @@ pub async fn page(
         match confirm_paid(&mut tx, &o.reference, &session, &state.public_url).await {
             Ok(true) => {
                 if tx.commit().await.is_ok()
-                    && let Some(fresh) = order(&mut conn, &reference).await
+                    && let Err(e) = super::tax::record(stripe, pool, o.id).await
                 {
+                    // (the sweep tries again)
+                    eprintln!("shop orders: tax of {reference}: {e}");
+                }
+                if let Some(fresh) = order(&mut conn, &reference).await {
                     o = fresh;
                 }
             }
@@ -952,20 +989,29 @@ mod tests {
 
     #[test]
     fn totals_share_the_payment_exactly() {
-        let t = totals(10_200, 2_500, 899).unwrap();
+        let t = totals(10_200, 2_500, 899, 0).unwrap();
         assert_eq!(t.paid_cents, 13_599);
         assert_eq!(t.fee_cents, 1_360);
         assert_eq!(t.card_fee_cents, 424);
         assert_eq!(t.shop_gets_cents, 13_599 - 1_360 - 424);
         contract::check_totals(&t).unwrap();
         for paid in [1i64, 31, 99, 100, 101, 12_345, 1_000_000, contract::MAX_CENTS] {
-            if let Some(t) = totals(paid, 0, 0) {
+            if let Some(t) = totals(paid, 0, 0, 0) {
                 contract::check_totals(&t).unwrap();
                 assert!(t.shop_gets_cents > 0);
             }
         }
-        assert!(totals(0, 0, 0).is_none());
-        assert!(totals(contract::MAX_CENTS, 1, 0).is_none());
-        assert!(totals(20, 0, 0).is_none(), "too small to leave the shop anything");
+        assert!(totals(0, 0, 0, 0).is_none());
+        assert!(totals(contract::MAX_CENTS, 1, 0, 0).is_none());
+        assert!(totals(20, 0, 0, 0).is_none(), "too small to leave the shop anything");
+        // with tax: the 10% is of the price before tax, the card fee of all that's paid, and the
+        // tax isn't the shop's
+        let t = totals(10_200, 2_500, 899, 952).unwrap();
+        assert_eq!(t.paid_cents, 14_551);
+        assert_eq!(t.fee_cents, 1_360);
+        assert_eq!(t.card_fee_cents, (14_551 * 29 + 500) / 1000 + 30);
+        assert_eq!(t.shop_gets_cents, 13_599 - 1_360 - t.card_fee_cents);
+        contract::check_totals(&t).unwrap();
+        assert!(totals(100, 0, 0, -1).is_none());
     }
 }

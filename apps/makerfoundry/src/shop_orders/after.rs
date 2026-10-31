@@ -200,29 +200,26 @@ pub async fn expired(state: &AppState, pool: &PgPool, env: &Envelope, e: &Messag
 
 // ---------------------------------------------------------------- refunds
 
-/// A refund Stripe has made, recorded once: the order's payment back to the customer, taken from
-/// the shop's share. `false` when it was recorded before.
+/// A refund Stripe has made, recorded once: the order's payment back to the customer, the price
+/// taken from the shop and the sales tax from MakerFoundry. `false` when it was recorded before.
 pub async fn record_refund(conn: &mut PgConnection, id: i64) -> Result<bool, sqlx::Error> {
     let row = sqlx::query(
         "UPDATE mf_shop_orders SET refunded_at = now(), updated_at = now(),
              status = CASE WHEN status = ANY($2) THEN 'refunded' ELSE status END
          WHERE id = $1 AND refunded_at IS NULL AND paid_at IS NOT NULL
-         RETURNING shop_account, paid_cents",
+         RETURNING shop_account, paid_cents, tax_cents",
     )
     .bind(id)
     .bind(OPEN)
     .fetch_optional(&mut *conn)
     .await?;
     let Some(row) = row else { return Ok(false) };
-    ledger(
-        conn,
-        id,
-        row.try_get("shop_account")?,
-        "shop",
-        -row.try_get::<i64, _>("paid_cents")?,
-        "refund",
-    )
-    .await?;
+    let tax: i64 = row.try_get("tax_cents")?;
+    let price = row.try_get::<i64, _>("paid_cents")? - tax;
+    ledger(conn, id, row.try_get("shop_account")?, "shop", -price, "refund").await?;
+    if tax > 0 {
+        ledger(conn, id, crate::selling::MAKERFOUNDRY, "tax", -tax, "refund").await?;
+    }
     Ok(true)
 }
 
@@ -268,7 +265,7 @@ fn stripe_id(id: &str, prefix: &str) -> bool {
 pub async fn settle(state: &AppState, pool: &PgPool, id: i64) -> Result<(), String> {
     let stripe = state.stripe.as_ref().ok_or("Stripe isn't switched on")?;
     let row = sqlx::query(
-        "SELECT ref, stripe_payment_intent, fee_cents, refunded_at IS NOT NULL AS refunded
+        "SELECT ref, stripe_payment_intent, fee_cents, tax_cents, refunded_at IS NOT NULL AS refunded
          FROM mf_shop_orders WHERE id = $1 AND refund_due AND paid_at IS NOT NULL AND fee_returned_at IS NULL",
     )
     .bind(id)
@@ -284,6 +281,9 @@ pub async fn settle(state: &AppState, pool: &PgPool, id: i64) -> Result<(), Stri
         .filter(|i| stripe_id(i, "pi_"))
         .ok_or("the order has no Stripe payment")?;
     let fee: i64 = row.try_get("fee_cents").map_err(|e| e.to_string())?;
+    // the whole transfer comes back from the shop, so the tax MakerFoundry took as part of its
+    // application fee goes back to the shop with the 10%
+    let tax: i64 = row.try_get("tax_cents").map_err(|e| e.to_string())?;
     if !row.try_get::<bool, _>("refunded").map_err(|e| e.to_string())? {
         let r = stripe
             .post(
@@ -307,7 +307,10 @@ pub async fn settle(state: &AppState, pool: &PgPool, id: i64) -> Result<(), Stri
         record_refund(&mut tx, id).await.map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
     }
-    if fee > 0 {
+    if tax > 0 {
+        super::tax::reverse(stripe, pool, id).await?;
+    }
+    if fee + tax > 0 {
         let payment = stripe
             .get(&format!("/v1/payment_intents/{intent}?expand[]=latest_charge"))
             .await
@@ -320,7 +323,10 @@ pub async fn settle(state: &AppState, pool: &PgPool, id: i64) -> Result<(), Stri
         stripe
             .post(
                 &format!("/v1/application_fees/{application_fee}/refunds"),
-                &[("amount", fee.to_string()), ("metadata[shop_order]", reference.clone())],
+                &[
+                    ("amount", (fee + tax).to_string()),
+                    ("metadata[shop_order]", reference.clone()),
+                ],
                 Some(&format!("mf-shop-fee-back-{reference}")),
             )
             .await
@@ -364,6 +370,9 @@ pub async fn sweep(state: &AppState) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     for id in due {
         settle_now(state, pool, id).await;
+    }
+    if let Some(stripe) = state.stripe.as_ref() {
+        super::tax::settle_all(stripe, pool).await?;
     }
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     let gone: Vec<(i64, Value)> = sqlx::query_as(

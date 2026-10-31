@@ -2,7 +2,8 @@
 -- 10% and the card fee comes out of the shop's share (the owner's decisions of 2026-10-31). The
 -- amounts are worked out from the shop's catalogue when the order is made and never change; each
 -- share of a paid order is a row in mf_shop_ledger. `token` is the order's secret, which the shop
--- uses to fetch the art.
+-- uses to fetch the art. Sales tax (MF-66) is MakerFoundry's to collect as the marketplace: it's
+-- outside the shop's share.
 CREATE TABLE mf_shop_orders (
     id BIGSERIAL PRIMARY KEY,
     ref TEXT NOT NULL UNIQUE,
@@ -24,7 +25,7 @@ CREATE TABLE mf_shop_orders (
     card_fee_cents BIGINT NOT NULL CHECK (card_fee_cents >= 0),
     shop_cents BIGINT NOT NULL CHECK (shop_cents > 0),
     CHECK (paid_cents = goods_cents + setup_cents + shipping_cents + tax_cents),
-    CHECK (paid_cents = fee_cents + card_fee_cents + shop_cents),
+    CHECK (paid_cents = tax_cents + fee_cents + card_fee_cents + shop_cents),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'sent', 'received',
         'proof_sent', 'approved', 'in_production', 'ready', 'shipped', 'collected', 'cancelled',
         'refunded', 'expired', 'abandoned')),
@@ -41,7 +42,7 @@ CREATE TABLE mf_shop_ledger (
     id BIGSERIAL PRIMARY KEY,
     order_id BIGINT NOT NULL REFERENCES mf_shop_orders (id),
     account_id BIGINT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('shop', 'fee', 'processing')),
+    kind TEXT NOT NULL CHECK (kind IN ('shop', 'fee', 'processing', 'tax')),
     cents BIGINT NOT NULL,
     reason TEXT NOT NULL CHECK (reason IN ('sale', 'refund')),
     at TIMESTAMPTZ NOT NULL DEFAULT now(),

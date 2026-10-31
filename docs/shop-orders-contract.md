@@ -141,9 +141,16 @@ for designs). After, only the shop may, and a refund is the shop's to decide (Se
 ## Money (MakerFoundry's side, as for designs)
 Every charge, fee, refund and payout is a ledger row; amounts are integer cents. The customer pays
 MakerFoundry by Stripe Checkout; MakerFoundry keeps 10%; the card fee comes out of the shop's share;
-Stripe Connect pays the shop monthly. Sales tax on physical goods depends on where they ship
-(**open:** Stripe Tax, as MF-24), and so does shipping (**open:** the shop's flat price in its
-catalogue, as above, or MakerFoundry's).
+Stripe Connect pays the shop monthly. Shipping is the shop's, from its catalogue (above).
+
+**Sales tax (decided 2026-10-31):** MakerFoundry takes the payment, so it's the marketplace that
+collects and pays over sales tax, never the shop. Stripe Tax works it out before checkout from
+where the order ships (or the shop's `address`, for pick-up), and only where MakerFoundry has
+registered to collect: elsewhere it's 0. In `totals`, `tax_cents` is that tax: it's part of
+`paid_cents` and **outside** the shop's share, so
+`shop_gets_cents = paid_cents − tax_cents − fee_cents − card_fee_cents`; the 10% is of the price
+before tax, the card fee of all that's paid. A shop never adds tax of its own to an order from
+MakerFoundry, and reports it as a marketplace sale (the marketplace collected the tax).
 
 ## Limits
 Per shop: at most 200 open orders, 50 messages a minute. Per MakerFoundry: 600 messages a minute.

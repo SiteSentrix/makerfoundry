@@ -8,6 +8,7 @@ pub mod contract;
 pub mod hub;
 pub mod orders;
 pub mod shops;
+pub mod tax;
 
 use std::future::Future;
 use std::pin::Pin;

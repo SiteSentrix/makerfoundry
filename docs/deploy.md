@@ -144,6 +144,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
 | `MF_STRIPE_TAX` | no (off) | `yes` charges sales tax with Stripe Tax (MF-24, "Sales tax" below) |
 | `MF_TAX_CODE` | no (`txcd_10505001`) | the Stripe tax code designs are sold under: Digital Finished Artwork, downloaded, with permanent rights |
+| `MF_SHOP_TAX_CODE` | no (`txcd_30011000`) | the Stripe tax code goods ordered from shops are sold under (MF-66): Clothing & Footwear |
 | `MF_PROOF_KEY` | for approval links | the key proofs' customer links are made with (MF-25): 64 hex digits, `openssl rand -hex 32`. A secret: whoever has it can open any proof. Without it there are no proofs. A new key ends every customer link (shops then send their links again) |
 | `MF_PROOFS` | no (admins only) | `yes` lets every account send proofs (their wording is in the Terms § 9 and the Privacy Policy since 2026-10-30) |
 | `MF_THINGIVERSE_CLIENT_ID`, `MF_THINGIVERSE_CLIENT_SECRET` | no (off) | a Thingiverse app's id and secret (registered by the owner at thingiverse.com/developers, its callback `https://makerfoundry.app/3d/import/thingiverse/back`): lets creators bring in their own Thingiverse things. The secret is a secret |

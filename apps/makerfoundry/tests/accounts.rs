@@ -1715,6 +1715,34 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
                 Json(session_json(&id, &f, paid))
             }),
         )
+        // Stripe Tax (MF-66): 7% of the items, shipping untaxed
+        .route(
+            "/v1/tax/calculations",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                let items = f["line_items[0][amount]"].parse::<i64>().unwrap();
+                let shipping = f.get("shipping_cost[amount]").map_or(0, |a| a.parse::<i64>().unwrap());
+                let mut st = s.lock().unwrap();
+                st.posts.push(("/v1/tax/calculations".into(), f));
+                let n = st.posts.len();
+                Json(json!({"id": format!("taxcalc_test_{n}"), "object": "tax.calculation",
+                    "amount_total": items + shipping + items * 7 / 100, "tax_amount_exclusive": items * 7 / 100}))
+            }),
+        )
+        .route(
+            "/v1/tax/transactions/create_from_calculation",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                let id = format!("tax_test_{}", f["reference"].replace('-', "_"));
+                s.lock().unwrap().posts.push(("/v1/tax/transactions/create_from_calculation".into(), f));
+                Json(json!({"id": id, "object": "tax.transaction", "type": "transaction"}))
+            }),
+        )
+        .route(
+            "/v1/tax/transactions/create_reversal",
+            post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                s.lock().unwrap().posts.push(("/v1/tax/transactions/create_reversal".into(), f));
+                Json(json!({"id": "tax_test_reversal", "object": "tax.transaction", "type": "reversal"}))
+            }),
+        )
         .route(
             "/v1/refunds",
             post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
@@ -9497,8 +9525,25 @@ async fn shops_site() -> Option<(
     makerfoundry::shop_orders::hub::stand_in::Shared,
     StripeShared,
 )> {
+    shops_site_taxed(false).await
+}
+
+/// The same, with sales tax on (Stripe Tax) when `tax`.
+async fn shops_site_taxed(
+    tax: bool,
+) -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
     let (hub_url, hub) = makerfoundry::shop_orders::hub::stand_in::start().await.unwrap();
     let (stripe, st) = fake_stripe().await;
+    let stripe = if tax {
+        stripe.with_tax(makerfoundry::stripe::DEFAULT_TAX_CODE).unwrap()
+    } else {
+        stripe
+    };
     let pool = test_db().await?;
     let (storage, stored) = fake_storage().await;
     let storage_kept = storage.clone();
@@ -9677,7 +9722,18 @@ async fn open_shop() -> Option<(
     makerfoundry::shop_orders::hub::stand_in::Shared,
     StripeShared,
 )> {
-    let (s, state, hub, st) = shops_site().await?;
+    open_shop_taxed(false).await
+}
+
+async fn open_shop_taxed(
+    tax: bool,
+) -> Option<(
+    Site,
+    AppState,
+    makerfoundry::shop_orders::hub::stand_in::Shared,
+    StripeShared,
+)> {
+    let (s, state, hub, st) = shops_site_taxed(tax).await?;
     makerfoundry::shop_orders::hub::stand_in::deliver(&hub, catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001"));
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     shop_can_be_paid(&s).await;
@@ -10441,4 +10497,135 @@ async fn unpaid_orders_are_given_up_and_a_customers_data_is_exported_and_erased(
         "the amounts are kept"
     );
     let _ = path;
+}
+
+/// What was posted to the fake Stripe at `path`.
+fn posted(st: &StripeShared, path: &str) -> Vec<HashMap<String, String>> {
+    st.lock()
+        .unwrap()
+        .posts
+        .iter()
+        .filter(|(p, _)| p == path)
+        .map(|(_, f)| f.clone())
+        .collect()
+}
+
+async fn calc_id(s: &Site) -> String {
+    sqlx::query_scalar("SELECT tax_calculation FROM mf_shop_orders")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn sales_tax_on_a_shop_order_is_makerfoundrys_and_comes_back_with_a_refund() {
+    let Some((s, state, hub, st)) = open_shop_taxed(true).await else {
+        return;
+    };
+    let (bea, path, r) = paid_order(&s, &st).await;
+    // worked out before checkout, from where it ships, under the clothing tax code
+    let calc = posted(&st, "/v1/tax/calculations")[0].clone();
+    assert_eq!(calc["line_items[0][amount]"], "22900");
+    assert_eq!(calc["line_items[0][tax_code]"], "txcd_30011000");
+    assert_eq!(calc["line_items[0][tax_behavior]"], "exclusive");
+    assert_eq!(calc["shipping_cost[amount]"], "1449");
+    assert_eq!(calc["customer_details[address][line1]"], "12 Oak Street");
+    assert_eq!(calc["customer_details[address][state]"], "OH");
+    assert_eq!(calc["customer_details[address][postal_code]"], "44000");
+    // $243.49 + 7% of $229.00; the 10% of the price before tax, the card fee of all that's paid
+    let amounts: (i64, i64, i64, i64, i64) =
+        sqlx::query_as("SELECT tax_cents, paid_cents, fee_cents, card_fee_cents, shop_cents FROM mf_shop_orders")
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(amounts, (1_603, 25_952, 2_435, 783, 21_131));
+    // the tax goes to MakerFoundry inside the application fee
+    let session = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    assert_eq!(session["line_items[0][price_data][unit_amount]"], "25952");
+    assert_eq!(
+        session["payment_intent_data[application_fee_amount]"],
+        (2_435 + 783 + 1_603).to_string()
+    );
+    assert_eq!(
+        s.scalar("SELECT cents FROM mf_shop_ledger WHERE kind = 'tax' AND account_id = 0")
+            .await,
+        1_603
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 25_952);
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("Sales tax") && page.contains("$16.03") && page.contains("$259.52"),
+        "{page}"
+    );
+    // the shop is told what was paid, the tax outside its share
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let placed = sent_of(&hub, "order.placed").remove(0);
+    assert_eq!(placed["body"]["totals"]["tax_cents"], 1_603);
+    assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 21_131);
+    // recorded with Stripe for its tax reports, once
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    let recorded = posted(&st, "/v1/tax/transactions/create_from_calculation");
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0]["calculation"], calc_id(&s).await);
+    assert_eq!(recorded[0]["reference"], r);
+
+    // cancelled: the customer gets it all back, the tax transaction is reversed, and the shop is
+    // still out only the card fee
+    s.post(&format!("{path}/cancel"), "", Some(&bea)).await;
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    let reversal = posted(&st, "/v1/tax/transactions/create_reversal");
+    assert_eq!(reversal.len(), 1);
+    assert_eq!(reversal[0]["mode"], "full");
+    assert_eq!(
+        reversal[0]["original_transaction"],
+        format!("tax_test_{}", r.replace('-', "_"))
+    );
+    assert_eq!(reversal[0]["reference"], format!("{r}-refund"));
+    assert_eq!(
+        st.lock().unwrap().fee_refunds[0].1["amount"],
+        (2_435 + 1_603).to_string()
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger").await, 0);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'tax'")
+            .await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_shop_ledger WHERE kind = 'shop'")
+            .await,
+        -783
+    );
+    assert!(s.get(&path, Some(&bea)).await.body.contains("Refunded: $259.52"));
+}
+
+#[tokio::test]
+async fn a_pick_up_order_is_taxed_where_the_shop_is_and_needs_its_address() {
+    let Some((s, state, hub, st)) = open_shop_taxed(true).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let pes = sample(sf_formats::Format::Pes);
+    let mut pickup = tee_order();
+    pickup.retain(|(k, _)| *k != "delivery");
+    pickup.push(("delivery", "pickup"));
+    let path = s
+        .send(order_form(TEE, &pickup, Some(("logo.pes", &pes)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert!(path.starts_with("/shop-orders/"), "{path}");
+    let calc = posted(&st, "/v1/tax/calculations")[0].clone();
+    assert_eq!(calc["customer_details[address][line1]"], "210 Main Street");
+    assert_eq!(calc["customer_details[address][postal_code]"], "44001");
+    assert!(!calc.contains_key("shipping_cost[amount]"));
+    // a shop that hasn't given its address can only ship while tax is collected
+    let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c009");
+    again["body"]["shop"].as_object_mut().unwrap().remove("address");
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let a = s.send(order_form(TEE, &pickup, Some(("logo.pes", &pes)), &bea)).await;
+    assert!(a.body.contains("can&#39;t take pick-up orders yet"), "{}", a.body);
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_orders").await, 1);
 }

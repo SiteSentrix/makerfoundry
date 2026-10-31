@@ -503,7 +503,8 @@ pub fn check_totals(t: &Totals) -> Result<(), String> {
     if t.goods_cents + t.setup_cents + t.shipping_cents + t.tax_cents != t.paid_cents {
         return Err("the totals don't add up to what was paid".into());
     }
-    if t.paid_cents - t.fee_cents - t.card_fee_cents != t.shop_gets_cents {
+    // (sales tax is collected by MakerFoundry, the marketplace: never the shop's)
+    if t.paid_cents - t.tax_cents - t.fee_cents - t.card_fee_cents != t.shop_gets_cents {
         return Err("the shop's share doesn't add up".into());
     }
     Ok(())
