@@ -289,3 +289,209 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
     tx.commit().await?;
     Ok(keys)
 }
+
+// ---------------------------------------------------------------- an admin deleting an account's data (#55)
+
+#[derive(Deserialize, Default)]
+pub struct AccountQuery {
+    #[serde(default)]
+    account: String,
+}
+
+#[derive(Deserialize)]
+pub struct AdminDeleteForm {
+    #[serde(default)]
+    confirm: String,
+}
+
+/// What `account` has: (email, designs, published designs), or `None` if there's no such account.
+async fn account_summary(pool: &PgPool, account: i64) -> Result<Option<(String, i64, i64)>, sqlx::Error> {
+    let email: Option<String> = sqlx::query_scalar("SELECT email FROM mf_accounts WHERE account_id = $1")
+        .bind(account)
+        .fetch_optional(pool)
+        .await?;
+    let Some(email) = email else {
+        return Ok(None);
+    };
+    let (all, published): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE status = 'published') FROM mf_designs WHERE account_id = $1",
+    )
+    .bind(account)
+    .fetch_one(pool)
+    .await?;
+    Ok(Some((email, all, published)))
+}
+
+fn admin_accounts_html(lookup: &str, found: &str) -> String {
+    format!(
+        r#"<section class="form prose">
+<h1>Delete an account's data</h1>
+<p class="muted"><a href="/admin">Reports</a> · <a href="/admin/overview">Overview</a></p>
+<p>For someone who can't sign in to use <strong>Your data › Delete</strong> themselves (a deletion request to support, or a test account). It does exactly what their own delete does: the maker profile, designs with their files and photos, makes, comments, collections, follows and sign-ins go; purchases, sales and their amounts, agreements, reports and copyright notices are kept. It's recorded in the moderation log. It can't be undone.</p>
+<form method="get" action="/admin/accounts">
+<label>Account number <input name="account" inputmode="numeric" value="{lookup}" required maxlength="19"></label>
+<button type="submit" class="secondary">Look it up</button>
+</form>
+{found}
+</section>"#,
+        lookup = escape(lookup),
+    )
+}
+
+/// `GET /admin/accounts?account=<n>` (admins only): an account's summary, and the form to delete
+/// its data.
+pub async fn admin_accounts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<AccountQuery>,
+) -> Response {
+    let (admin, pool) = match crate::moderation::admin(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let lookup = q.account.trim();
+    let found = if lookup.is_empty() {
+        String::new()
+    } else {
+        match lookup.parse::<i64>() {
+            Err(_) => r#"<p class="problem" role="alert">An account number is digits only.</p>"#.to_string(),
+            Ok(account) => found_html(&state, &pool, admin.account_id, account, "").await,
+        }
+    };
+    private(
+        "Delete an account's data · MakerFoundry",
+        &admin_accounts_html(lookup, &found),
+        true,
+    )
+}
+
+/// The summary of `account` and its delete form, or why it can't be deleted.
+async fn found_html(state: &AppState, pool: &PgPool, me: i64, account: i64, problem: &str) -> String {
+    if account == me || state.admins.contains(&account) {
+        return r#"<p class="problem" role="alert">That's an admin's account: admins' accounts aren't deleted from here.</p>"#
+            .to_string();
+    }
+    match account_summary(pool, account).await {
+        Err(e) => {
+            eprintln!("data: admin look-up {account}: {e}");
+            r#"<p class="problem" role="alert">That couldn't be looked up just now. Please try again.</p>"#.to_string()
+        }
+        Ok(None) => r#"<p class="problem" role="alert">There's no account with that number.</p>"#.to_string(),
+        Ok(Some((email, all, published))) => {
+            let problem = if problem.is_empty() {
+                String::new()
+            } else {
+                format!(r#"<p class="problem" role="alert">{}</p>"#, escape(problem))
+            };
+            let email = if email.is_empty() {
+                "its data was already deleted".to_string()
+            } else {
+                email
+            };
+            format!(
+                r#"<h2>Account {account}</h2>
+<dl class="facts"><div><dt>Email</dt><dd>{email}</dd></div><div><dt>Designs</dt><dd>{all} ({published} published)</dd></div></dl>
+<form method="post" action="/admin/accounts/{account}/delete">
+<label>To delete this account's data, type its number <input name="confirm" inputmode="numeric" required maxlength="19" autocomplete="off"></label>
+{problem}
+<button type="submit">Delete account {account}'s data</button>
+</form>"#,
+                email = escape(&email),
+            )
+        }
+    }
+}
+
+/// `POST /admin/accounts/<n>/delete` (admins only, typed confirmation): deletes the account's
+/// data as its own delete does, and records it in the moderation log.
+pub async fn admin_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(account): axum::extract::Path<i64>,
+    Form(f): Form<AdminDeleteForm>,
+) -> Response {
+    if !same_origin(&headers) {
+        return forbidden();
+    }
+    let (admin, pool) = match crate::moderation::admin(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let title = "Delete an account's data · MakerFoundry";
+    let lookup = account.to_string();
+    if account == admin.account_id || state.admins.contains(&account) {
+        let found = found_html(&state, &pool, admin.account_id, account, "").await;
+        return private(title, &admin_accounts_html(&lookup, &found), true);
+    }
+    if f.confirm.trim() != lookup {
+        let found = found_html(
+            &state,
+            &pool,
+            admin.account_id,
+            account,
+            "Type the account's number to confirm.",
+        )
+        .await;
+        return private(title, &admin_accounts_html(&lookup, &found), true);
+    }
+    match account_summary(&pool, account).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            let found = found_html(&state, &pool, admin.account_id, account, "").await;
+            return private(title, &admin_accounts_html(&lookup, &found), true);
+        }
+        Err(e) => {
+            eprintln!("data: admin delete {account}: {e}");
+            return private(
+                title,
+                &admin_accounts_html(
+                    &lookup,
+                    r#"<p class="problem" role="alert">That couldn't be done just now. Nothing was changed. Please try again.</p>"#,
+                ),
+                true,
+            );
+        }
+    }
+    let keys = match erase(&pool, account).await {
+        Ok(keys) => keys,
+        Err(e) => {
+            eprintln!("data: admin delete {account}: {e}");
+            return private(
+                title,
+                &admin_accounts_html(
+                    &lookup,
+                    r#"<p class="problem" role="alert">That couldn't be done just now. Nothing was changed. Please try again.</p>"#,
+                ),
+                true,
+            );
+        }
+    };
+    let files = keys.len();
+    if let Some(storage) = &state.storage {
+        for key in keys {
+            if let Err(e) = storage.delete(&key).await {
+                eprintln!("data: admin delete a file of {account}: {e}");
+            }
+        }
+    }
+    let logged = sqlx::query(
+        "INSERT INTO mf_moderation_log (admin_account, action, note) VALUES ($1, 'delete-account-data', $2)",
+    )
+    .bind(admin.account_id)
+    .bind(format!("account {account}, {files} files"))
+    .execute(&pool)
+    .await;
+    if let Err(e) = logged {
+        eprintln!("data: log admin delete {account}: {e}");
+    }
+    private(
+        title,
+        &admin_accounts_html(
+            "",
+            &format!(
+                r#"<p class="lead" role="status">Account {account}'s data is deleted ({files} files). Its Foundry Account itself is StitchFoundry's.</p>"#
+            ),
+        ),
+        true,
+    )
+}

@@ -10896,3 +10896,117 @@ async fn a_pick_up_order_is_taxed_where_the_shop_is_and_needs_its_address() {
     assert!(a.body.contains("can&#39;t take pick-up orders yet"), "{}", a.body);
     assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_orders").await, 1);
 }
+
+// ---------------------------------------------------------------- an admin deleting an account's data (#55)
+
+#[tokio::test]
+async fn an_admin_deletes_an_accounts_data_for_someone_who_cannot_sign_in() {
+    // the first account made is the admin (1000); Sam (1001) has a published design and a draft
+    let Some(s) = site_with(vec![1000]).await else { return };
+    let admin = s.sign_up("admin%40example.com").await;
+    let sam = s.sign_up("sam%40example.com").await;
+    let owl = published(&s, &sam, "sams-shop", "Owl").await;
+    let draft = add_design(&s, &sam, sf_formats::Format::Pes, "draft.pes").await;
+    let other = s.sign_up("other%40example.com").await;
+
+    // only admins, and only from our own pages
+    assert_eq!(
+        s.get("/admin/accounts", Some(&other)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.post("/admin/accounts/1001/delete", "confirm=1001", Some(&other))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(s.get("/admin/accounts", None).await.status, StatusCode::NOT_FOUND);
+    let req = Request::post("/admin/accounts/1001/delete")
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::COOKIE, &admin)
+        .body(Body::from("confirm=1001"))
+        .unwrap();
+    assert_eq!(s.send(req).await.status, StatusCode::FORBIDDEN);
+
+    // the look-up shows what's there
+    let page = s.get("/admin/accounts?account=1001", Some(&admin)).await.body;
+    assert!(
+        page.contains("Account 1001") && page.contains("sam@example.com") && page.contains("2 (1 published)"),
+        "{page}"
+    );
+    s.dump_page("admin-accounts", &page, Some(&admin)).await;
+    assert!(
+        s.get("/admin/accounts?account=99999", Some(&admin))
+            .await
+            .body
+            .contains("no account with that number")
+    );
+    assert!(
+        s.get("/admin/accounts?account=x1", Some(&admin))
+            .await
+            .body
+            .contains("digits only")
+    );
+    // an admin's account isn't deleted from here, their own included
+    assert!(
+        s.get("/admin/accounts?account=1000", Some(&admin))
+            .await
+            .body
+            .contains("admin's account")
+    );
+    s.post("/admin/accounts/1000/delete", "confirm=1000", Some(&admin))
+        .await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_accounts WHERE account_id = 1000 AND email <> ''")
+            .await,
+        1
+    );
+
+    // the number must be typed
+    let stored = s.stored.lock().unwrap().len();
+    let r = s
+        .post("/admin/accounts/1001/delete", "confirm=1002", Some(&admin))
+        .await;
+    assert!(r.body.contains("Type the account&#39;s number"), "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {owl}"))
+            .await,
+        1
+    );
+
+    // done: the same as Sam's own delete, files included, and logged
+    let r = s
+        .post("/admin/accounts/1001/delete", "confirm=1001", Some(&admin))
+        .await;
+    assert!(
+        r.body.contains("Account 1001&#39;s data is deleted") || r.body.contains("Account 1001's data is deleted"),
+        "{}",
+        r.body
+    );
+    assert!(s.stored.lock().unwrap().len() < stored, "files gone");
+    for (sql, n) in [
+        (format!("SELECT count(*) FROM mf_designs WHERE id IN ({owl}, {draft})"), 0),
+        ("SELECT count(*) FROM mf_makers WHERE account_id = 1001".to_string(), 0),
+        ("SELECT count(*) FROM mf_sessions WHERE account_id = 1001".to_string(), 0),
+        ("SELECT count(*) FROM mf_accounts WHERE account_id = 1001 AND email = ''".to_string(), 1),
+        (
+            "SELECT count(*) FROM mf_moderation_log WHERE admin_account = 1000 AND action = 'delete-account-data' AND note LIKE 'account 1001,%'"
+                .to_string(),
+            1,
+        ),
+    ] {
+        assert_eq!(s.scalar(&sql).await, n, "{sql}");
+    }
+    // Sam's session no longer works; the public page is gone
+    assert_eq!(s.get("/account", Some(&sam)).await.location(), "/signin");
+    assert_eq!(s.get(&format!("/d/{owl}"), None).await.status, StatusCode::NOT_FOUND);
+    // and it's on the admins' overview
+    assert!(
+        s.get("/admin/overview", Some(&admin))
+            .await
+            .body
+            .contains(r#"href="/admin/accounts""#)
+    );
+}
