@@ -141,12 +141,28 @@ async fn main() -> ExitCode {
         (_, setting) => makerfoundry::listings::Publishers::from_setting(setting.as_deref()),
     };
     // ordering from shops (#1, #2, #53): on only with the hub's address, MakerFoundry's service key
-    // and its signing key; a missing or bad signing key keeps it off (the rest of the site runs)
+    // and its signing key; a missing or bad signing key keeps it off (the rest of the site runs).
+    // The name it goes by on the hub: `MF_STITCHHUB_SERVICE` (a test deploy's own), else
+    // service:makerfoundry; a bad one keeps ordering off.
+    let service_ok = match std::env::var("MF_STITCHHUB_SERVICE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
+        None => true,
+        Some(name) => match makerfoundry::shop_orders::contract::set_me(name.trim()) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("stitchhub: {e}: ordering from shops stays off");
+                false
+            }
+        },
+    };
     let stitchhub = match makerfoundry::shop_orders::hub::Hub::new(
         &std::env::var("MF_STITCHHUB_URL").unwrap_or_default(),
         &std::env::var("MF_STITCHHUB_KEY").unwrap_or_default(),
     ) {
         None => None,
+        Some(_) if !service_ok => None,
         Some(hub) => match std::env::var("MF_STITCHHUB_SIGNING_KEY")
             .ok()
             .filter(|k| !k.trim().is_empty())
@@ -160,7 +176,8 @@ async fn main() -> ExitCode {
                     let hub = hub.with_signer(signer);
                     // (the public half, for the hub admin to register: not a secret)
                     eprintln!(
-                        "stitchhub: on; MakerFoundry's public signing key: {}",
+                        "stitchhub: on as {}; MakerFoundry's public signing key: {}",
+                        makerfoundry::shop_orders::contract::me(),
                         hub.public_key().unwrap_or_default()
                     );
                     Some(hub)

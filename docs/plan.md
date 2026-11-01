@@ -493,6 +493,10 @@ StitchShop's side is stitchbench#74).
   `message.expired` with `conversation` and `reason`; an `order.placed` the hub refuses is
   refunded like an expired one; email addresses and phone numbers refused in the order's name and
   note. Fixtures converted (7 valid, 34 invalid); `docs/shop-orders-contract.md` rewritten.
+- **A test deploy's own name on the hub, built 2026-11-01** (StitchHub's request): the name
+  MakerFoundry signs, sends and takes as comes from `MF_STITCHHUB_SERVICE` (default
+  `service:makerfoundry`), so the test deploy, with its own hub key, is
+  `service:makerfoundry-test` and never shares production's queue (`tests/stitchhub_service.rs`).
 
 
 ## ScreenFoundry (MF-87, 2026-10-31)
