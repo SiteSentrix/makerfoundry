@@ -36,12 +36,13 @@ pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/
 /// LaserFoundry v0.2.0 was live and opened a MakerFoundry address in a real browser.
 pub const LASERFOUNDRY_OPENS_LINKS: bool = true;
 
-/// ScreenFoundry's web app (screen-printing prepress, MF-87), which opens SVG designs the same way
-/// once it reads `?open=`.
-pub const SCREENFOUNDRY_WEB: &str = "https://stitchwright.github.io/screenfoundry/";
-/// Whether ScreenFoundry's web app opens a design from an address yet: until the owner says it
-/// does, SVG designs show no Open in ScreenFoundry button.
-pub const SCREENFOUNDRY_OPENS_LINKS: bool = false;
+/// ScreenFoundry's web app (screen-printing prepress, MF-87), which opens SVG designs from
+/// `?open=` the same way.
+pub const SCREENFOUNDRY_WEB: &str = "https://app.screenfoundry.app/";
+/// Whether ScreenFoundry's web app opens a design from an address: on since 2026-11-01, when its
+/// web app at app.screenfoundry.app (screenfoundry#28) read `?open=`, fetched makerfoundry.app (its
+/// site allowed in `MF_API_ORIGINS`) and showed MakerFoundry's own sentence for one that isn't there.
+pub const SCREENFOUNDRY_OPENS_LINKS: bool = true;
 
 /// PatternFoundry's web app (sewing patterns, SiteSentrix; MF-89, issue #47), which opens SVG
 /// designs from `?open=` the same way. Until MakerFoundry has a sewing-pattern kind, patterns come
@@ -761,7 +762,7 @@ mod tests {
                 let name = name_of(title, file, format, 42);
                 for token in [None, Some("0123456789abcdef0123456789abcdef0123456789abcdef")] {
                     let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 42, &name, token);
-                    assert!(link.starts_with("https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
+                    assert!(link.starts_with("https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
                     let address = opened(&link);
                     assert_eq!(screenfoundry_refuses(&address), None, "{title:?} {file} → {address}");
                 }

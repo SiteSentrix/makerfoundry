@@ -500,9 +500,9 @@ StitchShop's side is stitchbench#74).
 A migration that has run in production is never edited, not even its comments: sqlx checks each
 one's checksum when it starts.)
 - **MF-87 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
-  button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`, off until the owner says
-  ScreenFoundry's web app opens links), linking to
-  `https://stitchwright.github.io/screenfoundry/?open=<the file's address>`; paid designs through
+  button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`; **on since 2026-11-01**, when
+  ScreenFoundry's web app at app.screenfoundry.app opened links, screenfoundry#28), linking to
+  `https://app.screenfoundry.app/?open=<the file's address>`; paid designs through
   `/d/<id>/open?app=screenfoundry`. A design's file name in its links and download is its title's
   slug or `design-<id>`, so every address meets ScreenFoundry's rules (`docs/api.md`, tested with
   random titles). A draft from an app is titled after its file. Several Open in buttons share one
