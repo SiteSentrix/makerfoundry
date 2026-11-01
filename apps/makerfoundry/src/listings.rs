@@ -715,8 +715,13 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     };
     let section = if d.kind == "model3d" {
         crate::model3d::upload::public_section(pool, id, &title, &intro, &footer).await
-    } else {
+    } else if may_download {
         designs::facts_section(&d, &title, &intro, &footer)
+    } else {
+        // a paid design someone hasn't bought: a lower-detail picture, never the stitches or lines
+        // themselves (the owner's decision, 2026-11-01; `coarse`)
+        let figure = crate::coarse::figure_html(id, &d.kind, &d.preview_svg, &title);
+        designs::drawing_section(&d.kind, &d.facts, &figure, &title, &intro, &footer)
     };
     match section {
         Some(html) => {
@@ -780,6 +785,43 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         }
         None => not_found(signed_in),
     }
+}
+
+/// `GET /d/<id>/preview.png`: the lower-detail picture of an embroidery or laser design
+/// (`coarse`), which its page shows to people who haven't bought it; anyone's who may see the
+/// design.
+pub async fn preview_png(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+    let viewer = current_user(&state, &headers).await;
+    let Some(pool) = state.db.as_ref() else {
+        return not_found(viewer.is_some());
+    };
+    let Ok(Some(d)) = designs::design(pool, id).await else {
+        return not_found(viewer.is_some());
+    };
+    if !matches!(d.kind.as_str(), "embroidery" | "laser") || !access(&state, pool, viewer.as_ref(), &d, id).await.0 {
+        return not_found(viewer.is_some());
+    }
+    let svg = d.preview_svg;
+    let png = tokio::task::spawn_blocking(move || crate::coarse::picture(&svg))
+        .await
+        .ok()
+        .flatten();
+    let Some(png) = png else {
+        return not_found(viewer.is_some());
+    };
+    let cache = if d.status == "published" {
+        "public, max-age=3600"
+    } else {
+        "private, max-age=3600"
+    };
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "image/png"),
+            (axum::http::header::CACHE_CONTROL, cache),
+        ],
+        png,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize, Default)]
