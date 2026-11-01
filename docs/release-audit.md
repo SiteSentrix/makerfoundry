@@ -43,8 +43,8 @@ it. MakerFoundry 3D and the outside services stay off until their own steps.
 | Your data | download and delete | Cover every table added this month (notices, API keys, contests, likes, imports, showcase consents) |
 
 ## The owner's, before or at launch
-1. ~~**DMCA agent**~~: **registered 2026-11-01** (DMCA-1084865); set `MF_DMCA_AGENT` to the
-   registered details so `/dmca` shows them (`docs/launch.md` step 3).
+1. ~~**DMCA agent**~~: **done 2026-11-01**: registered (DMCA-1084865) and `MF_DMCA_AGENT` set on
+   Railway; `/dmca` shows the agent (`docs/launch.md` step 3).
 2. **Database backups:** turn them on in Railway › Postgres › Backups (`docs/deploy.md`); there
    is no way to check from here that they are on. Files in R2 have no second copy. Consider R2
    object versioning, or a periodic copy of the bucket.
