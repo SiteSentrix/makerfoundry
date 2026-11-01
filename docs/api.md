@@ -153,6 +153,23 @@ ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens 
   as `"<Name> <version>"`; the name is its first word, letters and digits only.
 
 
+## For PatternFoundry (MF-89, issue #47): Open in PatternFoundry
+PatternFoundry (sewing patterns, SiteSentrix; its PF-11 and PF-12) opens **SVG only**, from
+`https://sitesentrix.github.io/patternfoundry/?open=<the file's address, URL-encoded>`, exactly as
+ScreenFoundry does (same file address, same names, same answers; see above). Its site is in
+`MF_API_ORIGINS` (`https://sitesentrix.github.io`, set 2026-11-01).
+
+- **The button** shows on free, published SVG designs (paid ones: through
+  `/d/<id>/open?app=patternfoundry`), after LaserFoundry's and ScreenFoundry's. Its switch,
+  `PATTERNFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`, is **on**: checked 2026-11-01 in
+  Chromium against the live web app, which read `?open=`, fetched the address without cookies,
+  opened the SVG under its Content-Disposition name in millimetres, cleared `?open=`, and showed
+  MakerFoundry's own sentence for a design that isn't published.
+- **Publishing** from PatternFoundry is the usual `POST /api/v1/designs` with
+  `"app": "PatternFoundry <version>"`: an SVG lands as a laser-kind draft, titled after its file.
+- **Later:** a "sewing pattern" kind (true-scale PDF, DXF-AAMA, sizes, tiles) is issue #47's other
+  item, not built.
+
 ## Reading 3D models (issue #36)
 Read-only JSON about **published** 3D models, for slicers and apps (`apps/makerfoundry/src/model3d/api.rs`).
 Every request carries an API key a member makes at **Account › API keys** (up to 5; shown once,
