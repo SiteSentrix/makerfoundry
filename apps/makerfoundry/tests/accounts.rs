@@ -1648,6 +1648,8 @@ struct StripeFake {
     reversals: Vec<(String, HashMap<String, String>)>,
     /// Whether Stripe answers transfer reversals with an error.
     reversals_fail: bool,
+    /// Checkout Sessions expired (`/v1/checkout/sessions/{id}/expire`, or by time).
+    expired: Vec<String>,
 }
 
 type StripeShared = Arc<Mutex<StripeFake>>;
@@ -1712,7 +1714,25 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
             get(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
                 let st = s.lock().unwrap();
                 let (f, paid) = st.sessions.get(&id).cloned().unwrap();
-                Json(session_json(&id, &f, paid))
+                let mut session = session_json(&id, &f, paid);
+                if st.expired.contains(&id) {
+                    session["status"] = json!("expired");
+                }
+                Json(session)
+            }),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}/expire",
+            post(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
+                let mut st = s.lock().unwrap();
+                // (only an open session can be expired)
+                let open = st.sessions.get(&id).is_some_and(|(_, paid)| !paid) && !st.expired.contains(&id);
+                if !open {
+                    return (StatusCode::BAD_REQUEST, Json(json!({"error": {"message": "not open"}})));
+                }
+                st.expired.push(id.clone());
+                st.posts.push((format!("/v1/checkout/sessions/{id}/expire"), HashMap::new()));
+                (StatusCode::OK, Json(json!({"id": id, "object": "checkout.session", "status": "expired"})))
             }),
         )
         // Stripe Tax (MF-86): 7% of the items, shipping untaxed
@@ -11008,5 +11028,96 @@ async fn an_admin_deletes_an_accounts_data_for_someone_who_cannot_sign_in() {
             .await
             .body
             .contains(r#"href="/admin/accounts""#)
+    );
+}
+
+// ---------------------------------------------------------------- deleting a design being bought
+
+#[tokio::test]
+async fn deleting_a_design_closes_its_checkouts_first() {
+    let Some((s, st, seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    for buyer in [&bea, &cal] {
+        let r = s.post(&format!("/d/{id}/buy"), "", Some(buyer)).await;
+        assert!(
+            r.location().starts_with("https://checkout.stripe.com/"),
+            "{}",
+            r.location()
+        );
+    }
+    // cal has paid at Stripe, and it isn't confirmed here yet: the design waits
+    st.lock().unwrap().sessions.get_mut("cs_test_2").unwrap().1 = true;
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&seller)).await;
+    let r = s.post(&format!("/designs/{id}/delete"), "", Some(&seller)).await;
+    assert!(r.body.contains("still being confirmed"), "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        1
+    );
+    // bea's open checkout was closed at Stripe, and her order with it
+    let expired: Vec<String> = st.lock().unwrap().expired.clone();
+    assert_eq!(expired, ["cs_test_1"]);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE stripe_session = 'cs_test_1' AND status = 'expired'")
+            .await,
+        1
+    );
+    // once cal's checkout is over too (here: it expired without the money arriving), it goes
+    {
+        let mut f = st.lock().unwrap();
+        f.sessions.get_mut("cs_test_2").unwrap().1 = false;
+        f.expired.push("cs_test_2".into());
+    }
+    let r = s.post(&format!("/designs/{id}/delete"), "", Some(&seller)).await;
+    assert_eq!(r.location(), "/designs", "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'pending'")
+            .await,
+        0
+    );
+    // a payment for it can't be started any more
+    let posts = st
+        .lock()
+        .unwrap()
+        .posts
+        .iter()
+        .filter(|(p, _)| p.ends_with("/expire"))
+        .count();
+    assert_eq!(posts, 1, "an expired session isn't expired again");
+}
+
+#[tokio::test]
+async fn deleting_your_data_closes_checkouts_for_your_designs() {
+    let Some((s, st, seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&bea)).await;
+    // Stripe can't say whether it's paid: nothing is deleted
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = true;
+    let r = s.post("/account/data/delete", "confirm=delete", Some(&seller)).await;
+    assert!(r.body.contains("Nothing was changed"), "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        1
+    );
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = false;
+    let r = s.post("/account/data/delete", "confirm=delete", Some(&seller)).await;
+    assert!(r.body.contains("Your MakerFoundry data is deleted"), "{}", r.body);
+    assert_eq!(st.lock().unwrap().expired, ["cs_test_1"]);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        0
     );
 }

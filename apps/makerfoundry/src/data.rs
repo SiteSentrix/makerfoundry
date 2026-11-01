@@ -166,6 +166,11 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Form(f): 
     if !f.confirm.trim().eq_ignore_ascii_case("delete") {
         return private("Your data · MakerFoundry", &page_html("Type delete to confirm."), true);
     }
+    // (a checkout still open for one of the designs is closed first: nobody pays for a design
+    // that's gone)
+    if let Err(why) = crate::selling::close_account_checkouts(&state, pool, user.account_id).await {
+        return private("Your data · MakerFoundry", &page_html(why), true);
+    }
     let keys = match erase(pool, user.account_id).await {
         Ok(keys) => keys,
         Err(e) => {
@@ -451,6 +456,10 @@ pub async fn admin_delete(
                 true,
             );
         }
+    }
+    if let Err(why) = crate::selling::close_account_checkouts(&state, &pool, account).await {
+        let found = found_html(&state, &pool, admin.account_id, account, why).await;
+        return private(title, &admin_accounts_html(&lookup, &found), true);
     }
     let keys = match erase(&pool, account).await {
         Ok(keys) => keys,
