@@ -433,7 +433,40 @@ pub async fn sweep(state: &AppState) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    forget_messages(pool).await
+}
+
+/// Copies of the messages sent to shops, kept in the outbox (each carries the customer's name,
+/// address and note), go 30 days after their order is done with, as its art does: those the
+/// hub took or refused for good. The last one of each conversation stays, its contents blanked,
+/// because the next message's number counts on from it (`hub::enqueue`).
+pub async fn forget_messages(pool: &PgPool) -> Result<(), String> {
+    let mut done = CLOSED.to_vec();
+    done.push("abandoned");
+    let old = "SELECT m.id FROM mf_hub_outbox m LEFT JOIN mf_shop_orders o ON o.ref = m.order_ref
+         WHERE (m.sent_at IS NOT NULL OR m.failed IS NOT NULL)
+           AND coalesce(m.sent_at, m.last_try_at, m.created_at) < now() - interval '30 days'
+           AND (m.order_ref IS NULL OR o.id IS NULL
+                OR (o.status = ANY($1) AND o.updated_at < now() - interval '30 days'))";
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query(&format!(
+        "DELETE FROM mf_hub_outbox m WHERE m.id IN ({old})
+           AND (m.order_ref IS NULL OR m.seq < (SELECT max(x.seq) FROM mf_hub_outbox x
+                                                WHERE x.order_ref = m.order_ref AND x.to_party = m.to_party))"
+    ))
+    .bind(&done)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query(&format!(
+        "UPDATE mf_hub_outbox SET envelope = jsonb_set(envelope, '{{body}}', '{{}}'::jsonb)
+         WHERE id IN ({old}) AND envelope->'body' <> '{{}}'::jsonb"
+    ))
+    .bind(&done)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())
 }
 
 /// The storage keys in orders' `art`.
