@@ -257,6 +257,7 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/account/data.json", get(data::download))
         .route("/account/data/delete", post(data::delete))
+        .route("/account/shops/{handle}/{action}", post(shop_orders::shops::confirm))
         .route("/account/maker", get(makers::edit_page).post(makers::save))
         .route("/d/{id}/report", get(moderation::report_page).post(moderation::report))
         .route(

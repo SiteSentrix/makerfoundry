@@ -493,7 +493,9 @@ fn order_of(r: &sqlx::postgres::PgRow) -> Option<Order> {
         art: r.try_get("art").ok()?,
         customer: Customer {
             name: r.try_get("customer_name").ok()?,
-            ship_to: serde_json::from_value(r.try_get("ship_to").ok()?).ok()?,
+            // (blank once the customer's data is deleted)
+            ship_to: serde_json::from_value(r.try_get::<Option<Value>, _>("ship_to").ok()?.unwrap_or(Value::Null))
+                .ok()?,
         },
         note: r.try_get("note").ok()?,
         totals: Totals {
@@ -577,16 +579,29 @@ pub async fn pay(State(state): State<AppState>, headers: HeaderMap, Path(referen
         .ok()
         .flatten()
         .unwrap_or_else(|| "a shop".into());
-    // (a session already made and still open is used again, so a second click can't pay twice)
-    if let Some(sid) = o.stripe_session.as_deref()
-        && let Ok(s) = stripe.get(&format!("/v1/checkout/sessions/{sid}")).await
-        && s.get("status").and_then(Value::as_str) == Some("open")
-        && let Some(url) = s
-            .get("url")
-            .and_then(Value::as_str)
-            .filter(|u| u.starts_with("https://"))
-    {
-        return Redirect::to(url).into_response();
+    // (a session already made and still open is used again, so a second click can't pay twice;
+    // if Stripe can't say, no second one is made)
+    if let Some(sid) = o.stripe_session.as_deref() {
+        let s = match stripe.get(&format!("/v1/checkout/sessions/{sid}")).await {
+            Ok(s) => s,
+            // (Stripe has no such session: a new one is made)
+            Err(e) if e.0.starts_with("Stripe refused (404)") => Value::Null,
+            Err(_) => {
+                return private(
+                    "Order · MakerFoundry",
+                    r#"<section class="form"><h1>Stripe can't be reached just now</h1><p>Please try again in a few minutes.</p></section>"#,
+                    true,
+                );
+            }
+        };
+        if s.get("status").and_then(Value::as_str) == Some("open")
+            && let Some(url) = s
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|u| u.starts_with("https://"))
+        {
+            return Redirect::to(url).into_response();
+        }
     }
     let t = &o.totals;
     let expires = std::time::SystemTime::now()
@@ -697,6 +712,34 @@ pub async fn confirm_paid(conn: &mut PgConnection, reference: &str, session: &Va
     .await
     .map_err(|e| e.to_string())?;
     let Some(id) = paid else {
+        // paid, but not this order's payment to take (the order was deleted, paid already through
+        // another checkout, or for another amount): kept to be refunded by the sweep, unless it's
+        // the very payment the order already has (Stripe telling us twice)
+        if let Some(intent) = intent.filter(|i| i.starts_with("pi_")) {
+            let own: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM mf_shop_orders WHERE ref = $1 AND stripe_payment_intent = $2)",
+            )
+            .bind(reference)
+            .bind(intent)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+            if !own {
+                sqlx::query(
+                    "INSERT INTO mf_shop_stray_payments (payment_intent, session, ref, cents, currency)
+                     VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+                )
+                .bind(intent)
+                .bind(sid)
+                .bind(reference)
+                .bind(total)
+                .bind(currency)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+                eprintln!("shop orders: a payment for {reference} its order can't take; it will be refunded");
+            }
+        }
         return Ok(false);
     };
     let o = order(&mut *conn, reference).await.ok_or("the order went")?;

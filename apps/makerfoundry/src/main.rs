@@ -245,13 +245,25 @@ async fn main() -> ExitCode {
         let hub_state = state.clone();
         tokio::spawn(async move {
             let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 every.tick().await;
                 if let Err(e) = makerfoundry::shop_orders::sync(&hub_state).await {
                     eprintln!("stitchhub: {e}");
                 }
-                // refunds due, unpaid orders and old files (MF-84)
-                if let Err(e) = makerfoundry::shop_orders::after::sweep(&hub_state).await {
+            }
+        });
+    }
+    // every minute, whether or not StitchHub is on, and never held up by it: orders from shops'
+    // refunds due, stray payments, sales tax, unpaid orders and old files (MF-84)
+    if state.db.is_some() {
+        let sweep_state = state.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                every.tick().await;
+                if let Err(e) = makerfoundry::shop_orders::after::sweep(&sweep_state).await {
                     eprintln!("shop orders: {e}");
                 }
             }

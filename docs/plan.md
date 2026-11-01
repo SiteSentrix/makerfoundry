@@ -494,6 +494,20 @@ StitchShop's side is stitchbench#74).
   `message.expired` with `conversation` and `reason`; an `order.placed` the hub refuses is
   refunded like an expired one; email addresses and phone numbers refused in the order's name and
   note. Fixtures converted (7 valid, 34 invalid); `docs/shop-orders-contract.md` rewritten.
+- **Fixes from the code review, 2026-11-01** (`migrations/0044_shop_order_review.sql`), before
+  ordering opens:
+  - a shop is offered only once the Foundry Account its catalogue names has confirmed the shop on
+    its account page (a catalogue naming another account resets it);
+  - a shop's status never takes an order back (except between proofs), and doesn't overwrite a
+    cancel that came in meanwhile;
+  - a held message is taken out of the held ones only once applied, and retried each round;
+  - a payment its order can't take (deleted, paid through another checkout, another amount) is
+    recorded and refunded in full by the sweep; no second checkout is made while Stripe can't say
+    whether the first is still open;
+  - deleting your data waits while an order from a shop is in progress, and blanks the hub's copies
+    of finished orders' messages; an erased order still loads;
+  - refunds that keep failing don't hold up the rest; seqs are taken one at a time per
+    conversation; the sweep runs every minute whether or not StitchHub is on.
 - **A test deploy's own name on the hub, built 2026-11-01** (StitchHub's request): the name
   MakerFoundry signs, sends and takes as comes from `MF_STITCHHUB_SERVICE` (default
   `service:makerfoundry`), so the test deploy, with its own hub key, is
