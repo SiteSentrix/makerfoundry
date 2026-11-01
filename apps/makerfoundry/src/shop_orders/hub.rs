@@ -550,7 +550,7 @@ async fn drain(
             conversation,
             seq: 1,
             from: Some("hub".into()),
-            to: contract::ME.into(),
+            to: contract::me().into(),
             created_at: contract::now_utc(),
             expires_at: None,
             body: Value::Null,
@@ -880,7 +880,7 @@ pub mod stand_in {
 
     /// Puts a message in MakerFoundry's queue, as if a shop (or the hub) had sent it.
     pub fn deliver(s: &Shared, message: Value) {
-        lock(s).queues.entry(contract::ME.into()).or_default().push(message);
+        lock(s).queues.entry(contract::me().into()).or_default().push(message);
     }
 
     /// A file a shop put in the hub (a proof's mock-up) → its SHA-256.
@@ -989,7 +989,7 @@ pub mod stand_in {
             let Ok(env) = serde_json::from_value::<Envelope>(m.clone()) else {
                 return err(StatusCode::BAD_REQUEST, "bad_envelope");
             };
-            if env.from.as_deref().is_some_and(|f| f != contract::ME) {
+            if env.from.as_deref().is_some_and(|f| f != contract::me()) {
                 return err(StatusCode::BAD_REQUEST, "bad_from");
             }
             let now = secs(&contract::now_utc()).unwrap_or(0);
@@ -1053,7 +1053,7 @@ pub mod stand_in {
             let mut seen = BTreeSet::new();
             let page: Vec<Value> = hub
                 .queues
-                .get(contract::ME)
+                .get(contract::me())
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
@@ -1072,7 +1072,7 @@ pub mod stand_in {
                 return StatusCode::UNAUTHORIZED;
             }
             let ids: Vec<Value> = b["ids"].as_array().cloned().unwrap_or_default();
-            if let Some(q) = hub.queues.get_mut(contract::ME) {
+            if let Some(q) = hub.queues.get_mut(contract::me()) {
                 q.retain(|m| !ids.contains(&m["id"]));
             }
             StatusCode::OK

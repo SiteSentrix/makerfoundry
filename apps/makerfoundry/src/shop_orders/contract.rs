@@ -33,8 +33,37 @@ pub const STATUSES: &[&str] = &[
     "collected",
 ];
 
-/// MakerFoundry, as the hub names it.
+/// MakerFoundry, as the hub names it, unless `MF_STITCHHUB_SERVICE` names it otherwise (a test
+/// deploy is `service:makerfoundry-test`, with its own key and queue).
 pub const ME: &str = "service:makerfoundry";
+
+static SERVICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The name this MakerFoundry sends and signs as, and receives for: `MF_STITCHHUB_SERVICE`, or
+/// `service:makerfoundry`.
+pub fn me() -> &'static str {
+    SERVICE.get().map_or(ME, String::as_str)
+}
+
+/// Whether `name` can be a service's name: `service:` and 1 to 40 of a-z, 0-9 and `-`.
+pub fn is_service_name(name: &str) -> bool {
+    name.strip_prefix("service:").is_some_and(|n| {
+        !n.is_empty()
+            && n.len() <= 40
+            && n.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    })
+}
+
+/// Sets the name this MakerFoundry goes by on the hub, once, at start-up.
+pub fn set_me(name: &str) -> Result<(), String> {
+    if !is_service_name(name) {
+        return Err("MF_STITCHHUB_SERVICE must be service: and a-z, 0-9 or - (at most 40)".into());
+    }
+    SERVICE
+        .set(name.to_string())
+        .map_err(|_| "the hub name is already set".to_string())
+}
 /// The catalogue's conversation.
 pub const CATALOG: &str = "catalog";
 
@@ -71,7 +100,7 @@ pub struct Sig {
 impl Envelope {
     /// Who sent it: `shop:<id>`, `hub`, or MakerFoundry.
     pub fn sender(&self) -> &str {
-        self.from.as_deref().unwrap_or(ME)
+        self.from.as_deref().unwrap_or(me())
     }
 }
 
@@ -426,9 +455,9 @@ pub fn is_shop(s: &str) -> bool {
     })
 }
 
-/// A recipient MakerFoundry may be (`service:makerfoundry`; `makerfoundry` read too).
+/// A recipient MakerFoundry may be: its own service name (`makerfoundry` read too, for the default).
 fn is_me(s: &str) -> bool {
-    s == ME || s == "makerfoundry"
+    s == me() || (me() == ME && s == "makerfoundry")
 }
 
 /// A conversation: 1 to 120 of letters, digits and `. _ : -`.
@@ -847,6 +876,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_service_name_is_service_and_plain_letters() {
+        for good in ["service:makerfoundry", "service:makerfoundry-test", "service:a1"] {
+            assert!(is_service_name(good), "{good}");
+        }
+        for bad in [
+            "makerfoundry",
+            "service:",
+            "service:Maker",
+            "service:a b",
+            "service:a_b",
+            "shop:x",
+            &format!("service:{}", "a".repeat(41)),
+        ] {
+            assert!(!is_service_name(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn shipping_is_flat_plus_each_extra_piece_and_free_over_a_total() {
         let s = Shipping {
             flat_cents: 899,
@@ -980,7 +1027,7 @@ mod tests {
             (None, 3),
             "no from: the hub knows us by our key"
         );
-        assert_eq!(env.sender(), ME);
+        assert_eq!(env.sender(), me());
         assert!(env.expires_at.is_some() && env.sig.is_none());
         assert!(
             make(&status, CATALOG, 3, "shop:mainst", 7).is_err(),
