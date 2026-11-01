@@ -136,7 +136,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | to keep designs | Cloudflare R2: the account's id, an API token's keys (Object Read & Write on the bucket only), and the bucket (`makerfoundry-files`). Without them designs can be previewed but not kept |
 | `MF_ADMINS` | for the report queue | account ids apart by commas: who sees `/admin` and can take designs down |
 | `MF_DMCA_AGENT` | before launch | the designated agent registered with the US Copyright Office, as shown on `/dmca`: lines apart by `|` (name, address, email, phone) |
-| `MF_API_ORIGINS` | no (default `https://stitchfoundry.app`) | the web apps' sites that may call the apps' API from a browser (`docs/api.md`), apart by commas |
+| `MF_API_ORIGINS` | no (default `https://stitchfoundry.app,https://stitchwright.github.io`) | the web apps' sites that may call the apps' API from a browser (`docs/api.md`), apart by commas |
 | `MF_LAUNCHED` | at the launch | `yes` opens MakerFoundry to everyone (`docs/launch.md`), but only once the legal pages have none of the owner's markers left; until then the log says what's left |
 | `MF_PUBLISHERS` | no (nobody; everyone once launched) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
 | `STRIPE_SECRET_KEY` | to sell | MakerFoundry's restricted key in StitchFoundry's Stripe account (`rk_test_…` until launch; see "Stripe" above). Without it every design is free |
