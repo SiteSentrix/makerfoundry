@@ -4436,6 +4436,19 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
     assert_eq!(v["error"]["message"], "That design isn't on MakerFoundry.");
     // the button follows the switch
     let page = s.get(&format!("/d/{id}"), None).await.body;
+    // Open in PatternFoundry (MF-89): the same file address, PatternFoundry's web app, SVG only
+    let pattern = format!(
+        "https://sitesentrix.github.io/patternfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
+    );
+    if makerfoundry::api::PATTERNFOUNDRY_OPENS_LINKS {
+        assert!(
+            page.contains(&pattern) && page.contains("Open in PatternFoundry"),
+            "{page}"
+        );
+        s.dump_page("svg-open-buttons", &page, None).await;
+    } else {
+        assert!(!page.contains("Open in PatternFoundry"), "{page}");
+    }
     if makerfoundry::api::SCREENFOUNDRY_OPENS_LINKS {
         let want = format!(
             "https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
