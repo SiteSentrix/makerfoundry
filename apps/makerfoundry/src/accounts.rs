@@ -463,6 +463,10 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
     } else {
         ""
     };
+    let shops = match (state.db.as_ref(), state.stitchhub.is_some()) {
+        (Some(pool), true) => crate::shop_orders::shops::claims_html(pool, user.account_id).await,
+        _ => String::new(),
+    };
     private(
         "Your account · MakerFoundry",
         &format!(
@@ -483,6 +487,7 @@ pub async fn account_page(State(state): State<AppState>, headers: HeaderMap) -> 
 {notices}
 {api_keys}
 {points}
+{shops}
 <form method="post" action="/signout"><button type="submit" class="secondary">Sign out</button></form>
 </section>"#,
             email = escape(&user.email)
