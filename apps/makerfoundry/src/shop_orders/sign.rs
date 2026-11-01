@@ -3,7 +3,7 @@
 //! private key is the Railway secret `MF_STITCHHUB_SIGNING_KEY` (base64 PKCS#8 DER, e.g. from
 //! `openssl genpkey -algorithm ed25519 -outform DER | base64`), never in the repository or a log.
 //!
-//! The signed text is these lines joined by "\n": `SBHUB1`, `service:makerfoundry`, to,
+//! The signed text is these lines joined by "\n": `SBHUB1`, the sender (`contract::me()`), to,
 //! conversation, seq, id, type, version, created_at and expires_at (exactly as sent; expires_at
 //! empty when there is none), then the SHA-256 (hex) of the body's canonical JSON: keys sorted at
 //! every level (as JavaScript sorts strings, by UTF-16 code units), no whitespace.
@@ -13,7 +13,7 @@ use ring::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::contract::{Envelope, ME, Sig};
+use super::contract::{Envelope, Sig, me};
 
 /// The DER that comes before an Ed25519 public key in an SPKI (RFC 8410 § 4).
 const SPKI_PREFIX: [u8; 12] = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
@@ -65,7 +65,7 @@ pub fn signed_text(env: &Envelope) -> String {
     let body = format!("{:x}", Sha256::digest(canonical(&env.body).as_bytes()));
     [
         "SBHUB1",
-        ME,
+        me(),
         &env.to,
         &env.conversation,
         &env.seq.to_string(),

@@ -250,7 +250,7 @@ async fn messages_from_shops_are_applied_once_and_in_order() {
     sync(&pool, &hub, &apply).await.unwrap();
     assert!(applied.lock().unwrap().is_empty(), "held for 1");
     assert!(
-        shared.lock().unwrap().queues[contract::ME].is_empty(),
+        shared.lock().unwrap().queues[contract::me()].is_empty(),
         "held ones are acknowledged"
     );
     stand_in::deliver(&shared, from_shop(&uuid(1), 1, "proof_sent"));
@@ -271,7 +271,7 @@ async fn messages_from_shops_are_applied_once_and_in_order() {
     sync(&pool, &hub, &apply).await.unwrap();
     assert_eq!(applied.lock().unwrap().len(), 3);
     assert!(
-        shared.lock().unwrap().queues[contract::ME].is_empty(),
+        shared.lock().unwrap().queues[contract::me()].is_empty(),
         "all acknowledged"
     );
     // the next in order still applies
@@ -348,7 +348,7 @@ async fn the_inbox_is_polled_until_empty() {
     sync(&pool, &hub, &apply).await.unwrap();
     let seqs: Vec<u64> = applied.lock().unwrap().iter().map(|a| a.2).collect();
     assert_eq!(seqs, [1, 2, 3, 4, 5]);
-    assert!(shared.lock().unwrap().queues[contract::ME].is_empty());
+    assert!(shared.lock().unwrap().queues[contract::me()].is_empty());
 }
 
 #[tokio::test]

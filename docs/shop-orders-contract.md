@@ -62,7 +62,9 @@ Every message, both ways:
 - `created_at` must be within 10 minutes of the hub's clock: MakerFoundry stamps a message again
   when it sends it after a wait (8 minutes or more since it was made or last tried).
 - `from`: on MakerFoundry's messages absent (or exactly `service:makerfoundry`); the hub sets it
-  on delivery. The hub's own messages are `from: "hub"`; shops' are `shop:<hub id>`.
+  on delivery. A test deploy has its own key and name (`service:makerfoundry-test`, set with
+  `MF_STITCHHUB_SERVICE`), and then that name stands wherever this page says
+  `service:makerfoundry`, the signed text's sender line included. The hub's own messages are `from: "hub"`; shops' are `shop:<hub id>`.
 - `expires_at`: when the hub gives up delivering (MakerFoundry sets 7 days for orders, 14 for
   proofs).
 - `sig`: on `order.placed` only (below).
