@@ -277,6 +277,8 @@ pub fn app(state: AppState) -> Router {
             post(model3d::showcase::post_now),
         )
         .route("/admin/overview", get(overview::overview))
+        .route("/admin/accounts", get(data::admin_accounts))
+        .route("/admin/accounts/{account}/delete", post(data::admin_delete))
         .route("/admin/apps", get(overview::apps))
         .route("/admin/reports/{rid}/takedown", post(moderation::takedown))
         .route("/admin/reports/{rid}/dismiss", post(moderation::dismiss))
