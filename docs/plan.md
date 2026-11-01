@@ -447,8 +447,8 @@ StitchShop's side is stitchbench#74).
   the rest to the shop's Stripe account (a second click reuses the open session). Once the
   verified webhook or the return from Checkout shows a paid session labelled with this order, its
   amount and currency, the order is paid, three `mf_shop_ledger` rows are written and
-  `order.placed` is queued for the shop, in one transaction, once. The shop fetches the art from
-  `/shop-orders/<ref>/art/<sha256>?t=<the order's secret>` while the order is open. (Sales tax:
+  `order.placed` is queued for the shop, in one transaction, once. (The art goes through the hub
+  since #53, below.) (Sales tax:
   MF-86.)
 - **MF-84 after payment, built 2026-10-31** (`src/shop_orders/after.rs`, tables in
   `migrations/0041_shop_order_updates.sql`): the shop's `order.status` (with its note and
@@ -479,6 +479,20 @@ StitchShop's side is stitchbench#74).
   refund reverses it, takes the price back from the shop and gives the shop the 10% and the tax
   it paid over, so the shop is still out only the card fee. Confirm the tax code and
   registrations with an accountant before the first registration.
+- **StitchHub's form, built 2026-11-01** (issue #53; StitchHub's message of 2026-11-01): the
+  client now speaks the form StitchHub implements. `Authorization: Bearer svk_…` and `X-Client`;
+  `GET` then `POST /v2/hello` with the types read (again on `409 hello_first`); `GET /v2/shops`,
+  a shop offered only while `ready` (`mf_shops.hub_ready`, `0039_shops.sql`); the envelope's
+  `conversation` (`catalog` for catalogues) in place of `order`, `from` left to the hub,
+  `created_at` stamped again after a wait; `order.placed` signed with Ed25519
+  (`src/shop_orders/sign.rs`, `MF_STITCHHUB_SIGNING_KEY`), with `fulfilment` and no `art_urls`;
+  the art put in the hub first (`/v2/files/put`, PUT, `/v2/files/done`; `mf_hub_files`) and
+  MakerFoundry's own art address removed; mock-ups fetched with `/v2/files/get`; `202`
+  duplicates, `id_reused` counted as delivered, `seq_taken` final; the inbox polled until empty;
+  `message.expired` with `conversation` and `reason`; an `order.placed` the hub refuses is
+  refunded like an expired one; email addresses and phone numbers refused in the order's name and
+  note. Fixtures converted (7 valid, 34 invalid); `docs/shop-orders-contract.md` rewritten.
+
 
 ## ScreenFoundry (MF-87, 2026-10-31)
 (Numbered MF-87 and MF-88 on 2026-10-31; their commits, and the comment in

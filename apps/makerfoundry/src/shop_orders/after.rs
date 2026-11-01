@@ -17,7 +17,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::contract::{Envelope, Message, MessageExpired, OrderCancel, OrderStatus, ProofAnswer, ProofSent};
@@ -53,12 +53,9 @@ fn ignored(env: &Envelope, why: &str) -> Result<(), String> {
 
 /// The order a shop's message is about, when it's that shop's: its id and status.
 async fn shops_order(pool: &PgPool, env: &Envelope) -> Result<Option<(i64, String)>, String> {
-    let Some(reference) = env.order.as_deref() else {
-        return Ok(None);
-    };
     sqlx::query_as("SELECT id, status FROM mf_shop_orders WHERE ref = $1 AND shop_party = $2")
-        .bind(reference)
-        .bind(&env.from)
+        .bind(&env.conversation)
+        .bind(env.sender())
         .fetch_optional(pool)
         .await
         .map_err(|e| e.to_string())
@@ -85,7 +82,8 @@ pub async fn status(pool: &PgPool, env: &Envelope, s: &OrderStatus) -> Result<()
     .map_err(|e| e.to_string())
 }
 
-/// `proof.sent` from the shop: the mock-up fetched, checked by size and SHA-256, re-drawn and kept.
+/// `proof.sent` from the shop: the mock-up fetched from the hub's files, checked by size and
+/// SHA-256, re-drawn and kept.
 pub async fn proof(state: &AppState, pool: &PgPool, env: &Envelope, p: &ProofSent) -> Result<(), String> {
     let Some((id, now)) = shops_order(pool, env).await? else {
         return ignored(env, "not this shop's order");
@@ -102,16 +100,25 @@ pub async fn proof(state: &AppState, pool: &PgPool, env: &Envelope, p: &ProofSen
     if known.is_some() {
         return Ok(());
     }
-    let (Some(url), true) = (p.mockup.url.as_deref(), p.mockup.size <= MAX_MOCKUP_BYTES as u64) else {
-        return ignored(env, "no mock-up, or one too large");
-    };
+    if p.mockup.size > MAX_MOCKUP_BYTES as u64 {
+        return ignored(env, "a mock-up too large");
+    }
     let (Some(hub), Some(storage)) = (state.stitchhub.as_ref(), state.storage.as_ref()) else {
         return Err("proofs need storage".into());
     };
-    let bytes = hub.fetch_file(url, MAX_MOCKUP_BYTES).await?;
-    if bytes.len() as u64 != p.mockup.size || format!("{:x}", Sha256::digest(&bytes)) != p.mockup.sha256 {
-        return ignored(env, "the mock-up isn't the one described");
-    }
+    let bytes = match hub
+        .download(&env.conversation, &p.mockup.sha256, p.mockup.size, MAX_MOCKUP_BYTES)
+        .await
+    {
+        Ok(b) => b,
+        // (a file that will never be right is left; the hub being away is tried again)
+        Err(why)
+            if why.contains("isn't the one described") || why.contains("too large") || why.contains("no such file") =>
+        {
+            return ignored(env, "the mock-up isn't the one described");
+        }
+        Err(why) => return Err(why),
+    };
     let drawn = tokio::task::spawn_blocking(move || {
         let out = crate::photos::reencode(&bytes)?;
         let kind = crate::photos::check(&out)?;
@@ -177,10 +184,10 @@ pub async fn shop_cancelled(state: &AppState, pool: &PgPool, env: &Envelope, c: 
 
 /// `message.expired` from the hub: an `order.placed` no shop took is refunded in full.
 pub async fn expired(state: &AppState, pool: &PgPool, env: &Envelope, e: &MessageExpired) -> Result<(), String> {
-    if env.from != "hub" {
+    if env.from.as_deref() != Some("hub") {
         return ignored(env, "not from the hub");
     }
-    let (true, Some(reference)) = (e.kind == "order.placed", e.order.as_deref()) else {
+    let (true, reference) = (e.kind == "order.placed", e.conversation.as_str()) else {
         // (an answer or a cancel the shop never took: the order shows what it is)
         return ignored(env, "nothing to undo");
     };
@@ -371,6 +378,21 @@ pub async fn sweep(state: &AppState) -> Result<(), String> {
     for id in due {
         settle_now(state, pool, id).await;
     }
+    // a paid order the hub refused for good (not one that only expired: the hub says so itself)
+    // can never reach its shop: refunded in full
+    let refused: Vec<i64> = sqlx::query_scalar(
+        "UPDATE mf_shop_orders o SET status = 'expired', refund_due = true, updated_at = now()
+         FROM mf_hub_outbox m
+         WHERE m.kind = 'order.placed' AND m.order_ref = o.ref AND m.failed IS NOT NULL AND o.status = 'sent'
+         RETURNING o.id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    for id in refused {
+        eprintln!("shop orders: order {id} couldn't be sent to its shop; refunding it");
+        settle_now(state, pool, id).await;
+    }
     if let Some(stripe) = state.stripe.as_ref() {
         super::tax::settle_all(stripe, pool).await?;
     }
@@ -491,7 +513,7 @@ pub async fn cancel(
             by: "customer".into(),
             why,
         });
-        super::hub::enqueue(&mut tx, &message, Some(&o.reference), &o.shop_party, MESSAGE_DAYS).await?;
+        super::hub::enqueue(&mut tx, &message, &o.reference, &o.shop_party, MESSAGE_DAYS, &[]).await?;
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok::<bool, String>(true)
     };
@@ -556,7 +578,7 @@ pub async fn answer(
             answer: if approved { "approved" } else { "changes" }.into(),
             note,
         });
-        super::hub::enqueue(&mut tx, &message, Some(&o.reference), &o.shop_party, MESSAGE_DAYS).await?;
+        super::hub::enqueue(&mut tx, &message, &o.reference, &o.shop_party, MESSAGE_DAYS, &[]).await?;
         tx.commit().await.map_err(|e| e.to_string())
     };
     if let Err(e) = done.await {

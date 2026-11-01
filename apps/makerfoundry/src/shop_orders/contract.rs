@@ -1,15 +1,16 @@
-//! The messages MakerFoundry and shops exchange through StitchHub (MF-80, issues #1 and #2):
-//! `docs/shop-orders-contract.md`, with one example of each in `docs/contract/shop-orders/` that
-//! the tests here read (StitchHub and StitchShop test against the same files). Everything a shop
-//! sends is untrusted: every field is checked against a limit before anything is made of it.
-//! Fields a reader doesn't know are ignored, so a newer sender can add fields within a version.
+//! The messages MakerFoundry and shops exchange through StitchHub (MF-80, issues #1, #2 and #53):
+//! `docs/shop-orders-contract.md`, in the form the hub implements (StitchHub's message, 2026-11-01),
+//! with one example of each in `docs/contract/shop-orders/` that the tests here read. Everything a
+//! shop sends is untrusted: every field is checked against a limit before anything is made of it.
+//! Fields a reader doesn't know are ignored, so a newer sender can add fields within a version;
+//! what MakerFoundry sends has only the contract's fields (the hub refuses others).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The largest message, its body included (files go by signed address, never in a message).
+/// The largest message, its body included (files go through the hub, never in a message).
 pub const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 /// The largest art file and preview a message may point to (as the hub's inbox).
 pub const MAX_ART_BYTES: u64 = 10 * 1024 * 1024;
@@ -32,22 +33,46 @@ pub const STATUSES: &[&str] = &[
     "collected",
 ];
 
-/// Every message's envelope.
+/// MakerFoundry, as the hub names it.
+pub const ME: &str = "service:makerfoundry";
+/// The catalogue's conversation.
+pub const CATALOG: &str = "catalog";
+
+/// Every message's envelope. `conversation` is MakerFoundry's order reference (or `catalog`);
+/// `seq` counts from 1 per sender per conversation. MakerFoundry's own messages carry no `from`
+/// (the hub knows who sent them by the key); messages from the hub carry it (`shop:<id>` or
+/// `hub`) and `delivery_seq`, which MakerFoundry doesn't need.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Envelope {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
     pub version: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub order: Option<String>,
-    #[serde(default)]
+    pub conversation: String,
     pub seq: u64,
-    pub from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     pub to: String,
     pub created_at: String,
-    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
     pub body: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig: Option<Sig>,
+}
+
+/// An envelope's signature (`order.placed`): Ed25519, base64 (`sign.rs`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Sig {
+    pub v: u32,
+    pub sig: String,
+}
+
+impl Envelope {
+    /// Who sent it: `shop:<id>`, `hub`, or MakerFoundry.
+    pub fn sender(&self) -> &str {
+        self.from.as_deref().unwrap_or(ME)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -149,23 +174,27 @@ pub struct Line {
     pub decorations: Vec<Decoration>,
 }
 
+/// A picture that travels through the hub (a preview, a proof's mock-up), named by its hash.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Image {
     pub size: u64,
     pub sha256: String,
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
 }
 
+/// An address (`postal` is read as `postcode`, as the hub does).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Address {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
     pub line1: String,
     #[serde(default)]
     pub line2: String,
     pub city: String,
+    #[serde(default)]
     pub region: String,
+    #[serde(alias = "postal")]
     pub postcode: String,
     pub country: String,
 }
@@ -173,7 +202,7 @@ pub struct Address {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Customer {
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ship_to: Option<Address>,
 }
 
@@ -190,12 +219,14 @@ pub struct Totals {
     pub shop_gets_cents: i64,
 }
 
-/// `order.placed` v1: sent once the customer's payment has succeeded.
+/// `order.placed` v1: sent once the customer's payment has succeeded, signed. Its art and preview
+/// are named by hash and travel through the hub's files (`hub::upload`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct OrderPlaced {
+    /// `ship` (with `customer.ship_to`) or `pickup` (without).
+    pub fulfilment: String,
     pub lines: Vec<Line>,
-    pub art_urls: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Image>,
     pub customer: Customer,
     pub totals: Totals,
@@ -239,14 +270,17 @@ pub struct OrderCancel {
     pub why: String,
 }
 
-/// `message.expired` v1: the hub gave up delivering one of ours.
+/// `message.expired` v1: the hub gave up delivering one of ours (`reason`: `expired`, or
+/// `recipient_too_old`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MessageExpired {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(default)]
-    pub order: Option<String>,
+    pub conversation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    pub reason: String,
 }
 
 /// A message, its body read and checked.
@@ -289,7 +323,16 @@ impl Message {
     }
 }
 
-/// The message types and versions MakerFoundry understands (for the hub's handshake).
+/// The types MakerFoundry reads, for the hub's handshake (`POST /v2/hello`).
+pub const READS: &[(&str, u32)] = &[
+    ("catalog", 1),
+    ("order.status", 1),
+    ("proof.sent", 1),
+    ("order.cancel", 1),
+    ("message.expired", 1),
+];
+
+/// The message types and versions in the contract.
 pub const UNDERSTOOD: &[(&str, u32)] = &[
     ("catalog", 1),
     ("order.placed", 1),
@@ -317,10 +360,11 @@ fn text(field: &str, s: &str, max: usize, required: bool) -> Result<(), String> 
 
 fn address(field: &str, a: &Address) -> Result<(), String> {
     for (f, v, req) in [
+        ("name", &a.name, false),
         ("line1", &a.line1, true),
         ("line2", &a.line2, false),
         ("city", &a.city, true),
-        ("region", &a.region, true),
+        ("region", &a.region, false),
         ("postcode", &a.postcode, true),
     ] {
         text(&format!("{field}.{f}"), v, 100, req)?;
@@ -347,14 +391,6 @@ fn sha256(field: &str, s: &str) -> Result<(), String> {
     }
 }
 
-fn https(field: &str, s: &str) -> Result<(), String> {
-    if s.len() <= 2048 && s.starts_with("https://") && !s.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        Ok(())
-    } else {
-        Err(format!("{field} isn't an https address"))
-    }
-}
-
 /// A UUID's text form (any version), lowercase.
 pub fn is_uuid(s: &str) -> bool {
     let groups: Vec<&str> = s.split('-').collect();
@@ -364,26 +400,40 @@ pub fn is_uuid(s: &str) -> bool {
             .all(|b| b == b'-' || b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// `YYYY-MM-DDTHH:MM:SSZ`.
+/// `YYYY-MM-DDTHH:MM:SSZ`, with or without fractions of a second (`.123`).
 pub fn is_time(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 20
-        && b.iter().enumerate().all(|(i, c)| match i {
+    let head = b.get(..19).is_some_and(|h| {
+        h.iter().enumerate().all(|(i, c)| match i {
             4 | 7 => *c == b'-',
             10 => *c == b'T',
             13 | 16 => *c == b':',
-            19 => *c == b'Z',
             _ => c.is_ascii_digit(),
         })
+    });
+    let tail = match b.get(19..) {
+        Some([b'Z']) => true,
+        Some([b'.', rest @ .., b'Z']) => (1..=9).contains(&rest.len()) && rest.iter().all(u8::is_ascii_digit),
+        _ => false,
+    };
+    head && tail
 }
 
-/// A party: `makerfoundry`, `hub` (its own notices), or `shop:<hub shop id>`.
-fn is_party(s: &str) -> bool {
-    s == "makerfoundry"
-        || s == "hub"
-        || s.strip_prefix("shop:").is_some_and(|id| {
-            !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        })
+/// A shop, as the hub names it: `shop:<hub shop id>`.
+pub fn is_shop(s: &str) -> bool {
+    s.strip_prefix("shop:").is_some_and(|id| {
+        !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+    })
+}
+
+/// A recipient MakerFoundry may be (`service:makerfoundry`; `makerfoundry` read too).
+fn is_me(s: &str) -> bool {
+    s == ME || s == "makerfoundry"
+}
+
+/// A conversation: 1 to 120 of letters, digits and `. _ : -`.
+pub fn is_conversation(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 120 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 
 /// An order reference MakerFoundry made: `mf-` and up to 40 letters and digits.
@@ -392,7 +442,7 @@ pub fn is_order_ref(s: &str) -> bool {
         .is_some_and(|r| !r.is_empty() && r.len() <= 40 && r.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
-fn image(field: &str, i: &Image, needs_url: bool) -> Result<(), String> {
+fn image(field: &str, i: &Image) -> Result<(), String> {
     if !(1..=MAX_PREVIEW_BYTES).contains(&i.size) {
         return Err(format!("{field} is empty or larger than 2 MB"));
     }
@@ -400,11 +450,33 @@ fn image(field: &str, i: &Image, needs_url: bool) -> Result<(), String> {
     if i.kind != "image/png" && i.kind != "image/jpeg" {
         return Err(format!("{field} isn't a PNG or JPEG"));
     }
-    match (&i.url, needs_url) {
-        (Some(u), _) => https(&format!("{field}.url"), u),
-        (None, true) => Err(format!("{field} has no address")),
-        (None, false) => Ok(()),
+    Ok(())
+}
+
+/// Whether `text` looks like it holds an email address or a phone number: the hub refuses an
+/// order whose note does (`personal_contact`), because the shop reaches the customer through the
+/// order's messages, never directly.
+pub fn has_contact(text: &str) -> bool {
+    let email = text.split_whitespace().any(|w| {
+        let w = w.trim_matches(|c: char| !c.is_alphanumeric());
+        w.split_once('@').is_some_and(|(user, host)| {
+            !user.is_empty() && host.contains('.') && !host.starts_with('.') && !host.ends_with('.')
+        })
+    });
+    // seven or more digits in a run that only spaces, dots, dashes, brackets or + break up
+    let mut digits = 0;
+    let mut phone = false;
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            digits += 1;
+            if digits >= 7 {
+                phone = true;
+            }
+        } else if !" .-()+/".contains(c) {
+            digits = 0;
+        }
     }
+    email || phone
 }
 
 fn check_catalog(c: &Catalog) -> Result<(), String> {
@@ -549,24 +621,28 @@ fn check_placed(o: &OrderPlaced) -> Result<(), String> {
                 return Err("an art file is empty or larger than 10 MB".into());
             }
             sha256("art.sha256", &d.art.sha256)?;
-            match o.art_urls.get(&d.art.sha256) {
-                Some(u) => https("art_urls", u)?,
-                None => return Err("an art file has no address".into()),
-            }
         }
     }
     if pieces > MAX_PIECES {
         return Err(format!("an order has at most {MAX_PIECES} pieces"));
     }
     if let Some(p) = &o.preview {
-        image("preview", p, false)?;
+        image("preview", p)?;
     }
     text("customer.name", &o.customer.name, 100, true)?;
-    if let Some(a) = &o.customer.ship_to {
-        address("ship_to", a)?;
+    match (o.fulfilment.as_str(), &o.customer.ship_to) {
+        ("ship", Some(a)) => address("ship_to", a)?,
+        ("ship", None) => return Err("a shipped order needs its address".into()),
+        ("pickup", None) => {}
+        ("pickup", Some(_)) => return Err("a pick-up order has no address".into()),
+        _ => return Err("fulfilment is ship or pickup".into()),
     }
     check_totals(&o.totals)?;
-    text("note", &o.note, 1000, false)
+    text("note", &o.note, 1000, false)?;
+    if has_contact(&o.note) || has_contact(&o.customer.name) {
+        return Err("the note has an email address or phone number".into());
+    }
+    Ok(())
 }
 
 fn check(m: &Message) -> Result<(), String> {
@@ -584,7 +660,7 @@ fn check(m: &Message) -> Result<(), String> {
             if !(1..=100).contains(&p.proof) {
                 return Err("proof is numbered 1 to 100".into());
             }
-            image("mockup", &p.mockup, true)?;
+            image("mockup", &p.mockup)?;
             text("note", &p.note, 1000, false)
         }
         Message::ProofAnswer(a) => {
@@ -612,10 +688,13 @@ fn check(m: &Message) -> Result<(), String> {
             if !UNDERSTOOD.iter().any(|(k, _)| *k == e.kind) {
                 return Err("unknown type".into());
             }
-            match &e.order {
-                Some(o) if !is_order_ref(o) => Err("order isn't one of ours".into()),
-                _ => Ok(()),
+            if !is_conversation(&e.conversation) {
+                return Err("conversation is malformed".into());
             }
+            if e.to.as_deref().is_some_and(|t| !is_shop(t)) {
+                return Err("to isn't a shop".into());
+            }
+            text("reason", &e.reason, 40, true)
         }
     }
 }
@@ -629,24 +708,37 @@ pub fn parse(bytes: &[u8]) -> Result<(Envelope, Message), String> {
     if !is_uuid(&env.id) {
         return Err("id isn't a UUID".into());
     }
-    if !is_party(&env.from) || !is_party(&env.to) {
+    // to a shop from MakerFoundry, or to MakerFoundry from a shop or the hub
+    let ours = env.from.as_deref().is_none_or(is_me);
+    let from_ok = match env.from.as_deref() {
+        None => true,
+        Some(f) => is_me(f) || f == "hub" || is_shop(f),
+    };
+    let to_ok = if ours { is_shop(&env.to) } else { is_me(&env.to) };
+    if !from_ok || !to_ok {
         return Err("from or to isn't a party".into());
     }
-    if !is_time(&env.created_at) || !is_time(&env.expires_at) {
+    if env.from.as_deref() == Some("hub") && env.kind != "message.expired" {
+        return Err("the hub sends only message.expired".into());
+    }
+    if !is_time(&env.created_at) || env.expires_at.as_deref().is_some_and(|e| !is_time(e)) {
         return Err("created_at or expires_at isn't a UTC time".into());
     }
-    if env.expires_at <= env.created_at {
+    if env.expires_at.as_deref().is_some_and(|e| e <= env.created_at.as_str()) {
         return Err("it expires before it was made".into());
     }
     if !UNDERSTOOD.contains(&(env.kind.as_str(), env.version)) {
         return Err(format!("{} v{} isn't understood", env.kind, env.version));
     }
+    if env.seq < 1 || !is_conversation(&env.conversation) {
+        return Err("conversation or seq is malformed".into());
+    }
     let about_order = !matches!(env.kind.as_str(), "catalog" | "message.expired");
-    match (&env.order, about_order) {
-        (Some(o), true) if is_order_ref(o) && env.seq >= 1 => {}
-        (_, true) => return Err("an order message needs its order and seq".into()),
-        (Some(_), false) => return Err("this type isn't about one order".into()),
-        (None, false) => {}
+    if env.kind == "catalog" && env.conversation != CATALOG {
+        return Err("a catalogue's conversation is catalog".into());
+    }
+    if about_order && !is_order_ref(&env.conversation) {
+        return Err("an order message's conversation is one of MakerFoundry's orders".into());
     }
     let body = env.body.clone();
     let read = |e: serde_json::Error| format!("{}: {e}", env.kind);
@@ -660,6 +752,12 @@ pub fn parse(bytes: &[u8]) -> Result<(Envelope, Message), String> {
         _ => Message::MessageExpired(serde_json::from_value(body).map_err(read)?),
     };
     check(&msg).map_err(|why| format!("{}: {why}", env.kind))?;
+    // a cancel says who cancelled, and only they can say so
+    if let Message::OrderCancel(c) = &msg
+        && c.by != if ours { "customer" } else { "shop" }
+    {
+        return Err("order.cancel: by isn't its sender".into());
+    }
     Ok((env, msg))
 }
 
@@ -717,20 +815,27 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// A message from MakerFoundry, checked as a receiver would check it.
-pub fn make(message: &Message, order: Option<&str>, seq: u64, to: &str, days: i64) -> Result<Envelope, String> {
+/// The time now, as messages carry it.
+pub fn now_utc() -> String {
+    utc(now())
+}
+
+/// A message from MakerFoundry in `conversation`, checked as a receiver would check it (it's
+/// stamped and, for `order.placed`, signed again when it's sent: `hub::send`).
+pub fn make(message: &Message, conversation: &str, seq: u64, to: &str, days: i64) -> Result<Envelope, String> {
     let t = now();
     let env = Envelope {
         id: new_id()?,
         kind: message.kind().to_string(),
         version: 1,
-        order: order.map(str::to_string),
+        conversation: conversation.to_string(),
         seq,
-        from: "makerfoundry".into(),
+        from: None,
         to: to.to_string(),
         created_at: utc(t),
-        expires_at: utc(t.saturating_add(days.saturating_mul(86_400))),
+        expires_at: Some(utc(t.saturating_add(days.saturating_mul(86_400)))),
         body: message.body()?,
+        sig: None,
     };
     let bytes = serde_json::to_vec(&env).map_err(|e| e.to_string())?;
     parse(&bytes)?;
@@ -869,19 +974,71 @@ mod tests {
             tracking: String::new(),
             note: String::new(),
         });
-        let env = make(&status, Some("mf-abc123"), 3, "shop:mainst", 7).unwrap();
-        assert_eq!((env.from.as_str(), env.seq), ("makerfoundry", 3));
+        let env = make(&status, "mf-abc123", 3, "shop:mainst", 7).unwrap();
+        assert_eq!(
+            (env.from.as_deref(), env.seq),
+            (None, 3),
+            "no from: the hub knows us by our key"
+        );
+        assert_eq!(env.sender(), ME);
+        assert!(env.expires_at.is_some() && env.sig.is_none());
         assert!(
-            make(&status, None, 3, "shop:mainst", 7).is_err(),
-            "an order message needs its order"
+            make(&status, CATALOG, 3, "shop:mainst", 7).is_err(),
+            "an order message is in its order's conversation"
+        );
+        assert!(
+            make(&status, "mf-abc123", 0, "shop:mainst", 7).is_err(),
+            "seq counts from 1"
         );
         let bad = Message::OrderStatus(OrderStatus {
             status: "lost".into(),
             tracking: String::new(),
             note: String::new(),
         });
-        assert!(make(&bad, Some("mf-abc123"), 1, "shop:mainst", 7).is_err());
-        assert!(make(&status, Some("mf-abc123"), 1, "nobody", 7).is_err());
+        assert!(make(&bad, "mf-abc123", 1, "shop:mainst", 7).is_err());
+        assert!(make(&status, "mf-abc123", 1, "nobody", 7).is_err());
+        assert!(
+            make(&status, "mf-abc123", 1, "service:makerfoundry", 7).is_err(),
+            "only to shops"
+        );
+    }
+
+    #[test]
+    fn times_may_carry_fractions_of_a_second() {
+        assert!(is_time("2026-11-02T15:04:05Z"));
+        assert!(is_time("2026-11-02T15:04:05.1Z"));
+        assert!(is_time("2026-11-02T15:04:05.123456789Z"));
+        for bad in [
+            "2026-11-02T15:04:05",
+            "2026-11-02T15:04:05.Z",
+            "2026-11-02T15:04:05.1234567890Z",
+            "2026-11-02 15:04:05Z",
+            "2026-11-02T15:04:05+00:00",
+        ] {
+            assert!(!is_time(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn contact_details_in_a_note_are_found() {
+        for yes in [
+            "write me at pat@example.com",
+            "call 401 555 0100 after five",
+            "(401) 555-0100",
+            "+1.401.555.0100",
+            "pat.lee@mail.example.org.",
+        ] {
+            assert!(has_contact(yes), "{yes}");
+        }
+        for no in [
+            "Please match the navy of the school shirts.",
+            "12 navy, 6 black, size 2XL",
+            "Logo 3.5 inches wide @ left chest",
+            "order 123456 please",
+            "",
+        ] {
+            assert!(!has_contact(no), "{no}");
+        }
     }
 
     #[test]

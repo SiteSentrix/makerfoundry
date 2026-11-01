@@ -9758,8 +9758,14 @@ async fn shops_site_taxed(
         step: None,
         scad: None,
         points: false,
-        stitchhub: makerfoundry::shop_orders::hub::Hub::new(&hub_url, "mf-test").map(|h| h.with_files_from(&hub_url)),
+        stitchhub: makerfoundry::shop_orders::hub::Hub::new(&hub_url, "mf-test").map(|h| h.with_signer(shop_signer())),
     };
+    {
+        // the hub knows MakerFoundry's key, and lists the example shop as ready
+        let mut h = hub.lock().unwrap();
+        h.public_key = Some(shop_signer().public_spki());
+        h.shops = vec![json!({"id": "shop:mainst", "name": "Main Street Threadworks", "ready": true})];
+    }
     let app = makerfoundry::app(state.clone());
     Some((
         Site {
@@ -9773,6 +9779,17 @@ async fn shops_site_taxed(
         hub,
         st,
     ))
+}
+
+/// MakerFoundry's signing key in these tests (PKCS#8 v1 from a fixed seed, RFC 8410 § 7).
+fn shop_signer() -> makerfoundry::shop_orders::sign::Signer {
+    use base64::Engine;
+    let mut der = vec![
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+    ];
+    der.extend_from_slice(&[42u8; 32]);
+    makerfoundry::shop_orders::sign::Signer::from_base64(&base64::engine::general_purpose::STANDARD.encode(der))
+        .unwrap()
 }
 
 /// The example catalogue (Main Street Threadworks, account 4217), as the hub delivers it.
@@ -9854,6 +9871,7 @@ async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
     s.dump_page("shop", &page, None).await;
     // the shop changes its prices: the page follows
     let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c002");
+    again["seq"] = 2.into();
     again["body"]["products"][0]["cents"] = 950.into();
     makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
     makerfoundry::shop_orders::sync(&state).await.unwrap();
@@ -9866,6 +9884,7 @@ async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
     assert_eq!(s.get("/shops/nobody", None).await.status, StatusCode::NOT_FOUND);
     // a shop's text can't reach the page as HTML
     let mut evil = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c003");
+    evil["seq"] = 3.into();
     evil["body"]["shop"]["name"] = "<script>alert(1)</script>".into();
     makerfoundry::shop_orders::hub::stand_in::deliver(&hub, evil);
     makerfoundry::shop_orders::sync(&state).await.unwrap();
@@ -9874,6 +9893,13 @@ async fn a_shop_publishes_its_catalogue_and_is_offered_once_it_can_be_paid() {
         !list.contains("<script>alert") && list.contains("&lt;script&gt;"),
         "{list}"
     );
+    // a shop the hub no longer lists as ready isn't offered
+    hub.lock().unwrap().shops[0]["ready"] = json!(false);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(s.get("/shops/mainst", None).await.status, StatusCode::NOT_FOUND);
+    hub.lock().unwrap().shops.clear();
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(s.get("/shops/mainst", None).await.status, StatusCode::NOT_FOUND);
 }
 
 /// The order form sent from our own page: text fields, and the art if given.
@@ -10015,16 +10041,14 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(s.scalar("SELECT count(*) FROM mf_hub_outbox").await, 0);
-    let token: String = sqlx::query_scalar("SELECT token FROM mf_shop_orders")
-        .fetch_one(&s.pool)
-        .await
-        .unwrap();
     let sha: String = sqlx::query_scalar("SELECT art->0->>'sha256' FROM mf_shop_orders")
         .fetch_one(&s.pool)
         .await
         .unwrap();
-    let art = format!("{path}/art/{sha}?t={token}");
-    assert_eq!(s.get(&art, None).await.status, StatusCode::NOT_FOUND);
+    assert!(
+        hub.lock().unwrap().blobs.is_empty(),
+        "no file goes to the hub before payment"
+    );
 
     // paying: Stripe Checkout, MakerFoundry's 10% and the card fee as the application fee
     let pay = s.post(&format!("{path}/pay"), "", Some(&bea)).await;
@@ -10103,32 +10127,42 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
         .find(|m| m["type"] == "order.placed")
         .cloned()
         .unwrap();
-    assert_eq!(placed["order"], json!(reference));
+    assert_eq!(placed["conversation"], json!(reference));
+    assert!(placed.get("from").is_none());
     assert_eq!(placed["to"], "shop:mainst");
     assert_eq!(placed["seq"], 1);
+    assert_eq!(placed["body"]["fulfilment"], "ship");
     assert_eq!(placed["body"]["totals"]["paid_cents"], 24_349);
     assert_eq!(placed["body"]["totals"]["shop_gets_cents"], 21_178);
     assert_eq!(placed["body"]["customer"]["ship_to"]["city"], "Elmwood");
     assert_eq!(placed["body"]["lines"][0]["sizes"]["M"], 10);
-    let url = placed["body"]["art_urls"][&sha].as_str().unwrap().to_string();
-    assert_eq!(url, format!("https://makerfoundry.test{art}"));
-    // the message passes the contract's own checks
-    makerfoundry::shop_orders::contract::parse(placed.to_string().as_bytes()).unwrap();
-
-    // the shop fetches the art with the order's secret, and only with it
-    let got = s.get(&art, None).await;
-    assert_eq!(got.status, StatusCode::OK);
+    assert_eq!(
+        placed["body"]["lines"][0]["decorations"][0]["art"]["sha256"],
+        json!(sha)
+    );
     assert!(
-        got.headers[header::CONTENT_DISPOSITION]
-            .to_str()
-            .unwrap()
-            .contains("attachment; filename=\"logo.pes\"")
+        placed["body"].get("art_urls").is_none(),
+        "no addresses: the art is in the hub"
+    );
+    // the message passes the contract's own checks, and is signed with MakerFoundry's key
+    let (env, _) = makerfoundry::shop_orders::contract::parse(placed.to_string().as_bytes()).unwrap();
+    assert!(makerfoundry::shop_orders::sign::verify(
+        &shop_signer().public_spki(),
+        &env
+    ));
+    // the art went to the hub first (put, then done), for this conversation
+    {
+        let h = hub.lock().unwrap();
+        assert_eq!(h.blobs.get(&sha), Some(&pes));
+        assert!(h.done.contains(&(reference.clone(), sha.clone())));
+    }
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_files WHERE conversation = (SELECT ref FROM mf_shop_orders)")
+            .await,
+        1
     );
     assert!(s.stored.lock().unwrap().values().any(|(_, b)| *b == pes));
-    assert_eq!(
-        s.get(&format!("{path}/art/{sha}?t=wrong"), None).await.status,
-        StatusCode::NOT_FOUND
-    );
+    // MakerFoundry no longer hands the art out itself
     assert_eq!(
         s.get(&format!("{path}/art/{sha}"), None).await.status,
         StatusCode::NOT_FOUND
@@ -10225,7 +10259,22 @@ async fn order_problems_are_explained_and_nothing_is_kept() {
     no_address.push(("line1", ""));
     let mut bad_choice = without("decoration");
     bad_choice.push(("decoration", "m9p0"));
+    // contact details stay out of what the shop sees (the hub refuses them)
+    let mut email_note = without("note");
+    email_note.push(("note", "Mail me at bea@example.com"));
+    let mut phone_name = without("name");
+    phone_name.push(("name", "Bea 555 123 4567"));
     for (fields, art, want) in [
+        (
+            email_note,
+            Some(("logo.pes", &pes[..])),
+            "Leave email addresses and phone numbers out",
+        ),
+        (
+            phone_name,
+            Some(("logo.pes", &pes[..])),
+            "Leave email addresses and phone numbers out",
+        ),
         (
             without("rights"),
             Some(("logo.pes", &pes[..])),
@@ -10296,11 +10345,13 @@ fn from_shop(kind: &str, n: u32, order: &str, seq: u64, body: Value) -> Value {
     )
     .unwrap();
     v["id"] = json!(format!("0192f0c4-7a1b-7c2d-8e3f-{n:012}"));
-    if kind != "message.expired" {
-        v["order"] = json!(order);
+    if kind == "message.expired" {
+        v["body"]["conversation"] = json!(order);
+    } else {
+        v["conversation"] = json!(order);
         v["from"] = json!("shop:mainst");
-        v["to"] = json!("makerfoundry");
     }
+    v["to"] = json!("service:makerfoundry");
     v["seq"] = json!(seq);
     v["body"] = body;
     v
@@ -10314,15 +10365,9 @@ fn mockup_png() -> Vec<u8> {
     out.into_inner()
 }
 
-fn mockup(hub: &makerfoundry::shop_orders::hub::stand_in::Shared, name: &str, bytes: &[u8]) -> Value {
-    use sha2::Digest;
-    hub.lock().unwrap().files.insert(name.into(), bytes.to_vec());
-    json!({
-        "size": bytes.len(),
-        "sha256": format!("{:x}", sha2::Sha256::digest(bytes)),
-        "type": "image/png",
-        "url": format!("https://files.hub.test/files/{name}?sig=1"),
-    })
+fn mockup(hub: &makerfoundry::shop_orders::hub::stand_in::Shared, conversation: &str, bytes: &[u8]) -> Value {
+    let sha = makerfoundry::shop_orders::hub::stand_in::put_file(hub, conversation, bytes);
+    json!({ "size": bytes.len(), "sha256": sha, "type": "image/png" })
 }
 
 /// What MakerFoundry sent the hub of `kind`, oldest first.
@@ -10349,7 +10394,7 @@ async fn the_shop_reports_progress_and_the_customer_answers_proofs() {
 
     // a proof: fetched from the hub, checked, re-drawn, shown only to the customer
     let png = mockup_png();
-    let m1 = mockup(&hub, "m1", &png);
+    let m1 = mockup(&hub, &r, &png);
     deliver(from_shop(
         "proof.sent",
         2,
@@ -10361,12 +10406,16 @@ async fn the_shop_reports_progress_and_the_customer_answers_proofs() {
     let mut stranger = from_shop("order.status", 3, &r, 1, json!({"status": "shipped"}));
     stranger["from"] = json!("shop:other");
     deliver(stranger);
-    let mut wrong = mockup(&hub, "m9", &png);
+    let mut wrong = mockup(&hub, &r, &png);
     wrong["sha256"] = json!("c".repeat(64));
     deliver(from_shop("proof.sent", 4, &r, 3, json!({"proof": 9, "mockup": wrong})));
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     assert!(
-        hub.lock().unwrap().queues.get("makerfoundry").is_none_or(Vec::is_empty),
+        hub.lock()
+            .unwrap()
+            .queues
+            .get("service:makerfoundry")
+            .is_none_or(Vec::is_empty),
         "all taken"
     );
     assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_proofs").await, 1);
@@ -10420,7 +10469,7 @@ async fn the_shop_reports_progress_and_the_customer_answers_proofs() {
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     assert_eq!(sent_of(&hub, "proof.answer").len(), 1);
 
-    let m2 = mockup(&hub, "m2", &png);
+    let m2 = mockup(&hub, &r, &png);
     deliver(from_shop("proof.sent", 5, &r, 4, json!({"proof": 2, "mockup": m2})));
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     let page = s.get(&path, Some(&bea)).await.body;
@@ -10556,13 +10605,13 @@ async fn an_order_the_shop_never_takes_or_turns_down_is_refunded() {
         "message.expired",
         1,
         &r,
-        0,
-        json!({"id": "0192f0c4-7a1b-7c2d-8e3f-0123456789ff", "type": "order.placed", "order": r}),
+        1,
+        json!({"id": "0192f0c4-7a1b-7c2d-8e3f-0123456789ff", "type": "order.placed", "conversation": r, "reason": "expired"}),
     ));
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     let page = s.get(&path, Some(&bea)).await.body;
     assert!(
-        page.contains("didn't take the order in time") && page.contains("Refunded: $243.49"),
+        page.contains("The shop couldn't take the order, so it's refunded") && page.contains("Refunded: $243.49"),
         "{page}"
     );
     assert_eq!(st.lock().unwrap().refunds.len(), 1);
@@ -10620,6 +10669,33 @@ async fn an_order_the_shop_never_takes_or_turns_down_is_refunded() {
             .body
             .contains("a refund is the shop's to decide")
     );
+}
+
+#[tokio::test]
+async fn an_order_the_hub_refuses_is_refunded() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    // the hub doesn't know MakerFoundry's key: order.placed is refused (403), for good
+    hub.lock().unwrap().public_key = None;
+    let (bea, path, _) = paid_order(&s, &st).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(sent_of(&hub, "order.placed").is_empty());
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE kind = 'order.placed' AND failed LIKE '%403%'")
+            .await,
+        1
+    );
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        page.contains("The shop couldn't take the order, so it's refunded") && page.contains("Refunded: $243.49"),
+        "{page}"
+    );
+    assert_eq!(st.lock().unwrap().refunds.len(), 1);
+    // and only once
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(st.lock().unwrap().refunds.len(), 1);
 }
 
 #[tokio::test]
@@ -10812,6 +10888,7 @@ async fn a_pick_up_order_is_taxed_where_the_shop_is_and_needs_its_address() {
     assert!(!calc.contains_key("shipping_cost[amount]"));
     // a shop that hasn't given its address can only ship while tax is collected
     let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c009");
+    again["seq"] = 2.into();
     again["body"]["shop"].as_object_mut().unwrap().remove("address");
     makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
     makerfoundry::shop_orders::sync(&state).await.unwrap();

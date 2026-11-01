@@ -9,8 +9,11 @@ CREATE TABLE mf_hub_outbox (
     seq BIGINT NOT NULL DEFAULT 0,
     to_party TEXT NOT NULL,
     envelope JSONB NOT NULL,
+    -- the files the message names, put in the hub before it goes (#53)
+    files JSONB NOT NULL DEFAULT '[]'::jsonb,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_try_at TIMESTAMPTZ,
     attempts INT NOT NULL DEFAULT 0,
     next_try_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     sent_at TIMESTAMPTZ,
@@ -18,6 +21,14 @@ CREATE TABLE mf_hub_outbox (
 );
 CREATE UNIQUE INDEX mf_hub_outbox_seq ON mf_hub_outbox (order_ref, to_party, seq) WHERE order_ref IS NOT NULL;
 CREATE INDEX mf_hub_outbox_due ON mf_hub_outbox (next_try_at) WHERE sent_at IS NULL AND failed IS NULL;
+
+-- Files already in the hub, per conversation (so each goes once).
+CREATE TABLE mf_hub_files (
+    conversation TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (conversation, sha256)
+);
 
 -- Ids of messages already applied (kept 30 days), so the same message twice is applied once.
 CREATE TABLE mf_hub_seen (

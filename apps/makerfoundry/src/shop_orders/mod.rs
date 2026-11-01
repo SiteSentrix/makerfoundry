@@ -1,13 +1,14 @@
 //! Ordering physical goods from shops through StitchHub (issues #1 and #2): the owner's decisions
 //! of 2026-10-31 are in `docs/stitchshop-ordering-audit.md`, the messages in
-//! `docs/shop-orders-contract.md`. Switched off until `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY`
-//! are set.
+//! `docs/shop-orders-contract.md`, in the form StitchHub implements (#53). Switched off until
+//! `MF_STITCHHUB_URL`, `MF_STITCHHUB_KEY` and `MF_STITCHHUB_SIGNING_KEY` are set.
 
 pub mod after;
 pub mod contract;
 pub mod hub;
 pub mod orders;
 pub mod shops;
+pub mod sign;
 pub mod tax;
 
 use std::future::Future;
@@ -21,7 +22,7 @@ use contract::{Envelope, Message};
 /// Applies a checked message from a shop (or the hub), once and in order (`hub::sync`).
 pub async fn apply(state: AppState, pool: PgPool, env: Envelope, msg: Message) -> Result<(), String> {
     match &msg {
-        Message::Catalog(c) => shops::keep(&pool, &env.from, c).await,
+        Message::Catalog(c) => shops::keep(&pool, env.sender(), c).await,
         Message::OrderStatus(s) => after::status(&pool, &env, s).await,
         Message::ProofSent(p) => after::proof(&state, &pool, &env, p).await,
         Message::OrderCancel(c) => after::shop_cancelled(&state, &pool, &env, c).await,
@@ -44,5 +45,14 @@ pub async fn sync(state: &AppState) -> Result<(), String> {
         let (p, s) = (p.clone(), s.clone());
         Box::pin(apply(s, p, env, msg)) as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
     };
-    hub::sync(pool, hub, &run).await
+    let result = hub::sync(pool, hub, state.storage.as_ref(), &run).await;
+    // which shops take orders now (whatever happened above)
+    match hub.shops().await {
+        Ok(listed) => {
+            let ready: Vec<String> = listed.into_iter().filter(|s| s.ready).map(|s| s.id).collect();
+            shops::refresh(pool, &ready).await?;
+        }
+        Err(e) => eprintln!("stitchhub: shops: {e}"),
+    }
+    result
 }

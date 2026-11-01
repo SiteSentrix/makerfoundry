@@ -196,7 +196,6 @@ pub fn app(state: AppState) -> Router {
         .route("/shops/{handle}", get(shop_orders::shops::show))
         .route("/shop-orders/{reference}", get(shop_orders::orders::page))
         .route("/shop-orders/{reference}/pay", post(shop_orders::orders::pay))
-        .route("/shop-orders/{reference}/art/{sha}", get(shop_orders::orders::art))
         .route("/shop-orders/{reference}/cancel", post(shop_orders::after::cancel))
         .route(
             "/shop-orders/{reference}/proofs/{proof}",

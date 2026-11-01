@@ -45,7 +45,7 @@ pub fn shipping_words(s: &super::contract::Shipping) -> String {
     words
 }
 
-/// Keeps a shop's latest catalogue (`from` is `shop:<handle>`).
+/// Keeps a shop's latest catalogue (`from` is `shop:<hub shop id>`; the id is its page's handle).
 pub async fn keep(pool: &PgPool, from: &str, c: &Catalog) -> Result<(), String> {
     let handle = from.strip_prefix("shop:").ok_or("not from a shop")?;
     let value = serde_json::to_value(c).map_err(|e| e.to_string())?;
@@ -91,14 +91,26 @@ fn shop_of(row: ShopRow) -> Option<Shop> {
     })
 }
 
-/// Shop `handle`, if it can take orders now.
-pub async fn orderable(state: &AppState, pool: &PgPool, handle: &str) -> Option<Shop> {
-    let row: ShopRow = sqlx::query_as("SELECT party, handle, account_id, catalog FROM mf_shops WHERE handle = $1")
-        .bind(handle)
-        .fetch_optional(pool)
+/// Marks the shops the hub lists as ready (`GET /v2/shops`), and only them, as taking orders.
+pub async fn refresh(pool: &PgPool, ready: &[String]) -> Result<(), String> {
+    sqlx::query("UPDATE mf_shops SET hub_ready = (party = ANY($1)) WHERE hub_ready <> (party = ANY($1))")
+        .bind(ready)
+        .execute(pool)
         .await
-        .ok()
-        .flatten()?;
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Shop `handle`, if it can take orders now: the hub lists it as ready, and its Foundry Account
+/// can be paid.
+pub async fn orderable(state: &AppState, pool: &PgPool, handle: &str) -> Option<Shop> {
+    let row: ShopRow =
+        sqlx::query_as("SELECT party, handle, account_id, catalog FROM mf_shops WHERE handle = $1 AND hub_ready")
+            .bind(handle)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()?;
     let shop = shop_of(row)?;
     crate::selling::can_sell(state, pool, shop.account)
         .await
@@ -164,11 +176,12 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
         return crate::designs::not_found();
     };
     let signed_in = current_user(&state, &headers).await.is_some();
-    let rows: Vec<ShopRow> =
-        sqlx::query_as("SELECT party, handle, account_id, catalog FROM mf_shops ORDER BY name LIMIT 500")
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let rows: Vec<ShopRow> = sqlx::query_as(
+        "SELECT party, handle, account_id, catalog FROM mf_shops WHERE hub_ready ORDER BY name LIMIT 500",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
     let mut items = String::new();
     for shop in rows.into_iter().filter_map(shop_of) {
         if !crate::selling::can_sell(&state, pool, shop.account).await {

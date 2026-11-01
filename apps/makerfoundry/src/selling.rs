@@ -747,7 +747,7 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
     let Some(pool) = state.db.as_ref() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    match handle_event(pool, &event, &stripe.public_url).await {
+    match handle_event(pool, &event).await {
         Ok(()) => {
             if let Some(order) = paid_order(&event)
                 && let Err(e) = withhold_tax(stripe, pool, order).await
@@ -780,7 +780,7 @@ fn paid_order(event: &Value) -> Option<i64> {
     object.pointer("/metadata/order")?.as_str()?.parse().ok()
 }
 
-async fn handle_event(pool: &PgPool, event: &Value, public_url: &str) -> Result<(), sqlx::Error> {
+async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
     let id = event.get("id").and_then(Value::as_str).unwrap_or("");
     let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
     let object = event.pointer("/data/object").unwrap_or(&Value::Null);
@@ -813,7 +813,7 @@ async fn handle_event(pool: &PgPool, event: &Value, public_url: &str) -> Result<
             }
             // an order from a shop (MF-83)
             if let Some(reference) = object.pointer("/metadata/shop_order").and_then(Value::as_str) {
-                crate::shop_orders::orders::confirm_paid(&mut tx, reference, object, public_url)
+                crate::shop_orders::orders::confirm_paid(&mut tx, reference, object)
                     .await
                     .map_err(sqlx::Error::Protocol)?;
             }

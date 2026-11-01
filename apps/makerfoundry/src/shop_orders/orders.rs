@@ -6,18 +6,19 @@
 //! verified webhook (or the return from Checkout) says it's paid, the sale goes in the ledger and
 //! `order.placed` goes in the outbox, in the same transaction: never before the payment.
 //!
-//! The art links in `order.placed` are MakerFoundry's own (`/shop-orders/<ref>/art/<sha256>`, with
-//! the order's secret token), so they still work when the order waits days for a shop that's
-//! offline. Sales tax on physical goods isn't collected yet: the owner's decision is open.
+//! The art goes to the shop through the hub's files (#53): `order.placed` names each file by its
+//! size and SHA-256, and the outbox puts the file in the hub before the order (`hub::upload`), so
+//! it's there however long the order waits for a shop that's offline. Sales tax: `tax.rs`.
 
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::contract::{self, Address, Customer, Decoration, FileRef, Line, Message, OrderPlaced, Totals};
+use super::hub::OutFile;
 use super::shops::{self, Shop, dollars, method_name};
 use crate::AppState;
 use crate::accounts::{User, current_user, forbidden, private, same_origin};
@@ -52,11 +53,6 @@ pub fn totals(goods: i64, setup: i64, shipping: i64, tax: i64) -> Option<Totals>
         card_fee_cents: card_fee,
         shop_gets_cents: shop,
     })
-}
-
-/// Whether two secrets are the same, compared in constant time for equal lengths.
-fn same_secret(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn random_hex(n: usize) -> Result<String, String> {
@@ -291,6 +287,7 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
     }
     let ship_to = if ship {
         let a = Address {
+            name: String::new(),
             line1: f("line1"),
             line2: f("line2"),
             city: f("city"),
@@ -337,12 +334,17 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
             },
         }],
     };
+    let note = f("note");
+    // (the hub refuses an order that carries them: the shop reaches the customer through the order)
+    if contract::has_contact(&note) || contract::has_contact(&name) {
+        return Err("Leave email addresses and phone numbers out of your name and the note: the shop answers you on your order's page.".into());
+    }
     Ok(Draft {
         line,
         art: (file, bytes, kind),
         totals,
         customer: Customer { name, ship_to },
-        note: f("note"),
+        note,
     })
 }
 
@@ -671,12 +673,7 @@ pub async fn pay(State(state): State<AppState>, headers: HeaderMap, Path(referen
 /// A Checkout Session Stripe says is paid → the order paid, its sale in the ledger and
 /// `order.placed` in the outbox, all once. `false` (and nothing changes) unless the session is
 /// paid and is this order's, for its total.
-pub async fn confirm_paid(
-    conn: &mut PgConnection,
-    reference: &str,
-    session: &Value,
-    public_url: &str,
-) -> Result<bool, String> {
+pub async fn confirm_paid(conn: &mut PgConnection, reference: &str, session: &Value) -> Result<bool, String> {
     let ours = session.pointer("/metadata/shop_order").and_then(Value::as_str) == Some(reference)
         && session.pointer("/metadata/app").and_then(Value::as_str) == Some(crate::selling::APP);
     if !ours || session.get("payment_status").and_then(Value::as_str) != Some("paid") {
@@ -724,29 +721,35 @@ pub async fn confirm_paid(
         .await
         .map_err(|e| e.to_string())?;
     }
-    let art_urls = o
+    // the art, as the hub takes it: named in the order, put in the hub before it goes
+    let files: Vec<OutFile> = o
         .lines
         .iter()
         .flat_map(|l| &l.decorations)
-        .map(|d| {
-            (
-                d.art.sha256.clone(),
-                format!(
-                    "{public_url}/shop-orders/{}/art/{}?t={}",
-                    o.reference, d.art.sha256, o.token
-                ),
-            )
+        .filter_map(|d| {
+            let kept = o
+                .art
+                .as_array()?
+                .iter()
+                .find(|a| a.get("sha256").and_then(Value::as_str) == Some(d.art.sha256.as_str()))?;
+            Some(OutFile {
+                sha256: d.art.sha256.clone(),
+                size: d.art.size,
+                kind: "art".into(),
+                content_type: None,
+                key: kept.get("key")?.as_str()?.to_string(),
+            })
         })
         .collect();
     let placed = Message::OrderPlaced(Box::new(OrderPlaced {
+        fulfilment: if o.customer.ship_to.is_some() { "ship" } else { "pickup" }.into(),
         lines: o.lines.clone(),
-        art_urls,
         preview: None,
         customer: o.customer.clone(),
         totals: o.totals.clone(),
         note: o.note.clone(),
     }));
-    super::hub::enqueue(&mut *conn, &placed, Some(&o.reference), &o.shop_party, ORDER_DAYS).await?;
+    super::hub::enqueue(&mut *conn, &placed, &o.reference, &o.shop_party, ORDER_DAYS, &files).await?;
     sqlx::query("UPDATE mf_shop_orders SET status = 'sent' WHERE id = $1")
         .bind(id)
         .execute(&mut *conn)
@@ -777,7 +780,7 @@ pub fn status_name(s: &str) -> &'static str {
         "collected" => "Picked up",
         "cancelled" => "Cancelled",
         "refunded" => "Refunded",
-        "expired" => "The shop didn't take the order in time, so it's refunded",
+        "expired" => "The shop couldn't take the order, so it's refunded",
         "abandoned" => "Not paid, and given up after two days",
         _ => "Unknown",
     }
@@ -857,7 +860,7 @@ pub async fn page(
         && let Ok(session) = stripe.get(&format!("/v1/checkout/sessions/{}", back.session)).await
         && let Ok(mut tx) = pool.begin().await
     {
-        match confirm_paid(&mut tx, &o.reference, &session, &state.public_url).await {
+        match confirm_paid(&mut tx, &o.reference, &session).await {
             Ok(true) => {
                 if tx.commit().await.is_ok()
                     && let Err(e) = super::tax::record(stripe, pool, o.id).await
@@ -925,62 +928,6 @@ pub async fn page(
         ),
         true,
     )
-}
-
-#[derive(serde::Deserialize, Default)]
-#[serde(default)]
-pub struct ArtQuery {
-    t: String,
-}
-
-/// `GET /shop-orders/<ref>/art/<sha256>?t=<token>`: an order's art for its shop, by the order's
-/// secret token, while the order is open; always a download.
-pub async fn art(
-    State(state): State<AppState>,
-    Path((reference, sha)): Path<(String, String)>,
-    Query(q): Query<ArtQuery>,
-) -> Response {
-    let (Some(pool), Some(storage)) = (state.db.as_ref(), state.storage.as_ref()) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(mut conn) = pool.acquire().await else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    let open = ["sent", "received", "proof_sent", "approved", "in_production"];
-    let Some(o) = order(&mut conn, &reference)
-        .await
-        .filter(|o| !q.t.is_empty() && same_secret(&o.token, &q.t) && open.contains(&o.status.as_str()))
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let found = o.art.as_array().and_then(|a| {
-        a.iter()
-            .find(|x| x.get("sha256").and_then(Value::as_str) == Some(sha.as_str()))
-            .and_then(|x| {
-                Some((
-                    x.get("key")?.as_str()?.to_string(),
-                    x.get("file")?.as_str()?.to_string(),
-                ))
-            })
-    });
-    let Some((key, file)) = found else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    match storage.get(&key).await {
-        Ok(Some(bytes)) => (
-            [
-                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
-                (
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}\"", file.replace(['"', '\\'], "_")),
-                ),
-                (header::CACHE_CONTROL, "private, no-store".to_string()),
-            ],
-            bytes,
-        )
-            .into_response(),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    }
 }
 
 #[cfg(test)]

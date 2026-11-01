@@ -10,6 +10,8 @@ CREATE TABLE mf_shops (
     pickup BOOLEAN NOT NULL DEFAULT false,
     catalog JSONB NOT NULL,
     shipping_cents BIGINT NOT NULL,
+    -- whether the hub lists the shop as ready to take orders (`GET /v2/shops`, #53)
+    hub_ready BOOLEAN NOT NULL DEFAULT false,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX mf_shops_name ON mf_shops (name);

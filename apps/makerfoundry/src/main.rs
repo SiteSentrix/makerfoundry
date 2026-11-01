@@ -140,6 +140,38 @@ async fn main() -> ExitCode {
         (true, None) => makerfoundry::listings::Publishers::Everyone,
         (_, setting) => makerfoundry::listings::Publishers::from_setting(setting.as_deref()),
     };
+    // ordering from shops (#1, #2, #53): on only with the hub's address, MakerFoundry's service key
+    // and its signing key; a missing or bad signing key keeps it off (the rest of the site runs)
+    let stitchhub = match makerfoundry::shop_orders::hub::Hub::new(
+        &std::env::var("MF_STITCHHUB_URL").unwrap_or_default(),
+        &std::env::var("MF_STITCHHUB_KEY").unwrap_or_default(),
+    ) {
+        None => None,
+        Some(hub) => match std::env::var("MF_STITCHHUB_SIGNING_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+        {
+            None => {
+                eprintln!("stitchhub: MF_STITCHHUB_SIGNING_KEY isn't set: ordering from shops stays off");
+                None
+            }
+            Some(key) => match makerfoundry::shop_orders::sign::Signer::from_base64(&key) {
+                Ok(signer) => {
+                    let hub = hub.with_signer(signer);
+                    // (the public half, for the hub admin to register: not a secret)
+                    eprintln!(
+                        "stitchhub: on; MakerFoundry's public signing key: {}",
+                        hub.public_key().unwrap_or_default()
+                    );
+                    Some(hub)
+                }
+                Err(e) => {
+                    eprintln!("stitchhub: {e}: ordering from shops stays off");
+                    None
+                }
+            },
+        },
+    };
     let public_url = std::env::var("MF_PUBLIC_URL")
         .map(|u| u.trim_end_matches('/').to_string())
         .unwrap_or_else(|_| "https://makerfoundry.app".to_string());
@@ -185,10 +217,7 @@ async fn main() -> ExitCode {
         scad: std::env::var("MF_SCAD_SERVICE").ok().and_then(|u| {
             makerfoundry::model3d::scad::Renderer::new(&u, std::env::var("MF_SCAD_SERVICE_KEY").ok().as_deref())
         }),
-        stitchhub: makerfoundry::shop_orders::hub::Hub::new(
-            &std::env::var("MF_STITCHHUB_URL").unwrap_or_default(),
-            &std::env::var("MF_STITCHHUB_KEY").unwrap_or_default(),
-        ),
+        stitchhub,
         points: std::env::var("MF_POINTS").is_ok_and(|v| v.trim() == "yes"),
         scanner: std::env::var("MF_CLAMAV")
             .ok()

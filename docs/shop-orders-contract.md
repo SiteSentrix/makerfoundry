@@ -1,78 +1,113 @@
 # Ordering from shops through StitchHub: the message contract (issues #2 and #1)
 
-**Status:** 2026-10-31. **A proposal for review.** MakerFoundry's reader and writer of these messages are built (MF-80), switched off; the hub's and StitchShop's sides aren't. The owner decided (#2,
-`docs/stitchshop-ordering-audit.md`): customers order physical goods from shops through
-MakerFoundry, live; MakerFoundry takes the payment and keeps 10%, and the shop pays the card fee;
-orders travel through **StitchHub**. This is the format the three programs would build to. The hub
-owns the transport, so once agreed it moves to StitchHub's docs, with StitchShop's and
-MakerFoundry's sides built against fixtures of it (contract tests on both sides).
-
-It extends what the hub already does for the StitchFoundry inbox (stitchhub `src/inbox.mjs`): files
-by short-lived signed addresses into the hub's bucket, checked by size and SHA-256; shops under
-their install key. What's new: orders to **other accounts' shops that opt in**, messages both ways,
-a queue for offline shops, versions, and expiry.
+**Status:** 2026-11-01. **StitchHub's form** (issue #53, from StitchHub's message of 2026-11-01:
+stitchhub#19 and #34). StitchHub owns this contract and implements it; this page is MakerFoundry's
+summary of it, and MakerFoundry's side (MF-80 to MF-86) is built to it and switched off. The owner
+decided (#2, `docs/stitchshop-ordering-audit.md`): customers order physical goods from shops
+through MakerFoundry, live; MakerFoundry takes the payment and keeps 10%, and the shop pays the
+card fee; orders travel through **StitchHub**. StitchHub's own fixtures
+(`test/fixtures/sync-orders/`) and StitchShop's check against a real hub
+(`online-realhub.check.ts`) are the reference; ours, in `docs/contract/shop-orders/`, are copies in
+the same form.
 
 ## Who's who
 | Party | Role | Proves itself with |
 |---|---|---|
-| **MakerFoundry** | Takes the customer's order and payment; sends orders and the customer's answers; shows the customer the shop's status and proofs | A service key the hub admin issues (`MF_STITCHHUB_KEY`, a Railway secret) |
-| **StitchHub** | Lists shops that take orders; queues and delivers messages both ways; holds art files briefly | n/a |
-| **StitchShop** | Opts in; publishes its catalogue; takes orders into a decorating order; sends status and proofs | Its install key, as for backups and the inbox |
+| **MakerFoundry** (`service:makerfoundry`) | Takes the customer's order and payment; sends orders and the customer's answers; shows the customer the shop's status and proofs | A service key the hub admin issues (`svk_…`, `MF_STITCHHUB_KEY`, a Railway secret), sent as `Authorization: Bearer svk_…`; and `order.placed` signed with its Ed25519 key (`MF_STITCHHUB_SIGNING_KEY`, a Railway secret; the hub admin registers the public half) |
+| **StitchHub** (`hub`) | Lists shops that take orders; queues and delivers messages both ways; holds art files briefly; sends `message.expired` | n/a |
+| **StitchShop** (`shop:<hub id>`) | Opts in; publishes its catalogue; takes orders into a decorating order; sends status and proofs | Its install key, as for backups and the inbox |
 
 A shop opts in on StitchShop (Settings › Online orders › "Take orders from MakerFoundry"). Until it
 does, the hub never lists it and refuses orders for it.
 
 ## The handshake (versions)
-Every connection starts with `GET /v2/hello`, sending `X-Client: makerfoundry/0.1.0` (or
-`stitchshop/…`) and the message types it understands:
+Every request carries `Authorization: Bearer svk_…` and `X-Client: makerfoundry/<version>`.
 
-```json
-{ "hub": "2.0.0", "min_client": { "makerfoundry": "0.1.0", "stitchshop": "…" },
-  "types": { "order.placed": [1], "order.status": [1], "proof.sent": [1], "proof.answer": [1],
-             "order.cancel": [1], "catalog": [1], "message.expired": [1] },
-  "deprecated": [{ "type": "…", "version": 1, "until": "2027-03-01" }] }
-```
-
-- A client older than `min_client` gets `426 Upgrade Required` on every other call, and says so
-  plainly: MakerFoundry shows admins "StitchHub needs a newer MakerFoundry", and stops sending.
-- `deprecated` entries are logged once a day until `until`.
+- `GET /v2/hello` is public: `{ "min_client": { "makerfoundry": "…" }, "limits": {…},
+  "deprecated": [{ "type": "…", "version": 1, "until": "…" }], "keys": […] }`. A MakerFoundry older
+  than `min_client` stops sending and says so (`mf_hub_state.too_old`); any call answered `426`
+  means the same.
+- `POST /v2/hello` with `{ "app": "makerfoundry", "version": "<version>", "types": {
+  "catalog": [1], "order.status": [1], "proof.sent": [1], "order.cancel": [1],
+  "message.expired": [1] } }`: the types MakerFoundry reads. Until it's said, `GET /v2/messages`
+  answers `409 hello_first`; MakerFoundry says hello every round, and again on a `hello_first`.
+- `deprecated` entries are logged once a day.
 - Each message type carries its own `version`. Within a version, fields are only ever added, and
   readers ignore fields they don't know. A breaking change is a new version, offered alongside the
   old until its `until` date.
+
+## Shops
+`GET /v2/shops` → `{ "shops": [{ "id": "shop:<hub id>", "name": "…", "ready": true }] }`: the shops
+that opted in. MakerFoundry offers a shop only while the hub lists it as `ready` (and its
+catalogue is kept, and its Foundry Account can be paid); the part after `shop:` is its page's
+address (`/shops/<id>`).
 
 ## The envelope
 Every message, both ways:
 
 ```json
-{ "id": "0192f0c4-…",            "type": "order.status", "version": 1,
-  "order": "mf-8f3a…",            "seq": 4,
-  "from": "shop:<hub shop id>",   "to": "makerfoundry",
-  "created_at": "2026-11-02T15:04:05Z", "expires_at": "2026-11-09T15:04:05Z",
-  "body": { … } }
+{ "id": "0192f0c4-…", "type": "order.status", "version": 1,
+  "conversation": "mf-8f3a1", "seq": 4,
+  "from": "shop:mainst", "to": "service:makerfoundry",
+  "created_at": "2026-11-02T15:04:05.123Z", "expires_at": "2026-11-09T15:04:05Z",
+  "body": { … }, "sig": { "v": 1, "sig": "…" } }
 ```
 
-- `id`: a UUIDv7 made by the sender. **The receiver de-duplicates by `id`**: the same message
-  twice is applied once. Senders retry with the same `id`.
-- `order`: MakerFoundry's order reference, on every message about that order.
-- `seq`: per sender per order, starting at 1. The receiver applies an order's messages in `seq`
-  order, holding a later one until the earlier arrives; a gap older than 24 hours is reported to
-  the admins.
-- `expires_at`: when the hub gives up delivering (default 7 days for orders, 14 for proofs).
+- `id`: a UUID made by the sender. **The receiver de-duplicates by `id`**: the same message twice
+  is applied once. Senders retry with the same `id`.
+- `conversation`: 1 to 120 of `A-Z a-z 0-9 . _ : -`. For an order it's MakerFoundry's reference
+  (`mf-…`); a shop's catalogue is in the conversation `catalog`.
+- `seq`: per sender per conversation, from 1. The receiver applies a conversation's messages in
+  `seq` order, holding a later one until the earlier arrives; a gap older than 24 hours is logged.
+- `created_at` must be within 10 minutes of the hub's clock: MakerFoundry stamps a message again
+  when it sends it after a wait (8 minutes or more since it was made or last tried).
+- `from`: on MakerFoundry's messages absent (or exactly `service:makerfoundry`); the hub sets it
+  on delivery. The hub's own messages are `from: "hub"`; shops' are `shop:<hub id>`.
+- `expires_at`: when the hub gives up delivering (MakerFoundry sets 7 days for orders, 14 for
+  proofs).
+- `sig`: on `order.placed` only (below).
+- Delivered messages also carry the hub's `delivery_seq`, which readers ignore.
+
+## Signing `order.placed`
+MakerFoundry signs every `order.placed` with Ed25519 (RFC 8032) and sends `sig: { "v": 1, "sig":
+"<base64 signature>" }`; unsigned, or signed by a key the hub doesn't know, it's refused (`403`).
+The signed text is these lines joined by a newline: `SBHUB1`, `service:makerfoundry`, `to`,
+`conversation`, `seq`, `id`, `type`, `version`, `created_at`, `expires_at` (empty when absent),
+then the SHA-256 (hex) of the body's canonical JSON (keys sorted at every level by UTF-16 code
+units, no whitespace). `src/shop_orders/sign.rs` builds it, with RFC 8032's test vector in its
+tests.
 
 ## Delivery: the queue
-- **Sending:** `POST /v2/messages` with the envelope → `202 { "queued": true }`. The hub keeps
-  it until the receiver acknowledges it or it expires.
-- **Receiving:** `GET /v2/messages?after=<cursor>&limit=50` → the oldest unacknowledged messages
-  for the caller, then `POST /v2/messages/ack { "ids": […] }`. Receivers poll (every minute) and
-  after reconnecting; nothing needs to be reachable from outside, so a shop on a PC behind a router
-  works.
-- **Status for the customer:** MakerFoundry shows **"Sent to the shop"** while an `order.placed` is
-  queued and not yet acknowledged ("the shop's program is offline; it gets your order when it's back
-  on"), and **"Received by the shop"** once it is.
-- **Expiry:** an unacknowledged message past `expires_at` is dropped, and the hub sends the sender
-  `message.expired { "id", "type", "order" }`. For an expired `order.placed`, MakerFoundry
-  refunds the customer in full (a ledger row), tells them, and marks the order "The shop didn't
-  answer".
+- **Sending:** `POST /v2/messages` with the envelope → `202 { "queued": true, "state": "…" }`.
+  The same `id` with the same content again → `202 { "duplicate": true }`. `409 id_reused` (the
+  hub has that id already) MakerFoundry counts as delivered: an earlier try got through and its
+  answer was lost. `409 seq_taken` and other `4xx` are final (kept with why; for `order.placed`
+  the customer is refunded). `429` and `5xx` are tried again, waiting 1, 2, 4… minutes, at most an
+  hour; the messages after it wait too, keeping their order.
+- **Receiving:** `GET /v2/messages?after=<cursor>&limit=50` → `{ "messages": […], "next": "…" }`,
+  then `POST /v2/messages/ack { "ids": […] }`. The hub releases one message per conversation at a
+  time, so MakerFoundry polls again straight away until the inbox is empty (at most 40 pages a
+  round). Unreadable messages are acknowledged and logged by id only; nothing needs to be
+  reachable from outside.
+- **Status for the customer:** **"Sent to the shop"** while an `order.placed` is queued, and
+  **"Received by the shop"** once the shop says so.
+- **Expiry:** an unacknowledged message past `expires_at` is dropped, and the hub sends
+  `message.expired` from `hub`: `{ "id", "type", "conversation", "to"?, "reason" }`. For an
+  `order.placed` (expired, or refused by the hub), MakerFoundry refunds the customer in full (a
+  ledger row) and tells them "The shop couldn't take the order, so it's refunded". A message
+  that expires in MakerFoundry's own outbox before the hub takes it is treated the same way.
+
+## Files
+Art and pictures go through the hub, never by MakerFoundry's address:
+- **Putting:** `POST /v2/files/put { conversation, sha256, size, kind: "art" | "mockup", to,
+  type? }` → `{ url, method: "PUT", headers, expires_in }` (or `{ "ready": true }` when the hub has
+  it already); MakerFoundry PUTs the bytes to `url` with exactly those headers and no service key,
+  then `POST /v2/files/done { conversation, sha256 }`. An order's art is put before its
+  `order.placed` is sent (the hub refuses an order naming art it doesn't have).
+- **Getting** (a proof's mock-up): `POST /v2/files/get { conversation, sha256 }` → `{ url, size,
+  type, expires_in }`; MakerFoundry GETs `url` with no key and checks the size and SHA-256 before
+  using it.
+- Caps: art 10 MB a file; pictures (previews, mock-ups) PNG or JPEG, 2 MB.
 
 ## The messages
 **`catalog` (shop → MakerFoundry), v1.** Published by the shop when it opts in and whenever its
@@ -102,21 +137,25 @@ shipping while it collects tax.
 ```
 
 **`order.placed` (MakerFoundry → shop), v1.** Sent once the payment has succeeded (Stripe's
-verified webhook), never before.
+verified webhook), never before; signed (above). Only these fields: the hub refuses others
+(`not_normalized`).
 ```json
-{ "lines": [{ "sku": "tee-g500", "colour": "Navy", "sizes": { "M": 4, "L": 2 },
+{ "fulfilment": "ship" | "pickup",
+  "lines": [{ "sku": "tee-g500", "colour": "Navy", "sizes": { "M": 4, "L": 2 },
               "decorations": [{ "method": "embroidery", "placement": "left chest",
                                  "art": { "file": "logo.pes", "size": 48213, "sha256": "…" } }] }],
-  "art_urls": { "<sha256>": "https://…signed, 10 minutes…" },
   "preview": { "size": 81234, "sha256": "…", "type": "image/png" },
-  "customer": { "name": "…", "ship_to": { … } | null },
+  "customer": { "name": "…", "ship_to": { "name"?, "line1", "line2", "city", "region",
+                                           "postcode" (or "postal"), "country" } },
   "totals": { "goods_cents": 0, "setup_cents": 0, "shipping_cents": 0, "tax_cents": 0,
               "paid_cents": 0, "fee_cents": 0, "card_fee_cents": 0, "shop_gets_cents": 0 },
   "note": "…" }
 ```
-- Art is fetched by signed address and checked by size and SHA-256 before use, as the inbox does.
-  The same caps as the inbox apply: 10 MB a file, previews PNG or JPEG of 2 MB at most.
-- The customer's email and phone are **never** sent; the shop reaches the customer through the
+- Art is in the hub for the conversation (Files, above); the shop checks it by size and SHA-256.
+  `preview` is optional.
+- `ship_to` is there exactly when `fulfilment` is `ship`.
+- The customer's email and phone are **never** sent, nor allowed in the name or the note (the
+  order form refuses them; the hub refuses them too); the shop reaches the customer through the
   order's messages. Only the shipping address goes, and only when the order ships.
 - StitchShop takes it into a `DecorOrder` (status `QUOTED`, its quote set from `totals`, already
   paid). The shop may turn it down (`order.cancel`) for a full refund.
@@ -127,14 +166,14 @@ This maps StitchShop's `QUOTED → APPROVED → IN_PRODUCTION → READY → COLL
 `QUOTED` with no proof yet (the issue's "art submitted"), and `proof_sent` is `QUOTED` with a proof
 out (the issue's "proof sent").
 
-**`proof.sent` (shop → MakerFoundry), v1.** `{ "proof": 1, "mockup": { size, sha256, type, url },
-"note": "…" }`. MakerFoundry shows the mock-up on the customer's order page (re-drawn from the
+**`proof.sent` (shop → MakerFoundry), v1.** `{ "proof": 1, "mockup": { size, sha256, type },
+"note": "…" }`, the mock-up in the hub for the conversation (Files, above). MakerFoundry shows the mock-up on the customer's order page (re-drawn from the
 checked image, never served as sent).
 
 **`proof.answer` (MakerFoundry → shop), v1.** `{ "proof": 1, "answer": "approved" |
 "changes", "note": "…" }`. After `approved`, the shop moves the order to `APPROVED`.
 
-**`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`. Before
+**`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`, `by` matching who sent it. Before
 `in_production`, either side may cancel, for a full refund (MakerFoundry gives back its 10%, as
 for designs). After, only the shop may, and a refund is the shop's to decide (Seller Terms).
 
@@ -148,23 +187,25 @@ collects and pays over sales tax, never the shop. Stripe Tax works it out before
 where the order ships (or the shop's `address`, for pick-up), and only where MakerFoundry has
 registered to collect: elsewhere it's 0. In `totals`, `tax_cents` is that tax: it's part of
 `paid_cents` and **outside** the shop's share, so
-`shop_gets_cents = paid_cents − tax_cents − fee_cents − card_fee_cents`; the 10% is of the price
+`shop_gets_cents = paid_cents − tax_cents − fee_cents − card_fee_cents` (StitchHub's rule too); the 10% is of the price
 before tax, the card fee of all that's paid. A shop never adds tax of its own to an order from
 MakerFoundry, and reports it as a marketplace sale (the marketplace collected the tax).
 
 ## Limits
-Per shop: at most 200 open orders, 50 messages a minute. Per MakerFoundry: 600 messages a minute.
-Bodies at most 256 KB (files go by signed address). The hub keeps delivered messages 30 days for
-support, then deletes them.
+The hub's own are in `GET /v2/hello`'s `limits`, and they win. MakerFoundry's reader refuses bodies
+over 256 KB; files go through the hub (art 10 MB, pictures 2 MB).
 
 ## Contract tests
 `docs/contract/shop-orders/valid/` holds one valid example of every message type and version, and
-`invalid/` 25 that must be refused, each named for the rule it breaks (a missing `id`, an unknown
-type or version, totals that don't add up, art without an address, price breaks that go down, an
+`invalid/` 34 that must be refused, each named for the rule it breaks (a missing `id`, an unknown
+type or version, totals that don't add up, a malformed conversation, a catalogue outside `catalog`,
+an email or phone number in the note, shipping without an address, price breaks that go down, an
 oversized body…). MakerFoundry's tests read both (`src/shop_orders/contract.rs`), and property tests
-throw random and damaged messages at the reader (`tests/untrusted_input.rs`). The same files are
-copied into StitchHub and StitchShop, and each side's tests read and write them, so a change on one
-side fails the others' tests until they agree.
+throw random and damaged messages at the reader (`tests/untrusted_input.rs`). They're in StitchHub's form (checked
+against its `test/fixtures/sync-orders/`); `tests/stitchhub.rs` runs the client against a stand-in
+hub that behaves as StitchHub describes (the handshake and `hello_first`, signatures,
+`not_normalized`, files, one message per conversation at a time, duplicates, `id_reused`,
+`seq_taken`).
 
 ## Open
 - Shipping and sales tax (above). New Terms and Seller Terms wording for physical goods, returns
