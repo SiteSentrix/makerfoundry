@@ -130,9 +130,9 @@ ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens 
   its maker and the admins, through `/d/<id>/open?app=screenfoundry`, which makes the ten-minute
   `?t=` link). Not on DXF, PDF, embroidery or 3D designs. It's off until ScreenFoundry's web app
   opens links: `SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`. The link:
-  `https://stitchwright.github.io/screenfoundry/?open=<the file's address, URL-encoded>`, for
+  `https://app.screenfoundry.app/?open=<the file's address, URL-encoded>`, for
   example
-  `https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
+  `https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
   for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design can show
   both Open in LaserFoundry and Open in ScreenFoundry, side by side.
 - **The file's name** (`{name}`, and `Content-Disposition`'s `filename`) is the design's title as

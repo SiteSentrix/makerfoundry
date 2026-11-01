@@ -4492,7 +4492,7 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
     }
     if makerfoundry::api::SCREENFOUNDRY_OPENS_LINKS {
         let want = format!(
-            "https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
+            "https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
         );
         assert!(page.contains(&want), "{page}");
         s.dump_page("svg-open-buttons", &page, None).await;

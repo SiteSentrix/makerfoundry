@@ -25,8 +25,10 @@ use crate::{db, limits};
 pub const API_LIMIT_BYTES: usize = designs::MAX_UPLOAD_BYTES / 3 * 4 + 64 * 1024;
 
 /// The web apps that may call the API from a browser, unless `MF_API_ORIGINS` says otherwise:
-/// StitchFoundry's site, and its web app's (GitHub Pages).
-pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app,https://stitchwright.github.io";
+/// StitchFoundry's site, the web apps on GitHub Pages, and ScreenFoundry's web app at its own
+/// address (GitHub Pages sends stitchwright.github.io/screenfoundry/ there).
+pub const DEFAULT_ORIGINS: &str =
+    "https://stitchfoundry.app,https://stitchwright.github.io,https://app.screenfoundry.app";
 
 /// StitchFoundry's web app, which opens a design from `?open=<address>` (Open in StitchFoundry).
 pub const STITCHFOUNDRY_WEB: &str = "https://stitchwright.github.io/StitchFoundry/";
@@ -37,8 +39,8 @@ pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/
 pub const LASERFOUNDRY_OPENS_LINKS: bool = true;
 
 /// ScreenFoundry's web app (screen-printing prepress, MF-87), which opens SVG designs the same way
-/// once it reads `?open=`.
-pub const SCREENFOUNDRY_WEB: &str = "https://stitchwright.github.io/screenfoundry/";
+/// once it reads `?open=`. It moved to its own address on 2026-11-01; the GitHub Pages one redirects.
+pub const SCREENFOUNDRY_WEB: &str = "https://app.screenfoundry.app/";
 /// Whether ScreenFoundry's web app opens a design from an address yet: until the owner says it
 /// does, SVG designs show no Open in ScreenFoundry button.
 pub const SCREENFOUNDRY_OPENS_LINKS: bool = false;
@@ -761,7 +763,7 @@ mod tests {
                 let name = name_of(title, file, format, 42);
                 for token in [None, Some("0123456789abcdef0123456789abcdef0123456789abcdef")] {
                     let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 42, &name, token);
-                    assert!(link.starts_with("https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
+                    assert!(link.starts_with("https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
                     let address = opened(&link);
                     assert_eq!(screenfoundry_refuses(&address), None, "{title:?} {file} → {address}");
                 }
