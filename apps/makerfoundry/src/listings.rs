@@ -623,8 +623,8 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     // design's file is anyone's; a paid one opens through a link made for its buyers (and maker)
     let mut buttons = Vec::new();
     let free = d.price_cents == 0 && d.status == "published";
-    let paid_may =
-        !free && d.price_cents > 0 && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1;
+    // (bought: whatever it costs now)
+    let paid_may = !free && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1;
     for (app, name) in crate::api::web_apps(&d) {
         if free {
             let href = crate::api::open_in(app, &state.public_url, id, &crate::api::file_name(&d, id));
@@ -796,7 +796,9 @@ pub struct DownloadQuery {
 
 /// Whether `viewer` may see design `d` (`id`) and whether they may download it: a free published
 /// design anyone; a paid one the people who bought it (even unpublished, unless it was taken
-/// down); any its maker and the admins.
+/// down); any its maker and the admins. A purchase counts whatever the design costs now: a
+/// seller who makes it free, or unpublishes it, doesn't take it from the people who paid
+/// (only a takedown does, and a refund).
 pub(crate) async fn access(
     state: &AppState,
     pool: &PgPool,
@@ -806,9 +808,7 @@ pub(crate) async fn access(
 ) -> (bool, bool) {
     let staff = viewer.is_some_and(|u| u.account_id == d.account_id || state.admins.contains(&u.account_id));
     let buyer = match viewer {
-        Some(u) if d.status != "removed" && !staff && d.price_cents > 0 => {
-            selling::bought(pool, u.account_id, id).await
-        }
+        Some(u) if d.status != "removed" && !staff => selling::bought(pool, u.account_id, id).await,
         _ => false,
     };
     let seen = visible(d, viewer, &state.admins) || buyer;
