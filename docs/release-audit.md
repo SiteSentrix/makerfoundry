@@ -43,7 +43,7 @@ it. MakerFoundry 3D and the outside services stay off until their own steps.
 | Your data | download and delete | Cover every table added this month (notices, API keys, contests, likes, imports, showcase consents) |
 
 ## The owner's, before or at launch
-1. **DMCA agent:** register at copyright.gov ($6) and set `MF_DMCA_AGENT`. Until then `/dmca`
+1. **DMCA agent:** registered 2026-11-01 (DMCA-1084865); set `MF_DMCA_AGENT` on Railway (value in `docs/launch.md`). Until then `/dmca`
    asks for the form, and the safe harbour isn't in place (`docs/launch.md` step 3).
 2. **Database backups:** turn them on in Railway › Postgres › Backups (`docs/deploy.md`); there
    is no way to check from here that they are on. Files in R2 have no second copy. Consider R2

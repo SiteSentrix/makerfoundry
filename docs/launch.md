@@ -35,6 +35,8 @@ pages; published designs stay up.
    address, email, phone): `/dmca` shows it, and Terms § 9 points there. The owner chose a soft
    open first (2026-10-22), registering the week after: until then `/dmca` asks for the form, and
    the DMCA's safe harbour (17 U.S.C. § 512(c)(2)) isn't in place, so act on reports promptly.
+   **Registered 2026-11-01** (DMCA-1084865, Bruce Wattendorf, SiteSentrix). Set on Railway:
+   `MF_DMCA_AGENT=Bruce Wattendorf, SiteSentrix|8 Maplewood Drive|Mapleville, RI 02839|Phone: 401-636-2633|Email: bwattendorf@gmail.com|DMCA Registration No. DMCA-1084865`
 4. **Selling** (or launch with free designs only and open selling later):
    - In StitchFoundry's Stripe account, test mode first (`docs/deploy.md` › Stripe): turn on
      Connect (Express), make MakerFoundry's restricted key and its two webhooks, put them in

@@ -43,25 +43,52 @@ pub const SCREENFOUNDRY_WEB: &str = "https://stitchwright.github.io/screenfoundr
 /// does, SVG designs show no Open in ScreenFoundry button.
 pub const SCREENFOUNDRY_OPENS_LINKS: bool = false;
 
+/// PatternFoundry's web app (sewing patterns, SiteSentrix; MF-89, issue #47), which opens SVG
+/// designs from `?open=` the same way. Until MakerFoundry has a sewing-pattern kind, patterns come
+/// as SVG vector designs.
+pub const PATTERNFOUNDRY_WEB: &str = "https://sitesentrix.github.io/patternfoundry/";
+/// Whether PatternFoundry's web app opens a design from an address: on since 2026-11-01, when its
+/// live web app read `?open=`, fetched makerfoundry.app (its site allowed in `MF_API_ORIGINS`),
+/// opened a served SVG and showed MakerFoundry's own sentence for one that isn't there.
+pub const PATTERNFOUNDRY_OPENS_LINKS: bool = true;
+
+/// Which web apps open links yet (the switches above).
+#[derive(Clone, Copy, Debug)]
+pub struct Switches {
+    pub laser: bool,
+    pub screen: bool,
+    pub pattern: bool,
+}
+
+/// The switches as they are.
+pub const SWITCHES: Switches = Switches {
+    laser: LASERFOUNDRY_OPENS_LINKS,
+    screen: SCREENFOUNDRY_OPENS_LINKS,
+    pattern: PATTERNFOUNDRY_OPENS_LINKS,
+};
+
 /// The web apps that open design `d`, by its kind and format: (address, name), in the order their
 /// buttons show. Embroidery opens in StitchFoundry; an SVG or DXF laser design in LaserFoundry, and
-/// an SVG one in ScreenFoundry, each once its web app opens links.
+/// an SVG one in ScreenFoundry and PatternFoundry, each once its web app opens links.
 pub fn web_apps(d: &designs::DesignRow) -> Vec<(&'static str, &'static str)> {
     let format = d.facts.get("format").and_then(serde_json::Value::as_str);
-    apps_for(&d.kind, format, LASERFOUNDRY_OPENS_LINKS, SCREENFOUNDRY_OPENS_LINKS)
+    apps_for(&d.kind, format, SWITCHES)
 }
 
 /// `web_apps`, with the switches given (for tests).
-pub fn apps_for(kind: &str, format: Option<&str>, laser: bool, screen: bool) -> Vec<(&'static str, &'static str)> {
+pub fn apps_for(kind: &str, format: Option<&str>, on: Switches) -> Vec<(&'static str, &'static str)> {
     let mut apps = Vec::new();
     match kind {
         "embroidery" => apps.push((STITCHFOUNDRY_WEB, "StitchFoundry")),
         "laser" => {
-            if laser && matches!(format, Some("SVG" | "DXF")) {
+            if on.laser && matches!(format, Some("SVG" | "DXF")) {
                 apps.push((LASERFOUNDRY_WEB, "LaserFoundry"));
             }
-            if screen && format == Some("SVG") {
+            if on.screen && format == Some("SVG") {
                 apps.push((SCREENFOUNDRY_WEB, "ScreenFoundry"));
+            }
+            if on.pattern && format == Some("SVG") {
+                apps.push((PATTERNFOUNDRY_WEB, "PatternFoundry"));
             }
         }
         _ => {}
@@ -554,8 +581,32 @@ mod tests {
     #[test]
     fn each_web_app_opens_only_what_it_reads() {
         let names = |kind, format, laser, screen| -> Vec<&str> {
-            apps_for(kind, format, laser, screen).iter().map(|(_, n)| *n).collect()
+            let on = Switches {
+                laser,
+                screen,
+                pattern: false,
+            };
+            apps_for(kind, format, on).iter().map(|(_, n)| *n).collect()
         };
+        // PatternFoundry: SVG only, after the others
+        let all = Switches {
+            laser: true,
+            screen: true,
+            pattern: true,
+        };
+        let with_pattern: Vec<&str> = apps_for("laser", Some("SVG"), all).iter().map(|(_, n)| *n).collect();
+        assert_eq!(with_pattern, ["LaserFoundry", "ScreenFoundry", "PatternFoundry"]);
+        for (kind, format) in [
+            ("laser", Some("DXF")),
+            ("laser", Some("PDF")),
+            ("embroidery", Some("PES")),
+            ("model3d", Some("STL")),
+        ] {
+            assert!(
+                !apps_for(kind, format, all).iter().any(|(_, n)| *n == "PatternFoundry"),
+                "{kind} {format:?}"
+            );
+        }
         assert_eq!(names("embroidery", Some("PES"), true, true), ["StitchFoundry"]);
         assert_eq!(
             names("laser", Some("SVG"), true, true),

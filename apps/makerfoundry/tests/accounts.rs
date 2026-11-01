@@ -2827,6 +2827,47 @@ async fn browsing_finds_free_or_paid_designs_and_unpaid_checkouts_expire() {
 }
 
 #[tokio::test]
+async fn a_delayed_payment_confirmed_after_the_order_expired_is_still_delivered() {
+    let Some((s, st, _seller, paid)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let buyer = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{paid}/buy"), "", Some(&buyer)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    // a bank debit: the checkout completes unpaid, and Stripe confirms the money days later
+    // (https://docs.stripe.com/payments/checkout/fulfill-orders)
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_done",
+        "checkout.session.completed",
+        session_json("cs_test_1", &form, false),
+    )
+    .await;
+    sqlx::query("UPDATE mf_orders SET created_at = now() - interval '3 days'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(makerfoundry::selling::expire_orders(&s.pool).await.unwrap(), 1);
+    let r = s
+        .stripe_event(
+            WEBHOOK_SECRET,
+            "evt_paid",
+            "checkout.session.async_payment_succeeded",
+            session_json("cs_test_1", &form, true),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    // the buyer paid: the sale is recorded and the design is theirs
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'paid'").await,
+        1
+    );
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 3);
+    let r = s.get(&format!("/d/{paid}/download"), Some(&buyer)).await;
+    assert!(r.location().contains("/files/"), "{}", r.location());
+}
+
+#[tokio::test]
 async fn designs_are_found_by_the_hoop_they_fit_and_the_material_they_cut() {
     let Some(s) = site().await else { return };
     let cookie = s.sign_up("ann%40example.com").await;
@@ -4436,6 +4477,19 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
     assert_eq!(v["error"]["message"], "That design isn't on MakerFoundry.");
     // the button follows the switch
     let page = s.get(&format!("/d/{id}"), None).await.body;
+    // Open in PatternFoundry (MF-89): the same file address, PatternFoundry's web app, SVG only
+    let pattern = format!(
+        "https://sitesentrix.github.io/patternfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
+    );
+    if makerfoundry::api::PATTERNFOUNDRY_OPENS_LINKS {
+        assert!(
+            page.contains(&pattern) && page.contains("Open in PatternFoundry"),
+            "{page}"
+        );
+        s.dump_page("svg-open-buttons", &page, None).await;
+    } else {
+        assert!(!page.contains("Open in PatternFoundry"), "{page}");
+    }
     if makerfoundry::api::SCREENFOUNDRY_OPENS_LINKS {
         let want = format!(
             "https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
