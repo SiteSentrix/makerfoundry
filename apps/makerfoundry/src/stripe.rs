@@ -286,4 +286,27 @@ mod tests {
         assert_eq!(s.public_url, "https://makerfoundry.app");
         assert_eq!(format!("{s:?}"), "Stripe");
     }
+
+    #[test]
+    fn odd_webhook_headers_are_refused_without_a_panic() {
+        let s = stripe();
+        let body = b"{}";
+        let now = 1_700_000_000;
+        let good = signature("whsec_one", now, body);
+        // more than 8 signatures is refused even if one is good
+        let many = format!("t={now},{}v1={good}", "v1=".to_string() + &"0".repeat(64) + ",").repeat(1);
+        let nine: String = (0..8).map(|_| format!("v1={},", "0".repeat(64))).collect();
+        assert!(!s.verify(&format!("t={now},{nine}v1={good}"), body, now));
+        assert!(s.verify(&many, body, now));
+        // timestamps at the edges of i64 don't overflow
+        for t in [i64::MAX, i64::MIN, -1, 0] {
+            let h = format!("t={t},v1={}", signature("whsec_one", t, body));
+            assert!(!s.verify(&h, body, now), "{t}");
+        }
+        assert!(!s.verify(&format!("t={now},v1={}", &good[..62]), body, now));
+        assert!(!s.verify(&format!("t={now},v1={}é", &good[..62]), body, now));
+        assert!(!s.verify(&format!("t={now},v1={good}"), body, now - 10 * TOLERANCE_SECS));
+        assert!(!s.verify("v1", body, now));
+        assert!(!s.verify(",,,=,=", body, now));
+    }
 }
