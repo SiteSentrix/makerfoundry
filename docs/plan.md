@@ -534,7 +534,7 @@ one's checksum when it starts.)
   (owner, 2026-10-22)**: Seller Terms § 5 says paid sales aren't open yet until this is decided.
   **The code is ready (MF-24, 2026-10-27)**: Stripe Tax on checkout, switched on with
   `MF_STRIPE_TAX=yes` once the owner has registered and updated Seller Terms § 5.
-- **DMCA designated agent**: register SiteSentrix with the US Copyright Office (a small online
-  fee) before the public launch, for safe-harbour protection.
+- ~~**DMCA designated agent**~~: **registered 2026-11-01** with the US Copyright Office
+  (DMCA-1084865, renew before November 2029); shown on `/dmca` from `MF_DMCA_AGENT`.
 - ~~**Accounts**~~: **decided 2026-10-19: the StitchFoundry cloud accounts** (see "Accounts (MF-1)").
 - **Domain**: makerfoundry.app (and patternfoundry.app held for the sewing-pattern app).
