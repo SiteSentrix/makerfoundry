@@ -195,7 +195,7 @@ pub struct AppQuery {
     app: String,
 }
 
-/// `GET /admin/apps?app=<name>` (MF-68): how many designs each app has sent, and the latest 100 of
+/// `GET /admin/apps?app=<name>` (MF-88): how many designs each app has sent, and the latest 100 of
 /// one app's (any app's without `app`), drafts included.
 pub async fn apps(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<AppQuery>) -> Response {
     let (_, pool) = match admin(&state, &headers).await {

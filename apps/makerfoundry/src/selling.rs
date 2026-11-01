@@ -811,6 +811,12 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
             if let Some(order) = order {
                 confirm_paid(&mut tx, order, object).await?;
             }
+            // an order from a shop (MF-83)
+            if let Some(reference) = object.pointer("/metadata/shop_order").and_then(Value::as_str) {
+                crate::shop_orders::orders::confirm_paid(&mut tx, reference, object)
+                    .await
+                    .map_err(sqlx::Error::Protocol)?;
+            }
         }
         "charge.refunded" => {
             // only a full refund ends the sale (MakerFoundry makes only full ones)
@@ -824,6 +830,8 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
                 if let Some(order) = order {
                     record_refund(&mut tx, order).await?;
                 }
+                // an order from a shop (MF-84)
+                crate::shop_orders::after::refunded_by_stripe(&mut tx, intent).await?;
             }
         }
         "account.updated" => save_status(&mut tx, object).await?,

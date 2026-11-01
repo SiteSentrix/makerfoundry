@@ -24,6 +24,20 @@ pub const TOLERANCE_SECS: i64 = 300;
 /// downloaded - non subscription - with permanent rights" (https://docs.stripe.com/tax/tax-codes);
 /// `MF_TAX_CODE` gives another.
 pub const DEFAULT_TAX_CODE: &str = "txcd_10505001";
+/// The tax code goods ordered from shops are sold under (MF-86): "Clothing & Footwear"
+/// (https://docs.stripe.com/tax/tax-codes); `MF_SHOP_TAX_CODE` gives another.
+pub const DEFAULT_GOODS_TAX_CODE: &str = "txcd_30011000";
+
+fn tax_code(setting: &str, code: &str) -> Result<(), String> {
+    let digits = code.strip_prefix("txcd_").unwrap_or("");
+    if digits.len() == 8 && digits.bytes().all(|b| b.is_ascii_digit()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{setting} isn't a Stripe tax code (txcd_ and 8 digits): {code}"
+        ))
+    }
+}
 
 #[derive(Clone)]
 pub struct Stripe {
@@ -36,6 +50,8 @@ pub struct Stripe {
     /// With Stripe Tax on (`MF_STRIPE_TAX`), the tax code designs are sold under; `None`: no tax
     /// is charged.
     pub tax_code: Option<String>,
+    /// The tax code goods ordered from shops are sold under, while tax is on.
+    pub goods_tax_code: String,
     http: reqwest::Client,
 }
 
@@ -68,19 +84,22 @@ impl Stripe {
             webhook_secrets,
             public_url: public_url.trim_end_matches('/').to_string(),
             tax_code: None,
+            goods_tax_code: DEFAULT_GOODS_TAX_CODE.to_string(),
             http,
         })
     }
 
     /// The same, charging sales tax with Stripe Tax under `code` (`txcd_` and digits).
     pub fn with_tax(mut self, code: &str) -> Result<Stripe, String> {
-        let digits = code.strip_prefix("txcd_").unwrap_or("");
-        if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(format!(
-                "MF_TAX_CODE isn't a Stripe tax code (txcd_ and 8 digits): {code}"
-            ));
-        }
+        tax_code("MF_TAX_CODE", code)?;
         self.tax_code = Some(code.to_string());
+        Ok(self)
+    }
+
+    /// The same, goods ordered from shops sold under `code`.
+    pub fn with_goods_tax_code(mut self, code: &str) -> Result<Stripe, String> {
+        tax_code("MF_SHOP_TAX_CODE", code)?;
+        self.goods_tax_code = code.to_string();
         Ok(self)
     }
 
@@ -111,7 +130,14 @@ impl Stripe {
             .map(|c| c.trim().to_string())
             .filter(|c| !c.is_empty())
             .unwrap_or_else(|| DEFAULT_TAX_CODE.to_string());
-        stripe.with_tax(&code).map(Some)
+        let stripe = stripe.with_tax(&code)?;
+        match var("MF_SHOP_TAX_CODE")
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+        {
+            Some(goods) => stripe.with_goods_tax_code(&goods).map(Some),
+            None => Ok(Some(stripe)),
+        }
     }
 
     /// Whether the key is a test-mode key (`sk_test_…`).

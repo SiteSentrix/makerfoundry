@@ -131,6 +131,11 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .contest-entries li > a { justify-self: stretch; }
 .contest-entries .place { font-weight: 700; color: var(--accent); }
 .contests { padding-left: 1.25rem; display: grid; gap: .75rem; }
+.products { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); margin: 1rem 0 2rem; }
+.product { border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; background: var(--card); }
+.product h2 { margin-top: 0; }
+.product .methods { padding-left: 1.1rem; }
+.shops { padding-left: 1.25rem; display: grid; gap: .5rem; }
 .cards .thumb {
   display: grid; place-items: center; aspect-ratio: 4 / 3; overflow: hidden;
   border-radius: .5rem; background: var(--bg);
@@ -306,10 +311,23 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 /* Founding creators (MF-54): the numbered badge, filled so it stands apart from other badges */
 .badge.founding { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; white-space: nowrap; }
 
-/* Open in … buttons (MF-67): several on one row, spaced, wrapping on a phone */
+/* ordering from a shop (MF-83) */
+.sizes { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: 0.5rem 0.75rem; }
+.sizes .size input { width: 100%; }
+.totals { border-collapse: collapse; margin: 1rem 0; min-width: 14rem; }
+.totals td, .totals th { padding: 0.25rem 0; text-align: left; }
+.totals td + td, .totals th + th { text-align: right; padding-left: 2rem; font-variant-numeric: tabular-nums; }
+.totals tr:last-child th { border-top: 1px solid currentColor; padding-top: 0.4rem; }
+.proof { margin: 1rem 0; }
+.proof img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line, #ddd); border-radius: 6px; }
+.proof figcaption { margin-top: 0.4rem; }
+.cancel { margin: 1.5rem 0; }
+.cancel summary { cursor: pointer; }
+
+/* Open in … buttons (MF-87): several on one row, spaced, wrapping on a phone */
 .open-in { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 
-/* admin lists (MF-68): scroll sideways on a phone rather than overflow */
+/* admin lists (MF-88): scroll sideways on a phone rather than overflow */
 .admin-table { overflow-x: auto; margin: 0 0 1rem; }
 .admin-table table { border-collapse: collapse; min-width: 36rem; font-size: .92rem; }
 .admin-table th, .admin-table td { text-align: left; padding: .35rem .6rem .35rem 0; border-bottom: 1px solid var(--line); }
