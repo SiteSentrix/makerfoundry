@@ -128,13 +128,13 @@ ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens 
 
 - **The button** shows on the page of a free, published SVG design (a paid one: for its buyers,
   its maker and the admins, through `/d/<id>/open?app=screenfoundry`, which makes the ten-minute
-  `?t=` link). Not on DXF, PDF, embroidery or 3D designs. It's off until ScreenFoundry's web app
-  opens links: `SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`. The link:
-  `https://stitchwright.github.io/screenfoundry/?open=<the file's address, URL-encoded>`, for
-  example
-  `https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
-  for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design can show
-  both Open in LaserFoundry and Open in ScreenFoundry, side by side.
+  `?t=` link). Not on DXF, PDF, embroidery or 3D designs. On since 2026-11-01
+  (`SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`), when ScreenFoundry's web app
+  at `https://app.screenfoundry.app/` opened links. The link:
+  `https://app.screenfoundry.app/?open=<the file's address, URL-encoded>`, for example
+  `https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
+  for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design shows
+  Open in LaserFoundry, Open in ScreenFoundry and Open in PatternFoundry side by side.
 - **The file's name** (`{name}`, and `Content-Disposition`'s `filename`) is the design's title as
   a slug (lowercase ASCII letters, digits and `-`, at most 60) and the file's extension (letters and
   digits); when the title leaves no slug (empty, only symbols, or not in Latin letters) it's
