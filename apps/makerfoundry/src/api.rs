@@ -110,7 +110,11 @@ pub fn name_of(title: &str, file: &str, format: Option<&str>, id: i64) -> String
     let stem = crate::listings::slug(title);
     let stem = if stem.is_empty() { format!("design-{id}") } else { stem };
     let ext: String = file.rsplit_once('.').map(|(_, e)| e).unwrap_or("").to_ascii_lowercase();
-    let ext = if !ext.is_empty() && ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    // a laser file's ending is its format's, whatever its file was called: an SVG read from
+    // `logo.xml` still goes out as `.svg`, which is all ScreenFoundry and LaserFoundry take
+    let ext = if let Some(f @ ("SVG" | "DXF" | "PDF")) = format {
+        f.to_ascii_lowercase()
+    } else if !ext.is_empty() && ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
         ext
     } else {
         format
@@ -767,11 +771,24 @@ mod tests {
                     assert_eq!(screenfoundry_refuses(&address), None, "{title:?} {file} → {address}");
                 }
                 assert!(name.ends_with(".svg"), "{title:?} {file} → {name}");
+                // ScreenFoundry's own rule (2026-11-01): only a-z, 0-9 and "-", then ".svg"
+                let stem = name.strip_suffix(".svg").unwrap_or("");
+                assert!(
+                    !stem.is_empty()
+                        && stem
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                    "{title:?} {file} → {name}"
+                );
             }
         }
         assert_eq!(name_of("", "box.svg", Some("SVG"), 42), "design-42.svg");
         assert_eq!(name_of("日本", "box.svg", Some("SVG"), 7), "design-7.svg");
         assert_eq!(name_of("Rose & Fern", "x.svg", Some("SVG"), 1), "rose-fern.svg");
+        // an SVG uploaded under another ending still ends in .svg (ScreenFoundry takes only that)
+        assert_eq!(name_of("Logo", "logo.xml", Some("SVG"), 3), "logo.svg");
+        assert_eq!(name_of("Logo", "LOGO.SVG", Some("SVG"), 3), "logo.svg");
+        assert_eq!(name_of("Box", "box.txt", Some("DXF"), 3), "box.dxf");
     }
 
     proptest::proptest! {
@@ -781,6 +798,8 @@ mod tests {
             let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 9, &name, None);
             proptest::prop_assert_eq!(screenfoundry_refuses(&opened(&link)), None);
             proptest::prop_assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'));
+            let stem = name.strip_suffix(".svg").unwrap_or("");
+            proptest::prop_assert!(!stem.is_empty() && !stem.contains('.'), "{}", name);
         }
     }
 
