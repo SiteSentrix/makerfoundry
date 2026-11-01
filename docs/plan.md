@@ -423,6 +423,13 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   `/admin/apps` (linked from the overview); it's in the maker's data download. Uploads on the site
   have none.
 
+## PatternFoundry (MF-89, 2026-11-01)
+- **MF-89 Open in PatternFoundry, built 2026-11-01** (issue #47's third item): SVG designs get an
+  **Open in PatternFoundry** button linking to
+  `https://sitesentrix.github.io/patternfoundry/?open=<the file's address>` (`PATTERNFOUNDRY_OPENS_LINKS`,
+  on: its live web app opened a served SVG in Chromium). The web apps' switches are one `Switches`
+  value in `src/api.rs`. Still open on #47: the sewing-pattern kind.
+
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
   also from the seller's share, payouts monthly** (research: `docs/research/marketplace-fees.md`).
