@@ -152,4 +152,52 @@ mod tests {
             assert_eq!(parse_dollars(bad), None, "{bad}");
         }
     }
+    #[test]
+    fn split_refuses_out_of_range_prices_without_overflowing() {
+        for price in [i64::MIN, -1, 0, MIN_PRICE - 1, MAX_PRICE + 1, i64::MAX / 10, i64::MAX] {
+            assert_eq!(split(price), None, "{price}");
+        }
+        assert!(split(MIN_PRICE).is_some() && split(MAX_PRICE).is_some());
+    }
+
+    #[test]
+    fn split_rounds_halves_up_at_the_boundaries() {
+        // 10% of $1.05 is 10.5c -> 11c; of $1.04 is 10.4c -> 10c.
+        assert_eq!(split(105).map(|s| s.fee), Some(11));
+        assert_eq!(split(104).map(|s| s.fee), Some(10));
+        // 2.9% of $1.00 is 2.9c -> 3c, plus the 30c.
+        assert_eq!(split(100).map(|s| s.processing), Some(33));
+        // 2.9% of 1050c is 30.45c -> 30c; of 1052c is 30.508c -> 31c (plus the 30c).
+        assert_eq!(split(1050).map(|s| s.processing), Some(60));
+        assert_eq!(split(1052).map(|s| s.processing), Some(61));
+    }
+
+    #[test]
+    fn dollars_never_panics_at_the_extremes() {
+        assert_eq!(dollars(0), "$0");
+        assert_eq!(dollars(i64::MAX), "$92233720368547758.07");
+        assert_eq!(dollars(i64::MIN), "-$92233720368547758.08");
+    }
+
+    #[test]
+    fn dollars_text_reads_back_as_the_same_cents() {
+        for cents in (0..=MAX_PRICE).chain([99_999_999, 1_000_000_00]) {
+            let text = dollars(cents);
+            assert_eq!(parse_dollars(&text), Some(cents), "{text}");
+        }
+    }
+
+    #[test]
+    fn parse_dollars_caps_the_size_and_rejects_junk() {
+        assert_eq!(parse_dollars("9999999.99"), Some(999_999_999));
+        assert_eq!(parse_dollars("10000000"), None);
+        for bad in ["+4", "4.", "١٢", "4,5.0.0", "NaN", "inf", "\u{0}", "0x10", "$ 4"] {
+            // "4." has an empty fractional part and is accepted as 4; everything else is junk.
+            if bad == "4." {
+                assert_eq!(parse_dollars(bad), Some(400));
+            } else {
+                assert_eq!(parse_dollars(bad), None, "{bad}");
+            }
+        }
+    }
 }
