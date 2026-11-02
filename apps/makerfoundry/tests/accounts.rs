@@ -11702,3 +11702,74 @@ async fn a_shop_has_its_own_branded_page_and_short_address() {
         "{page}"
     );
 }
+
+// ---------------------------------------------------------------- a purchase stays the buyer's
+
+#[tokio::test]
+async fn a_buyer_keeps_a_design_its_seller_makes_free_or_unpublishes() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let id = published(&s, &ann, "anns", "Rose").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    sqlx::query("UPDATE mf_designs SET price_cents = 500 WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO mf_orders (buyer_account, design_id, seller_account, price_cents, fee_cents,
+             processing_cents, seller_cents, title, status, paid_at)
+         VALUES (1001, $1, 1000, 500, 50, 45, 405, 'Rose', 'paid', now())",
+    )
+    .bind(id)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let downloads =
+        |status: StatusCode, location: &str| status == StatusCode::SEE_OTHER && location.contains("X-Amz-Signature=");
+    let dl = s.get(&format!("/d/{id}/download"), Some(&bea)).await;
+    assert!(downloads(dl.status, dl.location()), "{}", dl.location());
+
+    // the seller makes it free, then unpublishes it: the buyer still has it, nobody else does
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Rose&licence=commercial&price=0",
+            Some(&ann),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&ann)).await;
+    let (price, status): (i64, String) = sqlx::query_as("SELECT price_cents, status FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!((price, status.as_str()), (0, "draft"));
+    let dl = s.get(&format!("/d/{id}/download"), Some(&bea)).await;
+    assert!(downloads(dl.status, dl.location()), "{:?} {}", dl.status, dl.location());
+    assert!(
+        s.get("/library", Some(&bea))
+            .await
+            .body
+            .contains(&format!(r#"href="/d/{id}/download""#))
+    );
+    for other in [None, Some(cal.as_str())] {
+        assert_eq!(
+            s.get(&format!("/d/{id}/download"), other).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    // a takedown (copyright) does take it away
+    sqlx::query("UPDATE mf_designs SET status = 'removed', removed_reason = 'copyright' WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(&format!("/d/{id}/download"), Some(&bea)).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
