@@ -126,6 +126,16 @@ Both default to 0, so a catalogue with only `flat_cents` still reads. `shop.addr
 the same fields as `ship_to`) is where customers pick up: sales tax on a pick-up order is worked
 out from it, so a shop that offers pick-up should send it; without it MakerFoundry offers only
 shipping while it collects tax.
+
+Branding (2026-11-02, optional, never refusing a catalogue): `shop.brand` may carry
+`display_name` (plain text, at most 80 characters), `intro` (plain text, at most 1,000, paragraphs
+apart by a blank line, no links or HTML), `logo` (`{ size, sha256, type }`: a PNG or JPEG of at
+most 2 MB put in the hub's files for the `catalog` conversation; MakerFoundry fetches it, checks it
+and draws it again), `accent` (`#rrggbb`: used only where it reads at 4.5:1 on the page, light and
+dark looks apart), `handle` (the shop's short address `<handle>.makerfoundry.app`: 3 to 40 of a-z,
+0-9 and `-`, not starting or ending with `-`, some names reserved, first come first served) and
+`website` (an `https://` address, shown as a plain link). A field that doesn't fit is left out and
+the page falls back to the plain look. Example: `valid/catalog-branded.json`.
 ```json
 { "shop": { "name": "…", "town": "…", "ships": true, "pickup": true, "account": 4217,
             "address": { "line1": "…", "city": "…", "region": "OH", "postcode": "…", "country": "US" } },

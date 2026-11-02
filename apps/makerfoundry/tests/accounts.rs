@@ -1650,6 +1650,8 @@ struct StripeFake {
     reversals_fail: bool,
     /// Whether reading a Checkout Session fails (Stripe having a bad moment).
     sessions_unreadable: bool,
+    /// Checkout Sessions expired (`/v1/checkout/sessions/{id}/expire`, or by time).
+    expired: Vec<String>,
 }
 
 type StripeShared = Arc<Mutex<StripeFake>>;
@@ -1719,13 +1721,33 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
                 }
                 // (an unknown session: Stripe's 404, resource_missing)
                 match st.sessions.get(&id).cloned() {
-                    Some((f, paid)) => Json(session_json(&id, &f, paid)).into_response(),
+                    Some((f, paid)) => {
+                        let mut session = session_json(&id, &f, paid);
+                        if st.expired.contains(&id) {
+                            session["status"] = json!("expired");
+                        }
+                        Json(session).into_response()
+                    }
                     None => (
                         StatusCode::NOT_FOUND,
                         Json(json!({"error": {"type": "invalid_request_error", "code": "resource_missing"}})),
                     )
                         .into_response(),
                 }
+            }),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}/expire",
+            post(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
+                let mut st = s.lock().unwrap();
+                // (only an open session can be expired)
+                let open = st.sessions.get(&id).is_some_and(|(_, paid)| !paid) && !st.expired.contains(&id);
+                if !open {
+                    return (StatusCode::BAD_REQUEST, Json(json!({"error": {"message": "not open"}})));
+                }
+                st.expired.push(id.clone());
+                st.posts.push((format!("/v1/checkout/sessions/{id}/expire"), HashMap::new()));
+                (StatusCode::OK, Json(json!({"id": id, "object": "checkout.session", "status": "expired"})))
             }),
         )
         // Stripe Tax (MF-86): 7% of the items, shipping untaxed
@@ -11366,4 +11388,568 @@ async fn picks_of_the_week_and_the_galleries_on_the_home_page() {
         .to_string();
     assert!(picks.contains("Fern") && !picks.contains("Rose"), "{picks}");
     assert!(!s.get("/picks", None).await.body.contains("Rose"));
+}
+
+// ---------------------------------------------------------------- lower-detail previews of paid designs
+
+impl Site {
+    /// A GET's status, headers and body as bytes (for pictures and meshes).
+    async fn raw(&self, path: &str, cookie: Option<&str>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut req = Request::get(path).header(header::HOST, HOST);
+        if let Some(c) = cookie {
+            req = req.header(header::COOKIE, c);
+        }
+        let resp = self
+            .app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let (status, headers) = (resp.status(), resp.headers().clone());
+        (
+            status,
+            headers,
+            resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+    }
+}
+
+/// `buyer` (an account id) bought design `id` from `seller`.
+async fn sold(s: &Site, id: i64, seller: i64, buyer: i64) {
+    sqlx::query(
+        "INSERT INTO mf_orders (buyer_account, design_id, seller_account, price_cents, fee_cents,
+             processing_cents, seller_cents, title, status, paid_at)
+         VALUES ($1, $2, $3, 500, 50, 45, 405, 'Paid', 'paid', now())",
+    )
+    .bind(buyer)
+    .bind(id)
+    .bind(seller)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_paid_designs_page_shows_others_only_a_lower_detail_picture() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let stitches = published(&s, &ann, "anns", "Rose").await;
+    // a laser design too
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="40mm" viewBox="0 0 60 40"><rect x="5" y="5" width="50" height="30" fill="none" stroke="#ff0000"/><circle cx="30" cy="20" r="7" fill="none" stroke="#0000ff"/></svg>"##;
+    let r = s
+        .send(multipart(
+            "/designs/new",
+            &[("file", "coaster.svg", svg.to_vec())],
+            &ann,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let lines = design_id(r.location());
+    s.post(
+        &format!("/designs/{lines}/edit"),
+        "title=Coaster&licence=commercial",
+        Some(&ann),
+    )
+    .await;
+    s.post(&format!("/designs/{lines}/publish"), "confirm=yes", Some(&ann))
+        .await;
+    let svgs: Vec<String> = sqlx::query_scalar("SELECT preview_svg FROM mf_designs WHERE id = ANY($1) ORDER BY id")
+        .bind(vec![stitches, lines])
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    let (rose_svg, coaster_svg) = (svgs[0].clone(), svgs[1].clone());
+    assert!(rose_svg.contains("<path") && coaster_svg.contains("<path"));
+
+    // free: everyone sees every stitch and line, as before
+    for (id, svg) in [(stitches, &rose_svg), (lines, &coaster_svg)] {
+        let page = s.get(&format!("/d/{id}"), None).await.body;
+        assert!(page.contains(svg.as_str()), "{page}");
+        assert!(!page.contains("preview.png"), "{page}");
+    }
+
+    sqlx::query("UPDATE mf_designs SET price_cents = 500 WHERE id = ANY($1)")
+        .bind(vec![stitches, lines])
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    sold(&s, stitches, 1000, 1001).await;
+    sold(&s, lines, 1000, 1001).await;
+    for (id, svg) in [(stitches, &rose_svg), (lines, &coaster_svg)] {
+        // nobody who hasn't bought it gets the stitches or lines: no path, no viewBox of them
+        for viewer in [None, Some(cal.as_str())] {
+            let page = s.get(&format!("/d/{id}"), viewer).await.body;
+            let figure = page
+                .split(r#"<figure class="preview">"#)
+                .nth(1)
+                .and_then(|f| f.split("</figure>").next())
+                .unwrap();
+            assert!(
+                !figure.contains("<svg") && !figure.contains("<path"),
+                "{viewer:?}: {figure}"
+            );
+            // nothing of the stitches or lines anywhere on the page
+            let first_path = svg.split(" d=\"").nth(1).unwrap().split('"').next().unwrap();
+            assert!(!page.contains(first_path), "{page}");
+            assert!(!page.contains(r#"class="stitches" viewBox"#), "{page}");
+            assert!(
+                page.contains(&format!(r#"<img class="stitches" src="/d/{id}/preview.png""#)),
+                "{page}"
+            );
+            assert!(page.contains("A lower-detail picture."), "{page}");
+            let (status, headers, png) = s.raw(&format!("/d/{id}/preview.png"), viewer).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+            let img = image::load_from_memory(&png).unwrap();
+            assert!(img.width().max(img.height()) <= makerfoundry::coarse::MAX_SIDE);
+        }
+        // the buyer, the maker and the admins see every stitch
+        for viewer in [&bea, &ann] {
+            let page = s.get(&format!("/d/{id}"), Some(viewer)).await.body;
+            assert!(page.contains(svg.as_str()), "{page}");
+        }
+    }
+    s.dump_page(
+        "paid-preview-anonymous",
+        &s.get(&format!("/d/{stitches}"), None).await.body,
+        None,
+    )
+    .await;
+    s.dump_page(
+        "paid-preview-laser",
+        &s.get(&format!("/d/{lines}"), None).await.body,
+        None,
+    )
+    .await;
+    s.dump_page(
+        "paid-preview-buyer",
+        &s.get(&format!("/d/{stitches}"), Some(&bea)).await.body,
+        Some(&bea),
+    )
+    .await;
+    // an unpublished design's picture is no one else's
+    s.post(&format!("/designs/{lines}/unpublish"), "", Some(&ann)).await;
+    assert_eq!(
+        s.raw(&format!("/d/{lines}/preview.png"), Some(&cal)).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_paid_models_mesh_is_rough_for_people_who_havent_bought_it() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (ann, id) = published_model(&s, "ann%40example.com", "ann").await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND role = 'mesh'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let path = format!("/3d/{id}/files/{fid}/mesh");
+    let (_, headers, free) = s.raw(&path, None).await;
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=3600");
+    // the whole mesh reaches the box's corners (quantized 0 and 65535)
+    let corners = |m: &[u8]| -> Vec<u16> {
+        m[32..]
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect()
+    };
+    assert!(corners(&free).contains(&0) && corners(&free).contains(&65535));
+
+    sqlx::query("UPDATE mf_designs SET price_cents = 500 WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let bea = s.join("bea%40example.com").await;
+    let cal = s.join("cal%40example.com").await;
+    sold(&s, id, 1000, 1001).await;
+    for viewer in [None, Some(cal.as_str())] {
+        let (status, headers, rough) = s.raw(&path, viewer).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(rough.starts_with(b"MFM1"));
+        assert_ne!(rough, free, "{viewer:?}");
+        let c = corners(&rough);
+        assert!(!c.is_empty() && !c.contains(&0) && !c.contains(&65535), "{c:?}");
+        assert_eq!(headers[header::CACHE_CONTROL], "private, max-age=3600");
+    }
+    for viewer in [&bea, &ann] {
+        let (status, headers, whole) = s.raw(&path, Some(viewer)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(whole, free);
+        assert_eq!(headers[header::CACHE_CONTROL], "private, max-age=3600");
+    }
+}
+
+// ---------------------------------------------------------------- branded shops (2026-11-02)
+
+/// A request to `path` at `host` (a shop's short address).
+fn at_host(host: &str, path: &str) -> Request<Body> {
+    Request::get(path)
+        .header(header::HOST, host)
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_shop_has_its_own_branded_page_and_short_address() {
+    let Some((s, state, hub, _)) = shops_site().await else {
+        return;
+    };
+    let png = mockup_png();
+    let sha = makerfoundry::shop_orders::hub::stand_in::put_file(&hub, "catalog", &png);
+    let mut c = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001");
+    c["body"]["shop"]["brand"] = json!({
+        "display_name": "Main Street Threads",
+        "intro": "Family shop since 1998.\n\nWe stitch every order here in <Elmwood>.",
+        "logo": {"size": png.len(), "sha256": sha, "type": "image/png"},
+        "accent": "#1f5fad",
+        "handle": "mainst-threads",
+        "website": "https://mainst.example/"
+    });
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, c);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    shop_can_be_paid(&s).await;
+    // the logo was fetched from the hub, drawn again and kept
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shops WHERE logo_key IS NOT NULL AND logo_type = 'image/png'")
+            .await,
+        1
+    );
+
+    let page = s.get("/shops/mainst", None).await.body;
+    for want in [
+        "<h1>Main Street Threads</h1>",
+        r#"src="/shops/mainst/logo""#,
+        r#"href="/shops/mainst/brand.css""#,
+        "<p>Family shop since 1998.</p><p>We stitch every order here in &lt;Elmwood&gt;.</p>",
+        r#"href="https://mainst.example/" rel="noopener nofollow ugc""#,
+        r#"href="https://mainst-threads.makerfoundry.test/""#,
+        "Sold by Main Street Threads through MakerFoundry",
+        "Heavy cotton tee",
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop-branded", &page, None).await;
+    let logo = s.get("/shops/mainst/logo", None).await;
+    assert_eq!(logo.status, StatusCode::OK);
+    assert_eq!(logo.headers[header::CONTENT_TYPE], "image/png");
+    let css = s.get("/shops/mainst/brand.css", None).await;
+    assert!(css.body.contains("--accent: #1f5fad"), "{}", css.body);
+
+    // its short address: the page, with its stylesheet and logo from the same address
+    let r = s.send(at_host("mainst-threads.makerfoundry.test", "/")).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains(r#"href="/brand.css""#) && r.body.contains(r#"src="/logo""#),
+        "{}",
+        r.body
+    );
+    assert!(r.headers.contains_key(header::CONTENT_SECURITY_POLICY));
+    assert_eq!(
+        s.send(at_host("mainst-threads.makerfoundry.test", "/logo"))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        s.send(at_host("mainst-threads.makerfoundry.test", "/static/site.css"))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // anything else, ordering included, goes to MakerFoundry itself
+    let r = s
+        .send(at_host(
+            "mainst-threads.makerfoundry.test",
+            "/shops/mainst/order/tee-heavy?x=1",
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        r.location(),
+        "https://makerfoundry.test/shops/mainst/order/tee-heavy?x=1"
+    );
+    assert_eq!(
+        s.send(at_host("www.makerfoundry.test", "/browse")).await.location(),
+        "https://makerfoundry.test/browse"
+    );
+    assert_eq!(
+        s.send(at_host("nobody.makerfoundry.test", "/")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.send(at_host("a.b.makerfoundry.test", "/")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // MakerFoundry itself is unchanged
+    assert_eq!(s.send(at_host(HOST, "/")).await.status, StatusCode::OK);
+
+    // another shop can't take the same address, nor a reserved one; bad branding is left out
+    let mut other = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c099");
+    other["from"] = json!("shop:other");
+    other["body"]["shop"]["brand"] =
+        json!({"handle": "mainst-threads", "accent": "pink", "website": "javascript:alert(1)"});
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, other);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shops WHERE party = 'shop:other' AND subdomain IS NULL")
+            .await,
+        1
+    );
+    let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c002");
+    again["seq"] = 2.into();
+    again["body"]["shop"]["brand"] = json!({"handle": "admin"});
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    // (no handle any more: the short address is let go, and the logo with it)
+    assert_eq!(
+        s.scalar(
+            "SELECT count(*) FROM mf_shops WHERE party = 'shop:mainst' AND subdomain IS NULL AND logo_key IS NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        s.send(at_host("mainst-threads.makerfoundry.test", "/")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let page = s.get("/shops/mainst", None).await.body;
+    assert!(
+        page.contains("<h1>Main Street Threadworks</h1>") && !page.contains("brand.css"),
+        "{page}"
+    );
+}
+
+// ---------------------------------------------------------------- a purchase stays the buyer's
+
+#[tokio::test]
+async fn a_buyer_keeps_a_design_its_seller_makes_free_or_unpublishes() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let id = published(&s, &ann, "anns", "Rose").await;
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    sqlx::query("UPDATE mf_designs SET price_cents = 500 WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO mf_orders (buyer_account, design_id, seller_account, price_cents, fee_cents,
+             processing_cents, seller_cents, title, status, paid_at)
+         VALUES (1001, $1, 1000, 500, 50, 45, 405, 'Rose', 'paid', now())",
+    )
+    .bind(id)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let downloads =
+        |status: StatusCode, location: &str| status == StatusCode::SEE_OTHER && location.contains("X-Amz-Signature=");
+    let dl = s.get(&format!("/d/{id}/download"), Some(&bea)).await;
+    assert!(downloads(dl.status, dl.location()), "{}", dl.location());
+
+    // the seller makes it free, then unpublishes it: the buyer still has it, nobody else does
+    let r = s
+        .post(
+            &format!("/designs/{id}/edit"),
+            "title=Rose&licence=commercial&price=0",
+            Some(&ann),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&ann)).await;
+    let (price, status): (i64, String) = sqlx::query_as("SELECT price_cents, status FROM mf_designs WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!((price, status.as_str()), (0, "draft"));
+    let dl = s.get(&format!("/d/{id}/download"), Some(&bea)).await;
+    assert!(downloads(dl.status, dl.location()), "{:?} {}", dl.status, dl.location());
+    assert!(
+        s.get("/library", Some(&bea))
+            .await
+            .body
+            .contains(&format!(r#"href="/d/{id}/download""#))
+    );
+    for other in [None, Some(cal.as_str())] {
+        assert_eq!(
+            s.get(&format!("/d/{id}/download"), other).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    // a takedown (copyright) does take it away
+    sqlx::query("UPDATE mf_designs SET status = 'removed', removed_reason = 'copyright' WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(&format!("/d/{id}/download"), Some(&bea)).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+// ---------------------------------------------------------------- deleting a design being bought
+
+#[tokio::test]
+async fn deleting_a_design_closes_its_checkouts_first() {
+    let Some((s, st, seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    for buyer in [&bea, &cal] {
+        let r = s.post(&format!("/d/{id}/buy"), "", Some(buyer)).await;
+        assert!(
+            r.location().starts_with("https://checkout.stripe.com/"),
+            "{}",
+            r.location()
+        );
+    }
+    // cal has paid at Stripe, and it isn't confirmed here yet: the design waits
+    st.lock().unwrap().sessions.get_mut("cs_test_2").unwrap().1 = true;
+    s.post(&format!("/designs/{id}/unpublish"), "", Some(&seller)).await;
+    let r = s.post(&format!("/designs/{id}/delete"), "", Some(&seller)).await;
+    assert!(r.body.contains("still being confirmed"), "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        1
+    );
+    // bea's open checkout was closed at Stripe, and her order with it
+    let expired: Vec<String> = st.lock().unwrap().expired.clone();
+    assert_eq!(expired, ["cs_test_1"]);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE stripe_session = 'cs_test_1' AND status = 'expired'")
+            .await,
+        1
+    );
+    // once cal's checkout is over too (here: it expired without the money arriving), it goes
+    {
+        let mut f = st.lock().unwrap();
+        f.sessions.get_mut("cs_test_2").unwrap().1 = false;
+        f.expired.push("cs_test_2".into());
+    }
+    let r = s.post(&format!("/designs/{id}/delete"), "", Some(&seller)).await;
+    assert_eq!(r.location(), "/designs", "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE status = 'pending'")
+            .await,
+        0
+    );
+    // a payment for it can't be started any more
+    let posts = st
+        .lock()
+        .unwrap()
+        .posts
+        .iter()
+        .filter(|(p, _)| p.ends_with("/expire"))
+        .count();
+    assert_eq!(posts, 1, "an expired session isn't expired again");
+}
+
+#[tokio::test]
+async fn deleting_your_data_closes_checkouts_for_your_designs() {
+    let Some((s, st, seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&bea)).await;
+    // Stripe can't say whether it's paid: nothing is deleted
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = true;
+    let r = s.post("/account/data/delete", "confirm=delete", Some(&seller)).await;
+    assert!(r.body.contains("Nothing was changed"), "{}", r.body);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        1
+    );
+    st.lock().unwrap().sessions.get_mut("cs_test_1").unwrap().1 = false;
+    let r = s.post("/account/data/delete", "confirm=delete", Some(&seller)).await;
+    assert!(r.body.contains("Your MakerFoundry data is deleted"), "{}", r.body);
+    assert_eq!(st.lock().unwrap().expired, ["cs_test_1"]);
+    assert_eq!(
+        s.scalar(&format!("SELECT count(*) FROM mf_designs WHERE id = {id}"))
+            .await,
+        0
+    );
+}
+
+// ---------------------------------------------------------------- copies of messages to shops
+
+#[tokio::test]
+async fn copies_of_messages_to_shops_go_30_days_after_the_order_is_done() {
+    let Some((s, state, _, st)) = open_shop().await else {
+        return;
+    };
+    let (_, _, reference) = paid_order(&s, &st).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let carries = format!(
+        "SELECT count(*) FROM mf_hub_outbox WHERE order_ref = '{reference}' AND envelope->'body' <> '{{}}'::jsonb"
+    );
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_hub_outbox WHERE order_ref = '{reference}' AND sent_at IS NOT NULL"
+        ))
+        .await,
+        1,
+        "the hub took it"
+    );
+    // an earlier message of the same conversation, also taken long ago
+    sqlx::query(
+        "INSERT INTO mf_hub_outbox (id, kind, order_ref, seq, to_party, envelope, expires_at, sent_at)
+         SELECT 'earlier', kind, order_ref, seq - 1, to_party, envelope, expires_at, sent_at
+         FROM mf_hub_outbox WHERE order_ref = $1",
+    )
+    .bind(&reference)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    // while the order is open, or closed less than 30 days ago, they're kept as they are
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(s.scalar(&carries).await, 2);
+    sqlx::query("UPDATE mf_hub_outbox SET sent_at = now() - interval '40 days' WHERE order_ref = $1")
+        .bind(&reference)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mf_shop_orders SET status = 'shipped', updated_at = now() - interval '29 days' WHERE ref = $1")
+        .bind(&reference)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(s.scalar(&carries).await, 2);
+    // 30 days after it shipped: the earlier copy goes, the last is kept for its number, blanked
+    sqlx::query("UPDATE mf_shop_orders SET updated_at = now() - interval '31 days' WHERE ref = $1")
+        .bind(&reference)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(s.scalar(&carries).await, 0);
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_hub_outbox WHERE order_ref = '{reference}'"
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE id = 'earlier'")
+            .await,
+        0
+    );
 }

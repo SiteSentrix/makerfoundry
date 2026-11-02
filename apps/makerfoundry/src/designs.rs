@@ -712,6 +712,10 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
         )
         .await;
     }
+    // (an unpaid checkout for it is closed first, so nobody pays for a design that's gone)
+    if let Err(why) = crate::selling::close_checkouts(&state, &pool, id).await {
+        return manage_page(&state, &pool, &user, id, why).await;
+    }
     let keys: Vec<(String, String)> =
         sqlx::query_as("SELECT photo_key, thumb_key FROM mf_design_photos WHERE design_id = $1")
             .bind(id)
