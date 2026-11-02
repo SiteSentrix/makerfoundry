@@ -123,18 +123,18 @@ LaserFoundry's side, by its own rules (its `CLAUDE.md`, its own task id), as Sti
 
 Once it ships, tell the MakerFoundry chat to switch the button on.
 
-## For ScreenFoundry (MF-67): Open in ScreenFoundry, and publishing
+## For ScreenFoundry (MF-87): Open in ScreenFoundry, and publishing
 ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens **SVG only**.
 
 - **The button** shows on the page of a free, published SVG design (a paid one: for its buyers,
   its maker and the admins, through `/d/<id>/open?app=screenfoundry`, which makes the ten-minute
-  `?t=` link). Not on DXF, PDF, embroidery or 3D designs. It's off until ScreenFoundry's web app
-  opens links: `SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`. The link:
-  `https://stitchwright.github.io/screenfoundry/?open=<the file's address, URL-encoded>`, for
-  example
-  `https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
-  for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design can show
-  both Open in LaserFoundry and Open in ScreenFoundry, side by side.
+  `?t=` link). Not on DXF, PDF, embroidery or 3D designs. On since 2026-11-01
+  (`SCREENFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`), when ScreenFoundry's web app
+  at `https://app.screenfoundry.app/` opened links. The link:
+  `https://app.screenfoundry.app/?open=<the file's address, URL-encoded>`, for example
+  `https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2Ftiger-shirt.svg`
+  for `https://makerfoundry.app/api/v1/designs/42/file/tiger-shirt.svg`. An SVG design shows
+  Open in LaserFoundry, Open in ScreenFoundry and Open in PatternFoundry side by side.
 - **The file's name** (`{name}`, and `Content-Disposition`'s `filename`) is the design's title as
   a slug (lowercase ASCII letters, digits and `-`, at most 60) and the file's extension (letters and
   digits); when the title leaves no slug (empty, only symbols, or not in Latin letters) it's
@@ -148,10 +148,27 @@ ScreenFoundry (screen-printing prepress, Stitchwright; its side is SC-11) opens 
 - **Publishing** is unchanged: an SVG sent with `"app": "ScreenFoundry 0.1.0"` becomes a draft of
   the laser kind. A draft from any app is now titled after its file (`Tiger_shirt-front.svg` →
   "Tiger shirt front"; "Untitled design" if that leaves nothing), so it's never left untitled.
-  The draft also keeps the app's name without its version (`from_app`: "ScreenFoundry", MF-68):
+  The draft also keeps the app's name without its version (`from_app`: "ScreenFoundry", MF-88):
   admins list designs by app at `/admin/apps`, and it's in the maker's data download. Send `app`
   as `"<Name> <version>"`; the name is its first word, letters and digits only.
 
+
+## For PatternFoundry (MF-89, issue #47): Open in PatternFoundry
+PatternFoundry (sewing patterns, SiteSentrix; its PF-11 and PF-12) opens **SVG only**, from
+`https://sitesentrix.github.io/patternfoundry/?open=<the file's address, URL-encoded>`, exactly as
+ScreenFoundry does (same file address, same names, same answers; see above). Its site is in
+`MF_API_ORIGINS` (`https://sitesentrix.github.io`, set 2026-11-01).
+
+- **The button** shows on free, published SVG designs (paid ones: through
+  `/d/<id>/open?app=patternfoundry`), after LaserFoundry's and ScreenFoundry's. Its switch,
+  `PATTERNFOUNDRY_OPENS_LINKS` in `apps/makerfoundry/src/api.rs`, is **on**: checked 2026-11-01 in
+  Chromium against the live web app, which read `?open=`, fetched the address without cookies,
+  opened the SVG under its Content-Disposition name in millimetres, cleared `?open=`, and showed
+  MakerFoundry's own sentence for a design that isn't published.
+- **Publishing** from PatternFoundry is the usual `POST /api/v1/designs` with
+  `"app": "PatternFoundry <version>"`: an SVG lands as a laser-kind draft, titled after its file.
+- **Later:** a "sewing pattern" kind (true-scale PDF, DXF-AAMA, sizes, tiles) is issue #47's other
+  item, not built.
 
 ## Reading 3D models (issue #36)
 Read-only JSON about **published** 3D models, for slicers and apps (`apps/makerfoundry/src/model3d/api.rs`).

@@ -182,7 +182,7 @@ pub async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Resp
     private(
         "Overview · MakerFoundry",
         &format!(
-            r#"<section class="design"><h1>Overview</h1><p class="muted"><a href="/admin">Reports</a> · <a href="/admin/orders">Orders</a> · <a href="/admin/apps">Designs from apps</a></p>{people}{designs}{sales}{reports}</section>"#
+            r#"<section class="design"><h1>Overview</h1><p class="muted"><a href="/admin">Reports</a> · <a href="/admin/orders">Orders</a> · <a href="/admin/apps">Designs from apps</a> · <a href="/admin/accounts">Delete an account's data</a></p>{people}{designs}{sales}{reports}</section>"#
         ),
         true,
     )
@@ -195,7 +195,7 @@ pub struct AppQuery {
     app: String,
 }
 
-/// `GET /admin/apps?app=<name>` (MF-68): how many designs each app has sent, and the latest 100 of
+/// `GET /admin/apps?app=<name>` (MF-88): how many designs each app has sent, and the latest 100 of
 /// one app's (any app's without `app`), drafts included.
 pub async fn apps(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<AppQuery>) -> Response {
     let (_, pool) = match admin(&state, &headers).await {

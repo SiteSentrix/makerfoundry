@@ -147,6 +147,15 @@ Nobody may resell or share the files themselves.
 | MF-61 | 3D printing on the home page | the lead, the page description and a fourth card name 3D-print models (STL, 3MF, OBJ, STEP, in a viewer you can turn); while MakerFoundry 3D is off the card says the models open soon. The cards sit one, two or four to a row. **Done** (2026-10-31) |
 | MF-62 | The home page leads with founding creators | before the launch, an invitation to become one of the first 100 founding creators (the badge, early access to MakerFoundry 3D, the spots left) with a button to `/founding`, in place of "Coming soon"; after the launch, a third button beside Browse and Share while spots are left. **Done** (2026-10-31) |
 | MF-63 | Facebook link in the footer | every page's footer links to facebook.com/makerfoundryapp beside Terms, Privacy, Seller Terms and Copyright. **Done** (2026-10-31) |
+| MF-90 | YouTube and Buy Me a Coffee in the footer | every page's footer also links to youtube.com/@MakerFoundryApp and buymeacoffee.com/bwattendorf (the owner's, 2026-11-01): plain links, nothing loaded from either site. **Done** (2026-11-01) |
+| MF-92 | Picks of the week and galleries on the home page | the owner's request (2026-11-01). Each week (Monday, UTC) one design per craft (embroidery, laser, 3D printing while MakerFoundry 3D is open): an admin picks it with a button on the design's page, or else the week's most liked and made design of that craft (then most downloaded, then newest) is kept for the week when the home page first shows it (`mf_picks`, migration 0045). The home page shows the picks, then the newest designs, a gallery of what people made (their make photos) and the most downloaded; a pick's page says so; `/picks` keeps the last 26 weeks (in the sitemap). Original wording and layout. **Done** (2026-11-01) |
+| MF-98 | Branded shops | the owner's decision (2026-11-02): each shop that sells through MakerFoundry gets a free branded page from its catalogue's optional `shop.brand` (display name, intro, logo fetched from the hub and drawn again, an accent colour used only where it reads at 4.5:1, a website link) and a short address `<handle>.makerfoundry.app` (first come first served, names reserved; signing in and checking out stay on the main address). No monthly fee: 10% plus the card fee. Migration 0046; the wildcard domain is the owner's one-time step (`docs/deploy.md`); Seller Terms wording drafted in `docs/legal/shops-draft.md` for approval. **Built** (2026-11-02) |
+| MF-91 | Admins delete an account's data | `/admin/accounts` (issue #55): an admin looks up an account by number (its email and designs) and, typing the number to confirm, deletes its data with the same code as the person's own delete (files in storage too, amounts kept), recorded in the moderation log; admins' accounts are refused. For deletion requests by email and test accounts nobody can sign into. **Done** (2026-11-01) |
+| MF-93 | Lower-detail previews of paid designs | someone who hasn't bought a paid design can't rebuild its file from its page (audit, 2026-11-01; the owner's decision: lower-detail previews). **Done** (2026-11-01): a paid embroidery or laser design's page shows people who may not download it (everyone but its buyers, its maker and the admins) a PNG drawn on the server from the preview (`coarse.rs`, `/d/<id>/preview.png`: at most 560 px across and 4 px a millimetre, so stitches run together), never the preview SVG with every stitch or point; a paid 3D model's viewer mesh (`/3d/<id>/files/<f>/mesh`) is, for them, the mesh with every corner moved to the middle of a 40-cell grid and at most 4,000 triangles (`viewer::coarse`), sent `private`. Free designs, buyers, makers and admins unchanged. The other places were checked: link previews use photos and the model's picture, the API and JSON give no geometry, collections and browsing show photos |
+| MF-94 | A purchase stays the buyer's | a seller who makes a sold design free or unpublishes it doesn't take it from its buyers (audit, 2026-11-01). **Done** (2026-11-01): `listings::access` counts a paid order whatever the design costs now and whether or not it's published; only a takedown (`removed`, the DMCA process) or a refund ends a buyer's download |
+| MF-95 | Nobody pays for a deleted design | deleting a design (or an account's data) first closes the checkouts that could still pay for it (audit, 2026-11-01). **Done** (2026-11-01): `selling::close_checkouts` asks Stripe about each unpaid checkout of the design from the last 30 days: an open one is expired at Stripe (`/v1/checkout/sessions/<id>/expire`) and its order marked expired; while one is paid but not yet confirmed here (or a bank debit is on its way), or Stripe can't be reached, the deletion waits and the maker is told why. The person's own data deletion and an admin's do the same for every design they would delete |
+| MF-96 | Copies of messages to shops are not kept for ever | the outbox's copies of messages to shops (each with the customer's name, address and note) go when the order's art does (audit, 2026-11-01). **Done** (2026-11-01): the shop-order sweep (`after::forget_messages`) deletes messages the hub took or refused for good once their order has been done with (shipped, collected, cancelled, refunded, expired, abandoned) for 30 days, and blanks the contents of the last one of each conversation, which stays for its number. Blanking them when a person deletes their data is PR #63's |
+| MF-97 | A message from a shop that couldn't be applied comes again | the StitchHub client keeps its cursor before a message it didn't acknowledge (StitchHub's PR #45: the hub's `next` passes messages handed out but not acknowledged). **Done** (2026-11-01): `hub::sync` saves the hub's `next` only when every message of the page was taken (applied, held for an earlier one, or unreadable); otherwise it fetches again from the cursor before the page, and the messages it took are acknowledged and don't come again. The stand-in hub now keeps a cursor as StitchHub does |
 | MF-54 | Founding creators | MakerFoundry's first 100 creators, with a numbered badge. **Built 2026-10-30** (the owner's decisions: 100 spots, makers apply and an admin approves, a numbered badge): `/founding` explains it and shows the spots left (it works before the launch, with a link preview, for the Facebook post); signed-in makers apply (the name to know them by, an optional link to their work, what they make), one application an account; admins approve or decline at `/admin/founding`, approving giving the lowest free number up to 100 (never more, approvals one at a time); "Founding creator #7" on their maker page, their designs' pages and their account page; removing a badge frees its number; applications in the data download and deleted with the data (`founding.rs`). Early access to MakerFoundry 3D comes with the 3D hub (#22) |
 
 ## The 3D printing hub (MF-35 onwards, planned 2026-10-30)
@@ -407,21 +416,137 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   decide whether MakerFoundry wants points at all, what (if anything) they're exchanged for and
   the budget; then set `MF_POINTS=yes`.
 
-## ScreenFoundry (MF-67, 2026-10-31)
-- **MF-67 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
-  button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`, off until the owner says
-  ScreenFoundry's web app opens links), linking to
-  `https://stitchwright.github.io/screenfoundry/?open=<the file's address>`; paid designs through
+## Ordering from shops (MF-80 to MF-86, issues #1 and #2)
+(Numbered MF-80 to MF-86 on 2026-10-31; their commits say MF-60 to MF-66, which clashed with
+numbers used on `main` for the mark, the home page and the footer.)
+The owner's decisions of 2026-10-31: customers order physical goods from shops through
+MakerFoundry, live (no demo); MakerFoundry takes the payment and keeps 10%; the shop pays the card
+fee; orders travel through StitchHub (`docs/stitchshop-ordering-audit.md`). Built switched off
+until `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set, against a stand-in hub, on the message
+format proposed in `docs/shop-orders-contract.md` (StitchHub owns it: stitchhub#19 and #34;
+StitchShop's side is stitchbench#74).
+- **MF-80 the messages, built 2026-10-31**: `src/shop_orders/contract.rs` reads and writes every
+  message type, checking each field against a limit (shops' messages are untrusted); 7 valid and 25
+  invalid fixtures in `docs/contract/shop-orders/`, each invalid one refused for its own reason;
+  property tests with random and damaged messages.
+- **MF-81 the StitchHub client, built 2026-10-31** (`src/shop_orders/hub.rs`, tables in
+  `0038_stitchhub.sql`): the `/v2/hello` handshake every round (too old: sending stops, flagged
+  for the admins; deprecations logged once a day); the outbox, saved in the same transaction as the
+  change it reports, sent in order, tried again with growing waits (up to an hour) when the hub is
+  down, a refusal final, a message that expires unsent reported as undelivered; inbound messages
+  checked, applied once (by id) and in order (by `seq` per order and sender, later ones held for
+  the earlier, a gap over 24 hours logged), then acknowledged; unreadable ones acknowledged and
+  logged by id only. Tested against a stand-in hub (`tests/stitchhub.rs`): down, sends failing,
+  refusals, too old, expiry, out-of-order and repeated messages; removing the ordering or the
+  de-duplication fails them. Not run by the sweep until MF-82.
+- **MF-82 shop catalogues and pages, built 2026-10-31**: the sweep talks to the hub every minute
+  (when `MF_STITCHHUB_URL` and `MF_STITCHHUB_KEY` are set); each shop's `catalog` is kept as it
+  came, checked; `/shops` lists the shops that can be paid (`selling::can_sell` on the shop's
+  Foundry Account) and `/shops/<handle>` shows their products: colours, sizes, methods and
+  placements, price breaks, set-up and shipping. A shop's text is escaped like everyone's.
+  `message.expired` now comes from the `hub` party (fixture updated).
+- **MF-83 ordering and checkout, built 2026-10-31** (`src/shop_orders/orders.rs`, tables in
+  `migrations/0040_shop_orders.sql`): `/shops/<handle>/order/<sku>` (signed in) takes a colour,
+  quantities by size, a decoration and placement, the art (an embroidery file for embroidery, a
+  PNG or JPEG for printing; 10 MB, read with the same limits as uploads), a name, pick-up or a
+  shipping address and the rights checkbox. The price comes from the shop's catalogue only (the
+  price break for the whole order, set-up once, flat shipping); MakerFoundry's 10% and the card
+  fee (2.9% + 30¢) are each rounded to the cent and the shop gets the rest. `/shop-orders/<ref>`
+  shows the order; paying is Stripe Checkout with the 10% and the card fee as the application fee,
+  the rest to the shop's Stripe account (a second click reuses the open session). Once the
+  verified webhook or the return from Checkout shows a paid session labelled with this order, its
+  amount and currency, the order is paid, three `mf_shop_ledger` rows are written and
+  `order.placed` is queued for the shop, in one transaction, once. (The art goes through the hub
+  since #53, below.) (Sales tax:
+  MF-86.)
+- **MF-84 after payment, built 2026-10-31** (`src/shop_orders/after.rs`, tables in
+  `migrations/0041_shop_order_updates.sql`): the shop's `order.status` (with its note and
+  tracking), `proof.sent` (the mock-up fetched from its signed link, checked by size and SHA-256,
+  re-drawn and kept; shown only to the customer) and `order.cancel` are applied to the order when
+  it's that shop's; anything else is logged by id and left. The customer approves the latest proof
+  or asks for changes (with a note), or cancels before production; each sends its message in the
+  same transaction. Refunds, as for designs: the payment back with the transfer reversed, then the
+  10% back to the shop (the shop is out only the card fee), each recorded once in
+  `mf_shop_ledger`; due when either side cancels before production or the hub gives up on
+  `order.placed` (`message.expired`); after production a shop's cancel refunds nothing (Seller
+  Terms). The minute sweep retries due refunds, gives up unpaid orders after 2 days (checkout
+  closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
+  lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
+  keeps the amounts.
+- **MF-85 shipping by the piece, built 2026-10-31** (the owner's decision): the catalogue's
+  `shipping` may add `per_extra_piece_cents` and `free_over_cents` (both optional, so v1
+  catalogues still read), and `shop.address` gives the pick-up address for sales tax. The form
+  and the shop's page say the shipping in words.
+- **MF-86 sales tax on orders from shops, built 2026-10-31** (the owner's decision: Stripe Tax,
+  MakerFoundry collecting as the marketplace; `src/shop_orders/tax.rs`,
+  `migrations/0042_shop_order_tax.sql`): on with `MF_STRIPE_TAX`, like designs. The tax is worked
+  out before checkout (Stripe Tax calculations, under `MF_SHOP_TAX_CODE`, default
+  `txcd_30011000` Clothing & Footwear) from the ship-to address, or the shop's for pick-up (a shop
+  without one can only ship), and shown on the order. It's paid to MakerFoundry inside the
+  application fee and is outside the shop's share (10% of the price before tax, the card fee of
+  all that's paid; a `tax` ledger row). Once paid it's recorded as a Stripe tax transaction; a
+  refund reverses it, takes the price back from the shop and gives the shop the 10% and the tax
+  it paid over, so the shop is still out only the card fee. Confirm the tax code and
+  registrations with an accountant before the first registration.
+- **StitchHub's form, built 2026-11-01** (issue #53; StitchHub's message of 2026-11-01): the
+  client now speaks the form StitchHub implements. `Authorization: Bearer svk_…` and `X-Client`;
+  `GET` then `POST /v2/hello` with the types read (again on `409 hello_first`); `GET /v2/shops`,
+  a shop offered only while `ready` (`mf_shops.hub_ready`, `0039_shops.sql`); the envelope's
+  `conversation` (`catalog` for catalogues) in place of `order`, `from` left to the hub,
+  `created_at` stamped again after a wait; `order.placed` signed with Ed25519
+  (`src/shop_orders/sign.rs`, `MF_STITCHHUB_SIGNING_KEY`), with `fulfilment` and no `art_urls`;
+  the art put in the hub first (`/v2/files/put`, PUT, `/v2/files/done`; `mf_hub_files`) and
+  MakerFoundry's own art address removed; mock-ups fetched with `/v2/files/get`; `202`
+  duplicates, `id_reused` counted as delivered, `seq_taken` final; the inbox polled until empty;
+  `message.expired` with `conversation` and `reason`; an `order.placed` the hub refuses is
+  refunded like an expired one; email addresses and phone numbers refused in the order's name and
+  note. Fixtures converted (7 valid, 34 invalid); `docs/shop-orders-contract.md` rewritten.
+- **Fixes from the code review, 2026-11-01** (`migrations/0044_shop_order_review.sql`), before
+  ordering opens:
+  - a shop is offered only once the Foundry Account its catalogue names has confirmed the shop on
+    its account page (a catalogue naming another account resets it);
+  - a shop's status never takes an order back (except between proofs), and doesn't overwrite a
+    cancel that came in meanwhile;
+  - a held message is taken out of the held ones only once applied, and retried each round;
+  - a payment its order can't take (deleted, paid through another checkout, another amount) is
+    recorded and refunded in full by the sweep; no second checkout is made while Stripe can't say
+    whether the first is still open;
+  - deleting your data waits while an order from a shop is in progress, and blanks the hub's copies
+    of finished orders' messages; an erased order still loads;
+  - refunds that keep failing don't hold up the rest; seqs are taken one at a time per
+    conversation; the sweep runs every minute whether or not StitchHub is on.
+- **A test deploy's own name on the hub, built 2026-11-01** (StitchHub's request): the name
+  MakerFoundry signs, sends and takes as comes from `MF_STITCHHUB_SERVICE` (default
+  `service:makerfoundry`), so the test deploy, with its own hub key, is
+  `service:makerfoundry-test` and never shares production's queue (`tests/stitchhub_service.rs`).
+
+
+## ScreenFoundry (MF-87, 2026-10-31)
+(Numbered MF-87 and MF-88 on 2026-10-31; their commits, and the comment in
+`migrations/0043_design_app.sql`, say MF-67 and MF-68, which clashed with numbers used on `main`.
+A migration that has run in production is never edited, not even its comments: sqlx checks each
+one's checksum when it starts.)
+- **MF-87 Open in ScreenFoundry, built 2026-10-31**: SVG designs get an **Open in ScreenFoundry**
+  button (behind `SCREENFOUNDRY_OPENS_LINKS` in `src/api.rs`; **on since 2026-11-01**, when
+  ScreenFoundry's web app at app.screenfoundry.app opened links, screenfoundry#28), linking to
+  `https://app.screenfoundry.app/?open=<the file's address>`; paid designs through
   `/d/<id>/open?app=screenfoundry`. A design's file name in its links and download is its title's
   slug or `design-<id>`, so every address meets ScreenFoundry's rules (`docs/api.md`, tested with
   random titles). A draft from an app is titled after its file. Several Open in buttons share one
   row. Proposed, not built: a "screen printing" kind for films (see the ScreenFoundry note in
   `docs/api.md`).
-- **MF-68 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
+- **MF-88 the app a design came from, built 2026-10-31** (the owner's decision): a design sent
   through the API keeps the app's name without its version (`mf_designs.from_app`,
   `migrations/0043_design_app.sql`); admins see how many each app sent and list them at
   `/admin/apps` (linked from the overview); it's in the maker's data download. Uploads on the site
   have none.
+
+## PatternFoundry (MF-89, 2026-11-01)
+- **MF-89 Open in PatternFoundry, built 2026-11-01** (issue #47's third item): SVG designs get an
+  **Open in PatternFoundry** button linking to
+  `https://sitesentrix.github.io/patternfoundry/?open=<the file's address>` (`PATTERNFOUNDRY_OPENS_LINKS`,
+  on: its live web app opened a served SVG in Chromium). The web apps' switches are one `Switches`
+  value in `src/api.rs`. Still open on #47: the sewing-pattern kind.
 
 ## Open decisions (the owner's)
 - ~~**The platform fee**~~: **decided 2026-10-19: 10% of each sale, the card fee (2.9% + 30¢)
@@ -436,7 +561,7 @@ Progress (test-first, from `docs/3d-hub-test-plan.md`):
   (owner, 2026-10-22)**: Seller Terms § 5 says paid sales aren't open yet until this is decided.
   **The code is ready (MF-24, 2026-10-27)**: Stripe Tax on checkout, switched on with
   `MF_STRIPE_TAX=yes` once the owner has registered and updated Seller Terms § 5.
-- **DMCA designated agent**: register SiteSentrix with the US Copyright Office (a small online
-  fee) before the public launch, for safe-harbour protection.
+- ~~**DMCA designated agent**~~: **registered 2026-11-01** with the US Copyright Office
+  (DMCA-1084865, renew before November 2029); shown on `/dmca` from `MF_DMCA_AGENT`.
 - ~~**Accounts**~~: **decided 2026-10-19: the StitchFoundry cloud accounts** (see "Accounts (MF-1)").
 - **Domain**: makerfoundry.app (and patternfoundry.app held for the sewing-pattern app).

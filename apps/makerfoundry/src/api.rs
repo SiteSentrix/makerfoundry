@@ -36,32 +36,60 @@ pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/
 /// LaserFoundry v0.2.0 was live and opened a MakerFoundry address in a real browser.
 pub const LASERFOUNDRY_OPENS_LINKS: bool = true;
 
-/// ScreenFoundry's web app (screen-printing prepress, MF-67), which opens SVG designs the same way
-/// once it reads `?open=`.
-pub const SCREENFOUNDRY_WEB: &str = "https://stitchwright.github.io/screenfoundry/";
-/// Whether ScreenFoundry's web app opens a design from an address yet: until the owner says it
-/// does, SVG designs show no Open in ScreenFoundry button.
-pub const SCREENFOUNDRY_OPENS_LINKS: bool = false;
+/// ScreenFoundry's web app (screen-printing prepress, MF-87), which opens SVG designs from
+/// `?open=` the same way.
+pub const SCREENFOUNDRY_WEB: &str = "https://app.screenfoundry.app/";
+/// Whether ScreenFoundry's web app opens a design from an address: on since 2026-11-01, when its
+/// web app at app.screenfoundry.app (screenfoundry#28) read `?open=`, fetched makerfoundry.app (its
+/// site allowed in `MF_API_ORIGINS`) and showed MakerFoundry's own sentence for one that isn't there.
+pub const SCREENFOUNDRY_OPENS_LINKS: bool = true;
+
+/// PatternFoundry's web app (sewing patterns, SiteSentrix; MF-89, issue #47), which opens SVG
+/// designs from `?open=` the same way. Until MakerFoundry has a sewing-pattern kind, patterns come
+/// as SVG vector designs.
+pub const PATTERNFOUNDRY_WEB: &str = "https://sitesentrix.github.io/patternfoundry/";
+/// Whether PatternFoundry's web app opens a design from an address: on since 2026-11-01, when its
+/// live web app read `?open=`, fetched makerfoundry.app (its site allowed in `MF_API_ORIGINS`),
+/// opened a served SVG and showed MakerFoundry's own sentence for one that isn't there.
+pub const PATTERNFOUNDRY_OPENS_LINKS: bool = true;
+
+/// Which web apps open links yet (the switches above).
+#[derive(Clone, Copy, Debug)]
+pub struct Switches {
+    pub laser: bool,
+    pub screen: bool,
+    pub pattern: bool,
+}
+
+/// The switches as they are.
+pub const SWITCHES: Switches = Switches {
+    laser: LASERFOUNDRY_OPENS_LINKS,
+    screen: SCREENFOUNDRY_OPENS_LINKS,
+    pattern: PATTERNFOUNDRY_OPENS_LINKS,
+};
 
 /// The web apps that open design `d`, by its kind and format: (address, name), in the order their
 /// buttons show. Embroidery opens in StitchFoundry; an SVG or DXF laser design in LaserFoundry, and
-/// an SVG one in ScreenFoundry, each once its web app opens links.
+/// an SVG one in ScreenFoundry and PatternFoundry, each once its web app opens links.
 pub fn web_apps(d: &designs::DesignRow) -> Vec<(&'static str, &'static str)> {
     let format = d.facts.get("format").and_then(serde_json::Value::as_str);
-    apps_for(&d.kind, format, LASERFOUNDRY_OPENS_LINKS, SCREENFOUNDRY_OPENS_LINKS)
+    apps_for(&d.kind, format, SWITCHES)
 }
 
 /// `web_apps`, with the switches given (for tests).
-pub fn apps_for(kind: &str, format: Option<&str>, laser: bool, screen: bool) -> Vec<(&'static str, &'static str)> {
+pub fn apps_for(kind: &str, format: Option<&str>, on: Switches) -> Vec<(&'static str, &'static str)> {
     let mut apps = Vec::new();
     match kind {
         "embroidery" => apps.push((STITCHFOUNDRY_WEB, "StitchFoundry")),
         "laser" => {
-            if laser && matches!(format, Some("SVG" | "DXF")) {
+            if on.laser && matches!(format, Some("SVG" | "DXF")) {
                 apps.push((LASERFOUNDRY_WEB, "LaserFoundry"));
             }
-            if screen && format == Some("SVG") {
+            if on.screen && format == Some("SVG") {
                 apps.push((SCREENFOUNDRY_WEB, "ScreenFoundry"));
+            }
+            if on.pattern && format == Some("SVG") {
+                apps.push((PATTERNFOUNDRY_WEB, "PatternFoundry"));
             }
         }
         _ => {}
@@ -82,7 +110,11 @@ pub fn name_of(title: &str, file: &str, format: Option<&str>, id: i64) -> String
     let stem = crate::listings::slug(title);
     let stem = if stem.is_empty() { format!("design-{id}") } else { stem };
     let ext: String = file.rsplit_once('.').map(|(_, e)| e).unwrap_or("").to_ascii_lowercase();
-    let ext = if !ext.is_empty() && ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    // a laser file's ending is its format's, whatever its file was called: an SVG read from
+    // `logo.xml` still goes out as `.svg`, which is all ScreenFoundry and LaserFoundry take
+    let ext = if let Some(f @ ("SVG" | "DXF" | "PDF")) = format {
+        f.to_ascii_lowercase()
+    } else if !ext.is_empty() && ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
         ext
     } else {
         format
@@ -450,7 +482,7 @@ async fn answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Response 
     match designs::add(state, pool, account.id, &file_name, bytes, photos).await {
         Ok(id) => {
             // a draft from an app is named after its file, so it's never left without a title, and
-            // keeps the app's name (MF-68), for finding designs by the app that made them
+            // keeps the app's name (MF-88), for finding designs by the app that made them
             let _ = sqlx::query(
                 "UPDATE mf_designs SET title = CASE WHEN title = '' THEN $2 ELSE title END, from_app = $3 WHERE id = $1",
             )
@@ -554,8 +586,32 @@ mod tests {
     #[test]
     fn each_web_app_opens_only_what_it_reads() {
         let names = |kind, format, laser, screen| -> Vec<&str> {
-            apps_for(kind, format, laser, screen).iter().map(|(_, n)| *n).collect()
+            let on = Switches {
+                laser,
+                screen,
+                pattern: false,
+            };
+            apps_for(kind, format, on).iter().map(|(_, n)| *n).collect()
         };
+        // PatternFoundry: SVG only, after the others
+        let all = Switches {
+            laser: true,
+            screen: true,
+            pattern: true,
+        };
+        let with_pattern: Vec<&str> = apps_for("laser", Some("SVG"), all).iter().map(|(_, n)| *n).collect();
+        assert_eq!(with_pattern, ["LaserFoundry", "ScreenFoundry", "PatternFoundry"]);
+        for (kind, format) in [
+            ("laser", Some("DXF")),
+            ("laser", Some("PDF")),
+            ("embroidery", Some("PES")),
+            ("model3d", Some("STL")),
+        ] {
+            assert!(
+                !apps_for(kind, format, all).iter().any(|(_, n)| *n == "PatternFoundry"),
+                "{kind} {format:?}"
+            );
+        }
         assert_eq!(names("embroidery", Some("PES"), true, true), ["StitchFoundry"]);
         assert_eq!(
             names("laser", Some("SVG"), true, true),
@@ -710,16 +766,29 @@ mod tests {
                 let name = name_of(title, file, format, 42);
                 for token in [None, Some("0123456789abcdef0123456789abcdef0123456789abcdef")] {
                     let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 42, &name, token);
-                    assert!(link.starts_with("https://stitchwright.github.io/screenfoundry/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
+                    assert!(link.starts_with("https://app.screenfoundry.app/?open=https%3A%2F%2Fmakerfoundry.app%2Fapi%2Fv1%2Fdesigns%2F42%2Ffile%2F"));
                     let address = opened(&link);
                     assert_eq!(screenfoundry_refuses(&address), None, "{title:?} {file} → {address}");
                 }
                 assert!(name.ends_with(".svg"), "{title:?} {file} → {name}");
+                // ScreenFoundry's own rule (2026-11-01): only a-z, 0-9 and "-", then ".svg"
+                let stem = name.strip_suffix(".svg").unwrap_or("");
+                assert!(
+                    !stem.is_empty()
+                        && stem
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                    "{title:?} {file} → {name}"
+                );
             }
         }
         assert_eq!(name_of("", "box.svg", Some("SVG"), 42), "design-42.svg");
         assert_eq!(name_of("日本", "box.svg", Some("SVG"), 7), "design-7.svg");
         assert_eq!(name_of("Rose & Fern", "x.svg", Some("SVG"), 1), "rose-fern.svg");
+        // an SVG uploaded under another ending still ends in .svg (ScreenFoundry takes only that)
+        assert_eq!(name_of("Logo", "logo.xml", Some("SVG"), 3), "logo.svg");
+        assert_eq!(name_of("Logo", "LOGO.SVG", Some("SVG"), 3), "logo.svg");
+        assert_eq!(name_of("Box", "box.txt", Some("DXF"), 3), "box.dxf");
     }
 
     proptest::proptest! {
@@ -729,6 +798,8 @@ mod tests {
             let link = open_link(SCREENFOUNDRY_WEB, "https://makerfoundry.app", 9, &name, None);
             proptest::prop_assert_eq!(screenfoundry_refuses(&opened(&link)), None);
             proptest::prop_assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'));
+            let stem = name.strip_suffix(".svg").unwrap_or("");
+            proptest::prop_assert!(!stem.is_empty() && !stem.contains('.'), "{}", name);
         }
     }
 

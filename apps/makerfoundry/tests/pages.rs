@@ -32,6 +32,7 @@ fn app() -> axum::Router {
         step: None,
         scad: None,
         points: false,
+        stitchhub: None,
     })
 }
 

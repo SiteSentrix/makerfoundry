@@ -128,6 +128,22 @@ rows); a refund gives the buyer everything back, the tax too, taking the price b
 seller first. Stripe records the tax for its reports; filing it with the states is the owner's
 (or Stripe's filing add-on).
 
+## Shops' short addresses (`<shop>.makerfoundry.app`)
+Branded shops (2026-11-02) answer at `<handle>.makerfoundry.app` once, and only once, the wildcard
+domain is set up; until then their pages are at `makerfoundry.app/shops/<id>` as before. The
+owner's steps, once:
+1. Railway › MakerFoundry › production › makerfoundry › Settings › Networking › Custom domain:
+   add `*.makerfoundry.app` (port 8080, as the main domain).
+2. Railway shows the DNS records it needs: put them in Cloudflare › makerfoundry.app › DNS exactly
+   as shown (a `CNAME` for `*`, and the `_acme-challenge` record it asks for so it can issue the
+   wildcard certificate), with the proxy **off** (grey cloud), as for the main domain.
+3. Wait for Railway to show the domain as verified, then open a shop's short address.
+
+The service needs nothing else: it answers any `<label>.makerfoundry.app` from `MF_PUBLIC_URL`'s
+host, sends `www.` and every other path to the main address (signing in and checking out stay on
+`makerfoundry.app`), and says "not found" for an address no shop has. The sign-in cookie is a
+`__Host-` cookie, so it's never sent to a shop's address.
+
 ## Settings the service reads
 | Variable | Needed | What |
 |---|---|---|
@@ -136,7 +152,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | to keep designs | Cloudflare R2: the account's id, an API token's keys (Object Read & Write on the bucket only), and the bucket (`makerfoundry-files`). Without them designs can be previewed but not kept |
 | `MF_ADMINS` | for the report queue | account ids apart by commas: who sees `/admin` and can take designs down |
 | `MF_DMCA_AGENT` | before launch | the designated agent registered with the US Copyright Office, as shown on `/dmca`: lines apart by `|` (name, address, email, phone) |
-| `MF_API_ORIGINS` | no (default `https://stitchfoundry.app`) | the web apps' sites that may call the apps' API from a browser (`docs/api.md`), apart by commas |
+| `MF_API_ORIGINS` | no (default `https://stitchfoundry.app,https://stitchwright.github.io`) | the web apps' sites that may call the apps' API from a browser (`docs/api.md`), apart by commas |
 | `MF_LAUNCHED` | at the launch | `yes` opens MakerFoundry to everyone (`docs/launch.md`), but only once the legal pages have none of the owner's markers left; until then the log says what's left |
 | `MF_PUBLISHERS` | no (nobody; everyone once launched) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
 | `STRIPE_SECRET_KEY` | to sell | MakerFoundry's restricted key in StitchFoundry's Stripe account (`rk_test_…` until launch; see "Stripe" above). Without it every design is free |
@@ -144,6 +160,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
 | `MF_STRIPE_TAX` | no (off) | `yes` charges sales tax with Stripe Tax (MF-24, "Sales tax" below) |
 | `MF_TAX_CODE` | no (`txcd_10505001`) | the Stripe tax code designs are sold under: Digital Finished Artwork, downloaded, with permanent rights |
+| `MF_SHOP_TAX_CODE` | no (`txcd_30011000`) | the Stripe tax code goods ordered from shops are sold under (MF-86): Clothing & Footwear |
 | `MF_PROOF_KEY` | for approval links | the key proofs' customer links are made with (MF-25): 64 hex digits, `openssl rand -hex 32`. A secret: whoever has it can open any proof. Without it there are no proofs. A new key ends every customer link (shops then send their links again) |
 | `MF_PROOFS` | no (admins only) | `yes` lets every account send proofs (their wording is in the Terms § 9 and the Privacy Policy since 2026-10-30) |
 | `MF_THINGIVERSE_CLIENT_ID`, `MF_THINGIVERSE_CLIENT_SECRET` | no (off) | a Thingiverse app's id and secret (registered by the owner at thingiverse.com/developers, its callback `https://makerfoundry.app/3d/import/thingiverse/back`): lets creators bring in their own Thingiverse things. The secret is a secret |
@@ -152,6 +169,7 @@ seller first. Stripe records the tax for its reports; filing it with the states 
 | `MF_STEP_CONVERTER` (and `MF_STEP_CONVERTER_KEY`) | no (STEP files have no preview) | The address of a STEP-to-STL converter service (a separate program, e.g. one built on OpenCASCADE, never linked into ours), answering `POST /convert` with a binary STL (contract in `src/model3d/step.rs`): STEP files then get pictures and a 3D view. The key, if set, is sent as a bearer token and is a secret |
 | `MF_SCAD_SERVICE` (and `MF_SCAD_SERVICE_KEY`) | no (no customizing) | The address of a sandboxed OpenSCAD render service (its own Railway service: OpenSCAD is GPL and runs there as a separate program, with time, memory and output caps and no network), answering `POST /render` with a binary STL (contract in `src/model3d/scad.rs`): free models' `.scad` files then get a Customize page. The key, if set, is sent as a bearer token and is a secret |
 | `MF_POINTS` | no (no points) | `yes` shows members' points (Account › Your points, maker profiles); there are no rewards until the owner decides on them |
+| `MF_STITCHHUB_URL`, `MF_STITCHHUB_KEY`, `MF_STITCHHUB_SIGNING_KEY` | no (no ordering from shops) | StitchHub's address, the service key its admin issues to MakerFoundry (`svk_…`), and MakerFoundry's Ed25519 key for signing orders (base64 PKCS#8 DER): customers can then order from shops that opted in (`docs/shop-orders-contract.md`); MakerFoundry talks to the hub every minute. Make the signing key on your own computer with `openssl genpkey -algorithm ed25519 -outform DER \| base64` and paste it into Railway only; its public half, for the hub admin to register, is in the deploy log ("stitchhub: on; MakerFoundry's public signing key: …"), or `openssl pkey -inform DER -pubout -outform DER \| base64` on the decoded key. Without a valid signing key ordering stays off and the log says why. `MF_STITCHHUB_SERVICE` (optional) is the name this deploy goes by on the hub, default `service:makerfoundry`; a test deploy with its own hub key sets it to that key's name (e.g. `service:makerfoundry-test`), so what it signs, sends and takes is in that name. Needs Stripe too: a shop is offered only once its Foundry Account can be paid and the hub lists it as ready. Both keys are secrets |
 | `MF_CLAMAV` | no (not scanned) | `host:port` of a ClamAV daemon (`clamd`, e.g. a Railway service on the private network): every 3D upload's files and images are scanned before they're kept; a flagged one is refused, and uploads are paused while the scanner can't be reached. Its `StreamMaxLength` must be at least 100M |
 | `MF_3D` | no (admins only) | `yes` opens MakerFoundry 3D (`/3d`, MF-35 onwards) to everyone, after its launch checks (MF-59) |
 | `MF_PUBLIC_URL` | no (default `https://makerfoundry.app`) | the site's address, for the links Stripe sends people back to and the sitemap |

@@ -140,6 +140,55 @@ async fn main() -> ExitCode {
         (true, None) => makerfoundry::listings::Publishers::Everyone,
         (_, setting) => makerfoundry::listings::Publishers::from_setting(setting.as_deref()),
     };
+    // ordering from shops (#1, #2, #53): on only with the hub's address, MakerFoundry's service key
+    // and its signing key; a missing or bad signing key keeps it off (the rest of the site runs).
+    // The name it goes by on the hub: `MF_STITCHHUB_SERVICE` (a test deploy's own), else
+    // service:makerfoundry; a bad one keeps ordering off.
+    let service_ok = match std::env::var("MF_STITCHHUB_SERVICE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
+        None => true,
+        Some(name) => match makerfoundry::shop_orders::contract::set_me(name.trim()) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("stitchhub: {e}: ordering from shops stays off");
+                false
+            }
+        },
+    };
+    let stitchhub = match makerfoundry::shop_orders::hub::Hub::new(
+        &std::env::var("MF_STITCHHUB_URL").unwrap_or_default(),
+        &std::env::var("MF_STITCHHUB_KEY").unwrap_or_default(),
+    ) {
+        None => None,
+        Some(_) if !service_ok => None,
+        Some(hub) => match std::env::var("MF_STITCHHUB_SIGNING_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+        {
+            None => {
+                eprintln!("stitchhub: MF_STITCHHUB_SIGNING_KEY isn't set: ordering from shops stays off");
+                None
+            }
+            Some(key) => match makerfoundry::shop_orders::sign::Signer::from_base64(&key) {
+                Ok(signer) => {
+                    let hub = hub.with_signer(signer);
+                    // (the public half, for the hub admin to register: not a secret)
+                    eprintln!(
+                        "stitchhub: on as {}; MakerFoundry's public signing key: {}",
+                        makerfoundry::shop_orders::contract::me(),
+                        hub.public_key().unwrap_or_default()
+                    );
+                    Some(hub)
+                }
+                Err(e) => {
+                    eprintln!("stitchhub: {e}: ordering from shops stays off");
+                    None
+                }
+            },
+        },
+    };
     let public_url = std::env::var("MF_PUBLIC_URL")
         .map(|u| u.trim_end_matches('/').to_string())
         .unwrap_or_else(|_| "https://makerfoundry.app".to_string());
@@ -185,11 +234,41 @@ async fn main() -> ExitCode {
         scad: std::env::var("MF_SCAD_SERVICE").ok().and_then(|u| {
             makerfoundry::model3d::scad::Renderer::new(&u, std::env::var("MF_SCAD_SERVICE_KEY").ok().as_deref())
         }),
+        stitchhub,
         points: std::env::var("MF_POINTS").is_ok_and(|v| v.trim() == "yes"),
         scanner: std::env::var("MF_CLAMAV")
             .ok()
             .and_then(|a| makerfoundry::scan::Scanner::new(&a)),
     };
+    // every minute: one round with StitchHub, when it's switched on (MF-81)
+    if state.stitchhub.is_some() {
+        let hub_state = state.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                every.tick().await;
+                if let Err(e) = makerfoundry::shop_orders::sync(&hub_state).await {
+                    eprintln!("stitchhub: {e}");
+                }
+            }
+        });
+    }
+    // every minute, whether or not StitchHub is on, and never held up by it: orders from shops'
+    // refunds due, stray payments, sales tax, unpaid orders and old files (MF-84)
+    if state.db.is_some() {
+        let sweep_state = state.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                every.tick().await;
+                if let Err(e) = makerfoundry::shop_orders::after::sweep(&sweep_state).await {
+                    eprintln!("shop orders: {e}");
+                }
+            }
+        });
+    }
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)
     let (sweep_limits, sweep_db, sweep_stripe, sweep_storage, sweep_notices, sweep_url) = (

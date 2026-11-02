@@ -1390,6 +1390,7 @@ dependencies = [
  "lopdf",
  "proptest",
  "reqwest",
+ "ring",
  "rusty-s3",
  "serde",
  "serde_json",
