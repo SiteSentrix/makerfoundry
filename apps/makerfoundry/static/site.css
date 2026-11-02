@@ -331,3 +331,12 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .admin-table { overflow-x: auto; margin: 0 0 1rem; }
 .admin-table table { border-collapse: collapse; min-width: 36rem; font-size: .92rem; }
 .admin-table th, .admin-table td { text-align: left; padding: .35rem .6rem .35rem 0; border-bottom: 1px solid var(--line); }
+
+/* Picks of the week, and the gallery of what people made */
+.cards .pick { font-size: .8rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--accent); }
+.pick-badge { margin: 0 0 .4rem; font-weight: 700; }
+.pick-badge a { color: var(--accent); }
+.gallery { list-style: none; padding: 0; margin: 1rem 0 2rem; display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); }
+.gallery a { display: grid; gap: .3rem; color: var(--fg); text-decoration: none; font-size: .9rem; overflow-wrap: anywhere; }
+.gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: .6rem; border: 1px solid var(--line); background: var(--card); }
+.gallery a:hover img { border-color: var(--accent); }

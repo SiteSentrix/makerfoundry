@@ -478,6 +478,51 @@ async fn an_old_message_is_restamped_before_it_goes() {
 }
 
 #[tokio::test]
+async fn a_held_message_that_fails_once_is_applied_on_the_next_round_not_lost() {
+    // (code review, 2026-11-01: a held message was taken out of the held ones before it applied)
+    let Some((pool, hub, shared)) = setup().await else {
+        return;
+    };
+    let applied: Applied = Arc::default();
+    let fail_once = Arc::new(Mutex::new(Some(uuid(2))));
+    let apply = {
+        let applied = applied.clone();
+        let fail_once = fail_once.clone();
+        move |env: Envelope, msg: Message| {
+            let applied = applied.clone();
+            let fail_once = fail_once.clone();
+            Box::pin(async move {
+                if fail_once.lock().unwrap().as_deref() == Some(env.id.as_str()) {
+                    *fail_once.lock().unwrap() = None;
+                    return Err("storage is away for a moment".to_string());
+                }
+                applied.lock().unwrap().push((
+                    msg.kind().to_string(),
+                    env.conversation.clone(),
+                    env.seq,
+                    env.id.clone(),
+                ));
+                Ok(())
+            }) as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+        }
+    };
+    // 2 comes first and is held; then 1 applies, and 2 (its turn now) fails once
+    stand_in::deliver(&shared, from_shop(&uuid(2), 2, "approved"));
+    sync(&pool, &hub, &apply).await.unwrap();
+    stand_in::deliver(&shared, from_shop(&uuid(1), 1, "proof_sent"));
+    sync(&pool, &hub, &apply).await.unwrap();
+    let seqs: Vec<u64> = applied.lock().unwrap().iter().map(|a| a.2).collect();
+    assert_eq!(seqs, [1, 2], "applied on the retry in the same round or the next");
+    sync(&pool, &hub, &apply).await.unwrap();
+    assert_eq!(applied.lock().unwrap().len(), 2, "once each");
+    let held: i64 = sqlx::query_scalar("SELECT count(*) FROM mf_hub_held")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(held, 0);
+}
+
+#[tokio::test]
 async fn a_message_that_couldnt_be_applied_comes_again_past_the_cursor() {
     // (the hub's `next` can pass a message handed out and not acknowledged: StitchHub's PR #45)
     let Some((pool, hub, shared)) = setup().await else {

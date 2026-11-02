@@ -426,6 +426,14 @@ pub async fn enqueue(
     days: i64,
     files: &[OutFile],
 ) -> Result<String, String> {
+    // (one at a time per conversation and recipient, so two changes made together can't take
+    // the same seq)
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || ' ' || $2, 0))")
+        .bind(conversation)
+        .bind(to)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
     let seq: i64 = sqlx::query_scalar(
         "SELECT coalesce(max(seq), 0) + 1 FROM mf_hub_outbox WHERE order_ref = $1 AND to_party = $2",
     )
@@ -663,6 +671,11 @@ async fn receive(pool: &PgPool, env: Envelope, msg: Message, apply: Apply<'_>) -
     let seq = i64::try_from(env.seq).unwrap_or(i64::MAX);
     if seq <= last {
         // already applied one with this seq (a repeat under a new id): nothing to do
+        sqlx::query("DELETE FROM mf_hub_held WHERE id = $1")
+            .bind(&env.id)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
         return mark_seen(pool, &env.id).await;
     }
     if seq > last + 1 {
@@ -682,13 +695,19 @@ async fn receive(pool: &PgPool, env: Envelope, msg: Message, apply: Apply<'_>) -
         .map_err(|e| e.to_string())?;
         return Ok(());
     }
-    // the next one: apply it, then any held ones that follow
+    // the next one: apply it, then any held ones that follow (each taken out of the held ones only
+    // once it's applied, so one that fails stays held and is tried again)
     let mut next = Some((env, msg));
     let mut at = seq;
     while let Some((env, msg)) = next.take() {
         let id = env.id.clone();
         apply(env, msg).await?;
         mark_seen(pool, &id).await?;
+        sqlx::query("DELETE FROM mf_hub_held WHERE id = $1")
+            .bind(&id)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
         sqlx::query(
             "INSERT INTO mf_hub_seq (order_ref, from_party, last_seq) VALUES ($1, $2, $3)
              ON CONFLICT (order_ref, from_party) DO UPDATE SET last_seq = $3",
@@ -700,7 +719,7 @@ async fn receive(pool: &PgPool, env: Envelope, msg: Message, apply: Apply<'_>) -
         .await
         .map_err(|e| e.to_string())?;
         let held: Option<Value> = sqlx::query_scalar(
-            "DELETE FROM mf_hub_held WHERE order_ref = $1 AND from_party = $2 AND seq = $3 RETURNING envelope",
+            "SELECT envelope FROM mf_hub_held WHERE order_ref = $1 AND from_party = $2 AND seq = $3 LIMIT 1",
         )
         .bind(&conversation)
         .bind(&from)
@@ -712,6 +731,31 @@ async fn receive(pool: &PgPool, env: Envelope, msg: Message, apply: Apply<'_>) -
             let bytes = serde_json::to_vec(&v).map_err(|e| e.to_string())?;
             next = Some(contract::parse(&bytes)?);
             at += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Held messages whose turn has come (the one before them was applied, but applying them failed
+/// for a moment): tried again, since the hub won't send them again.
+async fn retry_held(pool: &PgPool, apply: Apply<'_>) -> Result<(), String> {
+    let due: Vec<Value> = sqlx::query_scalar(
+        "SELECT h.envelope FROM mf_hub_held h
+         JOIN mf_hub_seq s ON s.order_ref = h.order_ref AND s.from_party = h.from_party
+         WHERE h.seq = s.last_seq + 1
+         ORDER BY h.held_at LIMIT 50",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    for v in due {
+        let bytes = serde_json::to_vec(&v).map_err(|e| e.to_string())?;
+        let Ok((env, msg)) = contract::parse(&bytes) else {
+            continue;
+        };
+        let id = env.id.clone();
+        if let Err(e) = receive(pool, env, msg, apply).await {
+            eprintln!("stitchhub: {id}: {e}");
         }
     }
     Ok(())
@@ -819,6 +863,7 @@ pub async fn sync(
         }
         // (and poll again straight away: the hub releases a conversation one at a time)
     }
+    retry_held(pool, apply).await?;
     let stale: i64 =
         sqlx::query_scalar("SELECT count(*) FROM mf_hub_held WHERE held_at < now() - make_interval(hours => $1::int)")
             .bind(i32::try_from(GAP_HOURS).unwrap_or(24))

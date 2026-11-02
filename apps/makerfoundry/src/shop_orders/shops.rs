@@ -53,7 +53,9 @@ pub async fn keep(pool: &PgPool, from: &str, c: &Catalog) -> Result<(), String> 
         "INSERT INTO mf_shops (party, handle, account_id, name, town, ships, pickup, catalog, shipping_cents)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (party) DO UPDATE SET account_id = $3, name = $4, town = $5, ships = $6, pickup = $7,
-             catalog = $8, shipping_cents = $9, updated_at = now()",
+             catalog = $8, shipping_cents = $9, updated_at = now(),
+             -- (naming another account to be paid needs that account's holder to confirm it again)
+             account_confirmed = mf_shops.account_confirmed AND mf_shops.account_id = $3",
     )
     .bind(from)
     .bind(handle)
@@ -101,16 +103,17 @@ pub async fn refresh(pool: &PgPool, ready: &[String]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Shop `handle`, if it can take orders now: the hub lists it as ready, and its Foundry Account
-/// can be paid.
+/// Shop `handle`, if it can take orders now: the hub lists it as ready, the Foundry Account its
+/// catalogue names has confirmed the shop is theirs, and that account can be paid.
 pub async fn orderable(state: &AppState, pool: &PgPool, handle: &str) -> Option<Shop> {
-    let row: ShopRow =
-        sqlx::query_as("SELECT party, handle, account_id, catalog FROM mf_shops WHERE handle = $1 AND hub_ready")
-            .bind(handle)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()?;
+    let row: ShopRow = sqlx::query_as(
+        "SELECT party, handle, account_id, catalog FROM mf_shops WHERE handle = $1 AND hub_ready AND account_confirmed",
+    )
+    .bind(handle)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
     let shop = shop_of(row)?;
     crate::selling::can_sell(state, pool, shop.account)
         .await
@@ -177,7 +180,7 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
     };
     let signed_in = current_user(&state, &headers).await.is_some();
     let rows: Vec<ShopRow> = sqlx::query_as(
-        "SELECT party, handle, account_id, catalog FROM mf_shops WHERE hub_ready ORDER BY name LIMIT 500",
+        "SELECT party, handle, account_id, catalog FROM mf_shops WHERE hub_ready AND account_confirmed ORDER BY name LIMIT 500",
     )
     .fetch_all(pool)
     .await
@@ -247,6 +250,76 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
         signed_in,
     ))
     .into_response()
+}
+
+// ---------------------------------------------------------------- a shop's account confirming it
+
+/// The shops whose catalogues name `account` to be paid, for its account page: each confirmed
+/// ("this is my shop") or not. A shop isn't offered until its account confirms it, so nobody can
+/// route orders to someone else's payouts.
+pub async fn claims_html(pool: &PgPool, account: i64) -> String {
+    let shops: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT handle, name, account_confirmed FROM mf_shops WHERE account_id = $1 ORDER BY name LIMIT 20",
+    )
+    .bind(account)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    if shops.is_empty() {
+        return String::new();
+    }
+    let rows: String = shops
+        .iter()
+        .map(|(handle, name, confirmed)| {
+            let (state, action, label) = if *confirmed {
+                ("confirmed as yours; customers can order from it", "disown", "This isn't my shop")
+            } else {
+                ("names your account to be paid, but isn't confirmed yet, so customers can't order from it", "confirm", "This is my shop")
+            };
+            format!(
+                r#"<li><strong>{name}</strong> ({state}) <form method="post" action="/account/shops/{handle}/{action}" class="inline"><button type="submit" class="secondary">{label}</button></form></li>"#,
+                name = escape(name),
+                handle = escape(handle),
+            )
+        })
+        .collect();
+    format!(
+        r#"<h2>Your shops on StitchHub</h2><p>Orders from these shops are paid to your account's payouts.</p><ul>{rows}</ul>"#
+    )
+}
+
+/// `POST /account/shops/<handle>/<confirm|disown>`: the shop's account confirms it's theirs, or
+/// says it isn't.
+pub async fn confirm(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((handle, action)): Path<(String, String)>,
+) -> Response {
+    if !crate::accounts::same_origin(&headers) {
+        return crate::accounts::forbidden();
+    }
+    let (Some(user), Some(pool)) = (current_user(&state, &headers).await, state.db.as_ref()) else {
+        return axum::response::Redirect::to("/signin?next=/account").into_response();
+    };
+    let confirmed = match action.as_str() {
+        "confirm" => true,
+        "disown" => false,
+        _ => return crate::designs::not_found(),
+    };
+    let done = sqlx::query("UPDATE mf_shops SET account_confirmed = $3 WHERE handle = $1 AND account_id = $2")
+        .bind(&handle)
+        .bind(user.account_id)
+        .bind(confirmed)
+        .execute(pool)
+        .await;
+    match done {
+        Ok(r) if r.rows_affected() == 1 => axum::response::Redirect::to("/account").into_response(),
+        Ok(_) => crate::designs::not_found(),
+        Err(e) => {
+            eprintln!("shops: confirm {handle}: {e}");
+            (axum::http::StatusCode::SERVICE_UNAVAILABLE, "Try again in a minute.").into_response()
+        }
+    }
 }
 
 #[cfg(test)]
