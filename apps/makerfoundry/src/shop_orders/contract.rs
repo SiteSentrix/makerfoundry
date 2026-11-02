@@ -119,6 +119,10 @@ pub struct Shop {
     /// Where customers pick up (needed for sales tax on pick-up orders).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<Address>,
+    /// The shop's branding (optional; read leniently by `brand::read`, never refusing the
+    /// catalogue).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brand: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

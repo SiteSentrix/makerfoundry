@@ -128,6 +128,22 @@ rows); a refund gives the buyer everything back, the tax too, taking the price b
 seller first. Stripe records the tax for its reports; filing it with the states is the owner's
 (or Stripe's filing add-on).
 
+## Shops' short addresses (`<shop>.makerfoundry.app`)
+Branded shops (2026-11-02) answer at `<handle>.makerfoundry.app` once, and only once, the wildcard
+domain is set up; until then their pages are at `makerfoundry.app/shops/<id>` as before. The
+owner's steps, once:
+1. Railway › MakerFoundry › production › makerfoundry › Settings › Networking › Custom domain:
+   add `*.makerfoundry.app` (port 8080, as the main domain).
+2. Railway shows the DNS records it needs: put them in Cloudflare › makerfoundry.app › DNS exactly
+   as shown (a `CNAME` for `*`, and the `_acme-challenge` record it asks for so it can issue the
+   wildcard certificate), with the proxy **off** (grey cloud), as for the main domain.
+3. Wait for Railway to show the domain as verified, then open a shop's short address.
+
+The service needs nothing else: it answers any `<label>.makerfoundry.app` from `MF_PUBLIC_URL`'s
+host, sends `www.` and every other path to the main address (signing in and checking out stay on
+`makerfoundry.app`), and says "not found" for an address no shop has. The sign-in cookie is a
+`__Host-` cookie, so it's never sent to a shop's address.
+
 ## Settings the service reads
 | Variable | Needed | What |
 |---|---|---|
