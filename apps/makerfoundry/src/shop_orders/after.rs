@@ -61,6 +61,24 @@ async fn shops_order(pool: &PgPool, env: &Envelope) -> Result<Option<(i64, Strin
         .map_err(|e| e.to_string())
 }
 
+/// Where a status comes in an order's life: a shop's status never takes an order back past where
+/// it is, except between its proofs (a new proof after an approval, or the other way round).
+fn stage(status: &str) -> usize {
+    match status {
+        "sent" => 0,
+        "received" | "proof_sent" | "approved" => 1,
+        "in_production" => 2,
+        "ready" => 3,
+        "shipped" => 4,
+        _ => 5,
+    }
+}
+
+/// Whether a shop may move an order from `now` to `next`.
+pub fn moves_on(now: &str, next: &str) -> bool {
+    stage(next) >= stage(now)
+}
+
 /// `order.status` from the shop.
 pub async fn status(pool: &PgPool, env: &Envelope, s: &OrderStatus) -> Result<(), String> {
     let Some((id, now)) = shops_order(pool, env).await? else {
@@ -69,17 +87,27 @@ pub async fn status(pool: &PgPool, env: &Envelope, s: &OrderStatus) -> Result<()
     if !OPEN.contains(&now.as_str()) {
         return ignored(env, "the order is closed");
     }
-    sqlx::query(
-        "UPDATE mf_shop_orders SET status = $2, tracking = $3, shop_note = $4, updated_at = now() WHERE id = $1",
+    if !moves_on(&now, &s.status) {
+        return ignored(env, "a status from the past");
+    }
+    // (only from the status just read: a cancel that came in between stands)
+    let done = sqlx::query(
+        "UPDATE mf_shop_orders SET status = $2, tracking = $3, shop_note = $4, updated_at = now()
+         WHERE id = $1 AND status = $5",
     )
     .bind(id)
     .bind(&s.status)
     .bind(&s.tracking)
     .bind(&s.note)
+    .bind(&now)
     .execute(pool)
     .await
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    if done.rows_affected() == 0 {
+        // (it changed meanwhile: the message comes again and is read against the new status)
+        return Err("the order changed meanwhile".into());
+    }
+    Ok(())
 }
 
 /// `proof.sent` from the shop: the mock-up fetched from the hub's files, checked by size and
@@ -358,6 +386,52 @@ pub async fn settle(state: &AppState, pool: &PgPool, id: i64) -> Result<(), Stri
     tx.commit().await.map_err(|e| e.to_string())
 }
 
+/// Payments Stripe took for an order that couldn't take them (`orders::confirm_paid` records
+/// them): refunded in full, the transfer to the shop and MakerFoundry's fee with them. One that
+/// turns out to be an order's own payment after all is left alone.
+async fn refund_strays(stripe: &crate::stripe::Stripe, pool: &PgPool) -> Result<(), String> {
+    let strays: Vec<(String, String)> = sqlx::query_as(
+        "UPDATE mf_shop_stray_payments SET tried_at = now()
+         WHERE payment_intent IN (
+             SELECT s.payment_intent FROM mf_shop_stray_payments s
+             WHERE s.refunded_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM mf_shop_orders o WHERE o.stripe_payment_intent = s.payment_intent)
+             ORDER BY s.tried_at NULLS FIRST LIMIT 20)
+         RETURNING payment_intent, ref",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    for (intent, reference) in strays {
+        if !intent.starts_with("pi_") {
+            continue;
+        }
+        let form = [
+            ("payment_intent", intent.clone()),
+            ("reverse_transfer", "true".to_string()),
+            ("refund_application_fee", "true".to_string()),
+            ("metadata[shop_order]", reference.clone()),
+            ("metadata[app]", crate::selling::APP.to_string()),
+            ("metadata[why]", "stray".to_string()),
+        ];
+        match stripe
+            .post("/v1/refunds", &form, Some(&format!("mf-shop-stray-{intent}")))
+            .await
+        {
+            Ok(_) => {
+                sqlx::query("UPDATE mf_shop_stray_payments SET refunded_at = now() WHERE payment_intent = $1")
+                    .bind(&intent)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                eprintln!("shop orders: refunded a payment for {reference} that its order couldn't take");
+            }
+            Err(e) => eprintln!("shop orders: refunding a stray payment for {reference}: {e} (tried again)"),
+        }
+    }
+    Ok(())
+}
+
 /// `settle`, now, with any failure left for the sweep.
 async fn settle_now(state: &AppState, pool: &PgPool, id: i64) {
     if let Err(e) = settle(state, pool, id).await {
@@ -369,8 +443,12 @@ async fn settle_now(state: &AppState, pool: &PgPool, id: i64) {
 /// files deleted after 30, with their art and mock-ups.
 pub async fn sweep(state: &AppState) -> Result<(), String> {
     let Some(pool) = state.db.as_ref() else { return Ok(()) };
+    // (the least recently tried first, so refunds that keep failing don't hold up the rest)
     let due: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM mf_shop_orders WHERE refund_due AND fee_returned_at IS NULL ORDER BY id LIMIT 20",
+        "UPDATE mf_shop_orders SET refund_tried_at = now()
+         WHERE id IN (SELECT id FROM mf_shop_orders WHERE refund_due AND fee_returned_at IS NULL
+                      ORDER BY refund_tried_at NULLS FIRST, id LIMIT 20)
+         RETURNING id",
     )
     .fetch_all(pool)
     .await
@@ -395,6 +473,7 @@ pub async fn sweep(state: &AppState) -> Result<(), String> {
     }
     if let Some(stripe) = state.stripe.as_ref() {
         super::tax::settle_all(stripe, pool).await?;
+        refund_strays(stripe, pool).await?;
     }
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     let gone: Vec<(i64, Value)> = sqlx::query_as(
