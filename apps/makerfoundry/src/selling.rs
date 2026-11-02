@@ -118,6 +118,85 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Before design `id` is deleted: every checkout for it that could still be paid is closed, so
+/// nobody pays for a design that's gone. An open checkout is expired at Stripe
+/// (https://docs.stripe.com/api/checkout/sessions/expire) and its order with it; a deletion
+/// waits while a payment is still on its way (a bank debit, or a payment not yet confirmed
+/// here), and when Stripe can't be asked. `Err` says why, for the maker.
+pub async fn close_checkouts(state: &AppState, pool: &PgPool, design: i64) -> Result<(), &'static str> {
+    const LATER: &str = "Someone is buying this design and Stripe can't be reached just now to stop it. Please try again in a few minutes.";
+    const PAYING: &str = "Someone has paid for this design and the payment is still being confirmed. It can be deleted once that's done; if it's confirmed, it's kept for their download.";
+    // (a bank debit can take a couple of weeks to succeed; older checkouts can't be paid)
+    let open: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, stripe_session FROM mf_orders
+         WHERE design_id = $1 AND status IN ('pending', 'expired') AND stripe_session IS NOT NULL
+           AND created_at > now() - interval '30 days'
+         ORDER BY id LIMIT 100",
+    )
+    .bind(design)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| LATER)?;
+    if open.is_empty() {
+        return Ok(());
+    }
+    let Some(stripe) = state.stripe.as_ref() else {
+        return Err(LATER);
+    };
+    for (order, sid) in open {
+        if !is_stripe_id(&sid, "cs_") {
+            continue;
+        }
+        let s = match stripe.get(&format!("/v1/checkout/sessions/{sid}")).await {
+            Ok(s) => s,
+            // (a checkout Stripe has no record of can't be paid)
+            Err(e) if e.0.starts_with("Stripe refused (404") => Value::Null,
+            Err(_) => return Err(LATER),
+        };
+        match s.get("status").and_then(Value::as_str) {
+            None if s.is_null() => {}
+            Some("open") => {
+                stripe
+                    .post(&format!("/v1/checkout/sessions/{sid}/expire"), &[], None)
+                    .await
+                    .map_err(|e| {
+                        eprintln!("selling: expiring checkout {sid} of order {order}: {e}");
+                        LATER
+                    })?;
+            }
+            Some("expired") => {}
+            // complete: paid (not yet confirmed here) or a delayed payment on its way
+            _ => return Err(PAYING),
+        }
+        sqlx::query("UPDATE mf_orders SET status = 'expired' WHERE id = $1 AND status = 'pending'")
+            .bind(order)
+            .execute(pool)
+            .await
+            .map_err(|_| LATER)?;
+    }
+    Ok(())
+}
+
+/// `close_checkouts` for every design of `account` that its data deletion (`data::erase`) would
+/// delete: those nobody has bought.
+pub async fn close_account_checkouts(state: &AppState, pool: &PgPool, account: i64) -> Result<(), &'static str> {
+    let designs: Vec<i64> = sqlx::query_scalar(
+        "SELECT d.id FROM mf_designs d WHERE d.account_id = $1
+           AND EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('pending', 'expired'))
+           AND NOT EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('paid', 'refunded'))",
+    )
+    .bind(account)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| "Your data couldn't be deleted just now. Nothing was changed. Please try again.")?;
+    for id in designs {
+        close_checkouts(state, pool, id).await.map_err(|_| {
+            "Someone is buying one of your designs and it can't be stopped just now (or their payment is still being confirmed). Nothing was changed. Please try again later."
+        })?;
+    }
+    Ok(())
+}
+
 fn is_stripe_id(id: &str, prefix: &str) -> bool {
     id.strip_prefix(prefix).is_some_and(|rest| {
         !rest.is_empty() && rest.len() < 200 && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
