@@ -11886,3 +11886,70 @@ async fn deleting_your_data_closes_checkouts_for_your_designs() {
         0
     );
 }
+
+// ---------------------------------------------------------------- copies of messages to shops
+
+#[tokio::test]
+async fn copies_of_messages_to_shops_go_30_days_after_the_order_is_done() {
+    let Some((s, state, _, st)) = open_shop().await else {
+        return;
+    };
+    let (_, _, reference) = paid_order(&s, &st).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let carries = format!(
+        "SELECT count(*) FROM mf_hub_outbox WHERE order_ref = '{reference}' AND envelope->'body' <> '{{}}'::jsonb"
+    );
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_hub_outbox WHERE order_ref = '{reference}' AND sent_at IS NOT NULL"
+        ))
+        .await,
+        1,
+        "the hub took it"
+    );
+    // an earlier message of the same conversation, also taken long ago
+    sqlx::query(
+        "INSERT INTO mf_hub_outbox (id, kind, order_ref, seq, to_party, envelope, expires_at, sent_at)
+         SELECT 'earlier', kind, order_ref, seq - 1, to_party, envelope, expires_at, sent_at
+         FROM mf_hub_outbox WHERE order_ref = $1",
+    )
+    .bind(&reference)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    // while the order is open, or closed less than 30 days ago, they're kept as they are
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(s.scalar(&carries).await, 2);
+    sqlx::query("UPDATE mf_hub_outbox SET sent_at = now() - interval '40 days' WHERE order_ref = $1")
+        .bind(&reference)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mf_shop_orders SET status = 'shipped', updated_at = now() - interval '29 days' WHERE ref = $1")
+        .bind(&reference)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(s.scalar(&carries).await, 2);
+    // 30 days after it shipped: the earlier copy goes, the last is kept for its number, blanked
+    sqlx::query("UPDATE mf_shop_orders SET updated_at = now() - interval '31 days' WHERE ref = $1")
+        .bind(&reference)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    assert_eq!(s.scalar(&carries).await, 0);
+    assert_eq!(
+        s.scalar(&format!(
+            "SELECT count(*) FROM mf_hub_outbox WHERE order_ref = '{reference}'"
+        ))
+        .await,
+        1
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE id = 'earlier'")
+            .await,
+        0
+    );
+}
