@@ -831,9 +831,13 @@ pub async fn picture(
     let (Some((key, kind)), Some(storage)) = (found, state.storage.as_ref()) else {
         return not_found();
     };
-    let cache = if d.status == "published" {
+    // a paid model's mesh: the whole of it only for the people who may download the model, a
+    // rough one for everyone else (`viewer::coarse`; the owner's decision, 2026-11-01)
+    let rough = view == "mesh" && !crate::listings::access(&state, pool, viewer.as_ref(), &d, id).await.1;
+    let cache = if d.status == "published" && (view != "mesh" || d.price_cents == 0) {
         "public, max-age=3600"
     } else {
+        // (what a paid model's mesh is depends on who asks: never kept for others)
         "private, max-age=3600"
     };
     // (only the two picture types are ever stored)
@@ -843,6 +847,10 @@ pub async fn picture(
         _ => "image/png",
     };
     match storage.get(&key).await {
+        Ok(Some(bytes)) if rough => match super::viewer::coarse(&bytes) {
+            Some(bytes) => ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, cache)], bytes).into_response(),
+            None => not_found(),
+        },
         Ok(Some(bytes)) => ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, cache)], bytes).into_response(),
         Ok(None) => not_found(),
         Err(e) => {

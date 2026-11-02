@@ -11368,6 +11368,201 @@ async fn picks_of_the_week_and_the_galleries_on_the_home_page() {
     assert!(!s.get("/picks", None).await.body.contains("Rose"));
 }
 
+// ---------------------------------------------------------------- lower-detail previews of paid designs
+
+impl Site {
+    /// A GET's status, headers and body as bytes (for pictures and meshes).
+    async fn raw(&self, path: &str, cookie: Option<&str>) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut req = Request::get(path).header(header::HOST, HOST);
+        if let Some(c) = cookie {
+            req = req.header(header::COOKIE, c);
+        }
+        let resp = self
+            .app
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let (status, headers) = (resp.status(), resp.headers().clone());
+        (
+            status,
+            headers,
+            resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+    }
+}
+
+/// `buyer` (an account id) bought design `id` from `seller`.
+async fn sold(s: &Site, id: i64, seller: i64, buyer: i64) {
+    sqlx::query(
+        "INSERT INTO mf_orders (buyer_account, design_id, seller_account, price_cents, fee_cents,
+             processing_cents, seller_cents, title, status, paid_at)
+         VALUES ($1, $2, $3, 500, 50, 45, 405, 'Paid', 'paid', now())",
+    )
+    .bind(buyer)
+    .bind(id)
+    .bind(seller)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_paid_designs_page_shows_others_only_a_lower_detail_picture() {
+    let Some(s) = site().await else { return };
+    let ann = s.sign_up("ann%40example.com").await;
+    let stitches = published(&s, &ann, "anns", "Rose").await;
+    // a laser design too
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="40mm" viewBox="0 0 60 40"><rect x="5" y="5" width="50" height="30" fill="none" stroke="#ff0000"/><circle cx="30" cy="20" r="7" fill="none" stroke="#0000ff"/></svg>"##;
+    let r = s
+        .send(multipart(
+            "/designs/new",
+            &[("file", "coaster.svg", svg.to_vec())],
+            &ann,
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+    let lines = design_id(r.location());
+    s.post(
+        &format!("/designs/{lines}/edit"),
+        "title=Coaster&licence=commercial",
+        Some(&ann),
+    )
+    .await;
+    s.post(&format!("/designs/{lines}/publish"), "confirm=yes", Some(&ann))
+        .await;
+    let svgs: Vec<String> = sqlx::query_scalar("SELECT preview_svg FROM mf_designs WHERE id = ANY($1) ORDER BY id")
+        .bind(vec![stitches, lines])
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    let (rose_svg, coaster_svg) = (svgs[0].clone(), svgs[1].clone());
+    assert!(rose_svg.contains("<path") && coaster_svg.contains("<path"));
+
+    // free: everyone sees every stitch and line, as before
+    for (id, svg) in [(stitches, &rose_svg), (lines, &coaster_svg)] {
+        let page = s.get(&format!("/d/{id}"), None).await.body;
+        assert!(page.contains(svg.as_str()), "{page}");
+        assert!(!page.contains("preview.png"), "{page}");
+    }
+
+    sqlx::query("UPDATE mf_designs SET price_cents = 500 WHERE id = ANY($1)")
+        .bind(vec![stitches, lines])
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let bea = s.sign_up("bea%40example.com").await;
+    let cal = s.sign_up("cal%40example.com").await;
+    sold(&s, stitches, 1000, 1001).await;
+    sold(&s, lines, 1000, 1001).await;
+    for (id, svg) in [(stitches, &rose_svg), (lines, &coaster_svg)] {
+        // nobody who hasn't bought it gets the stitches or lines: no path, no viewBox of them
+        for viewer in [None, Some(cal.as_str())] {
+            let page = s.get(&format!("/d/{id}"), viewer).await.body;
+            let figure = page
+                .split(r#"<figure class="preview">"#)
+                .nth(1)
+                .and_then(|f| f.split("</figure>").next())
+                .unwrap();
+            assert!(
+                !figure.contains("<svg") && !figure.contains("<path"),
+                "{viewer:?}: {figure}"
+            );
+            // nothing of the stitches or lines anywhere on the page
+            let first_path = svg.split(" d=\"").nth(1).unwrap().split('"').next().unwrap();
+            assert!(!page.contains(first_path), "{page}");
+            assert!(!page.contains(r#"class="stitches" viewBox"#), "{page}");
+            assert!(
+                page.contains(&format!(r#"<img class="stitches" src="/d/{id}/preview.png""#)),
+                "{page}"
+            );
+            assert!(page.contains("A lower-detail picture."), "{page}");
+            let (status, headers, png) = s.raw(&format!("/d/{id}/preview.png"), viewer).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+            let img = image::load_from_memory(&png).unwrap();
+            assert!(img.width().max(img.height()) <= makerfoundry::coarse::MAX_SIDE);
+        }
+        // the buyer, the maker and the admins see every stitch
+        for viewer in [&bea, &ann] {
+            let page = s.get(&format!("/d/{id}"), Some(viewer)).await.body;
+            assert!(page.contains(svg.as_str()), "{page}");
+        }
+    }
+    s.dump_page(
+        "paid-preview-anonymous",
+        &s.get(&format!("/d/{stitches}"), None).await.body,
+        None,
+    )
+    .await;
+    s.dump_page(
+        "paid-preview-laser",
+        &s.get(&format!("/d/{lines}"), None).await.body,
+        None,
+    )
+    .await;
+    s.dump_page(
+        "paid-preview-buyer",
+        &s.get(&format!("/d/{stitches}"), Some(&bea)).await.body,
+        Some(&bea),
+    )
+    .await;
+    // an unpublished design's picture is no one else's
+    s.post(&format!("/designs/{lines}/unpublish"), "", Some(&ann)).await;
+    assert_eq!(
+        s.raw(&format!("/d/{lines}/preview.png"), Some(&cal)).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn a_paid_models_mesh_is_rough_for_people_who_havent_bought_it() {
+    let Some(s) = site_3d(Vec::new(), true).await else {
+        return;
+    };
+    let (ann, id) = published_model(&s, "ann%40example.com", "ann").await;
+    let fid: i64 = sqlx::query_scalar("SELECT id FROM mf_model_files WHERE design_id = $1 AND role = 'mesh'")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let path = format!("/3d/{id}/files/{fid}/mesh");
+    let (_, headers, free) = s.raw(&path, None).await;
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=3600");
+    // the whole mesh reaches the box's corners (quantized 0 and 65535)
+    let corners = |m: &[u8]| -> Vec<u16> {
+        m[32..]
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect()
+    };
+    assert!(corners(&free).contains(&0) && corners(&free).contains(&65535));
+
+    sqlx::query("UPDATE mf_designs SET price_cents = 500 WHERE id = $1")
+        .bind(id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let bea = s.join("bea%40example.com").await;
+    let cal = s.join("cal%40example.com").await;
+    sold(&s, id, 1000, 1001).await;
+    for viewer in [None, Some(cal.as_str())] {
+        let (status, headers, rough) = s.raw(&path, viewer).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(rough.starts_with(b"MFM1"));
+        assert_ne!(rough, free, "{viewer:?}");
+        let c = corners(&rough);
+        assert!(!c.is_empty() && !c.contains(&0) && !c.contains(&65535), "{c:?}");
+        assert_eq!(headers[header::CACHE_CONTROL], "private, max-age=3600");
+    }
+    for viewer in [&bea, &ann] {
+        let (status, headers, whole) = s.raw(&path, Some(viewer)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(whole, free);
+        assert_eq!(headers[header::CACHE_CONTROL], "private, max-age=3600");
+    }
+}
+
 // ---------------------------------------------------------------- a purchase stays the buyer's
 
 #[tokio::test]
