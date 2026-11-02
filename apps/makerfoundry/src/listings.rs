@@ -698,8 +698,8 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     // design's file is anyone's; a paid one opens through a link made for its buyers (and maker)
     let mut buttons = Vec::new();
     let free = d.price_cents == 0 && d.status == "published";
-    let paid_may =
-        !free && d.price_cents > 0 && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1;
+    // (bought: whatever it costs now)
+    let paid_may = !free && d.status != "removed" && access(&state, pool, viewer.as_ref(), &d, id).await.1;
     for (app, name) in crate::api::web_apps(&d) {
         if free {
             let href = crate::api::open_in(app, &state.public_url, id, &crate::api::file_name(&d, id));
@@ -798,8 +798,13 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     };
     let section = if d.kind == "model3d" {
         crate::model3d::upload::public_section(pool, id, &title, &intro, &footer).await
-    } else {
+    } else if may_download {
         designs::facts_section(&d, &title, &intro, &footer)
+    } else {
+        // a paid design someone hasn't bought: a lower-detail picture, never the stitches or lines
+        // themselves (the owner's decision, 2026-11-01; `coarse`)
+        let figure = crate::coarse::figure_html(id, &d.kind, &d.preview_svg, &title);
+        designs::drawing_section(&d.kind, &d.facts, &figure, &title, &intro, &footer)
     };
     match section {
         Some(html) => {
@@ -865,6 +870,43 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
     }
 }
 
+/// `GET /d/<id>/preview.png`: the lower-detail picture of an embroidery or laser design
+/// (`coarse`), which its page shows to people who haven't bought it; anyone's who may see the
+/// design.
+pub async fn preview_png(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<i64>) -> Response {
+    let viewer = current_user(&state, &headers).await;
+    let Some(pool) = state.db.as_ref() else {
+        return not_found(viewer.is_some());
+    };
+    let Ok(Some(d)) = designs::design(pool, id).await else {
+        return not_found(viewer.is_some());
+    };
+    if !matches!(d.kind.as_str(), "embroidery" | "laser") || !access(&state, pool, viewer.as_ref(), &d, id).await.0 {
+        return not_found(viewer.is_some());
+    }
+    let svg = d.preview_svg;
+    let png = tokio::task::spawn_blocking(move || crate::coarse::picture(&svg))
+        .await
+        .ok()
+        .flatten();
+    let Some(png) = png else {
+        return not_found(viewer.is_some());
+    };
+    let cache = if d.status == "published" {
+        "public, max-age=3600"
+    } else {
+        "private, max-age=3600"
+    };
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "image/png"),
+            (axum::http::header::CACHE_CONTROL, cache),
+        ],
+        png,
+    )
+        .into_response()
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct DownloadQuery {
@@ -879,7 +921,9 @@ pub struct DownloadQuery {
 
 /// Whether `viewer` may see design `d` (`id`) and whether they may download it: a free published
 /// design anyone; a paid one the people who bought it (even unpublished, unless it was taken
-/// down); any its maker and the admins.
+/// down); any its maker and the admins. A purchase counts whatever the design costs now: a
+/// seller who makes it free, or unpublishes it, doesn't take it from the people who paid
+/// (only a takedown does, and a refund).
 pub(crate) async fn access(
     state: &AppState,
     pool: &PgPool,
@@ -889,9 +933,7 @@ pub(crate) async fn access(
 ) -> (bool, bool) {
     let staff = viewer.is_some_and(|u| u.account_id == d.account_id || state.admins.contains(&u.account_id));
     let buyer = match viewer {
-        Some(u) if d.status != "removed" && !staff && d.price_cents > 0 => {
-            selling::bought(pool, u.account_id, id).await
-        }
+        Some(u) if d.status != "removed" && !staff => selling::bought(pool, u.account_id, id).await,
         _ => false,
     };
     let seen = visible(d, viewer, &state.admins) || buyer;

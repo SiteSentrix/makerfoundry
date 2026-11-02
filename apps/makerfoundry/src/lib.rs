@@ -8,6 +8,7 @@ pub mod accounts;
 pub mod activity;
 pub mod api;
 pub mod cloud;
+pub mod coarse;
 pub mod collections;
 pub mod comments;
 pub mod convert;
@@ -161,6 +162,7 @@ pub struct AppState {
 
 /// The whole site: every route, with the security headers and limits applied to all of them.
 pub fn app(state: AppState) -> Router {
+    let shop_addresses = state.clone();
     let pages = Router::new()
         .route("/", get(home))
         .route("/health", get(health))
@@ -189,6 +191,7 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}", get(listings::public_page))
         .route("/d/{id}/download", get(listings::download))
         .route("/d/{id}/open", get(api::open_paid))
+        .route("/d/{id}/preview.png", get(listings::preview_png))
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
         .route("/picks", get(picks::past))
@@ -197,6 +200,8 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/like", post(model3d::likes::like))
         .route("/shops", get(shop_orders::shops::list))
         .route("/shops/{handle}", get(shop_orders::shops::show))
+        .route("/shops/{handle}/logo", get(shop_orders::shops::logo))
+        .route("/shops/{handle}/brand.css", get(shop_orders::shops::brand_css))
         .route("/shop-orders/{reference}", get(shop_orders::orders::page))
         .route("/shop-orders/{reference}/pay", post(shop_orders::orders::pay))
         .route("/shop-orders/{reference}/cancel", post(shop_orders::after::cancel))
@@ -393,6 +398,11 @@ pub fn app(state: AppState) -> Router {
         .merge(models)
         .merge(imports)
         .with_state(state)
+        // shops' short addresses (<shop>.makerfoundry.app), before anything else answers
+        .layer(axum::middleware::from_fn_with_state(
+            shop_addresses,
+            shop_orders::shops::subdomains,
+        ))
         .layer(header_layer(header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY))
         .layer(header_layer(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(header_layer(header::REFERRER_POLICY, "strict-origin-when-cross-origin"))
