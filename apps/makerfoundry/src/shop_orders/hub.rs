@@ -18,7 +18,9 @@
 //!    applied once (by id) and in order (by `seq`, per conversation and sender), then acknowledged
 //!    (`POST /v2/messages/ack`). The hub releases a conversation one message at a time, so after a
 //!    poll that brought messages, MakerFoundry polls again straight away until one brings none. A
-//!    message that can't be read is acknowledged and logged by its id only.
+//!    message that can't be read is acknowledged and logged by its id only. The cursor is saved
+//!    past a page only when every message in it was taken (the hub's `next` passes messages handed
+//!    out and not acknowledged), so one that couldn't be applied comes again.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -820,6 +822,7 @@ pub async fn sync(
             break;
         }
         let mut taken = Vec::new();
+        let mut all_taken = true;
         for raw in inbox.messages {
             let id = raw
                 .get("id")
@@ -832,8 +835,11 @@ pub async fn sync(
             match contract::parse(&bytes) {
                 Ok((env, msg)) => match receive(pool, env, msg, apply).await {
                     Ok(()) => taken.push(id),
-                    // (not acknowledged: it comes again next time)
-                    Err(e) => eprintln!("stitchhub: {id}: {e}"),
+                    // (not acknowledged: it comes again next time, as the cursor stays before it)
+                    Err(e) => {
+                        all_taken = false;
+                        eprintln!("stitchhub: {id}: {e}");
+                    }
                 },
                 Err(why) => {
                     // unreadable: acknowledged so it doesn't block the rest, logged by id only
@@ -844,7 +850,10 @@ pub async fn sync(
         }
         let stuck = taken.is_empty();
         hub.ack(&taken).await?;
-        if let Some(c) = inbox.next.filter(|c| !c.is_empty() && c.len() <= 200) {
+        // the cursor moves past this page only when every message in it was taken: the hub's
+        // `next` passes the messages it handed out, acknowledged or not, so one left behind is
+        // fetched again from the cursor before it (those acknowledged meanwhile don't come again)
+        if all_taken && let Some(c) = inbox.next.filter(|c| !c.is_empty() && c.len() <= 200) {
             set_state(pool, "cursor", &c).await.map_err(|e| e.to_string())?;
             cursor = Some(c);
         }
@@ -896,6 +905,12 @@ pub mod stand_in {
         pub base: String,
         /// Messages waiting, by recipient (`service:makerfoundry` for MakerFoundry's).
         pub queues: BTreeMap<String, Vec<Value>>,
+        /// Each waiting message's place in the hub's delivery order, once it has been handed out
+        /// (beside `queues`): `after=c<n>` skips the messages handed out at `n` and before, as
+        /// the hub's cursor does, whether or not they were acknowledged.
+        pub places: BTreeMap<String, Vec<Option<u64>>>,
+        /// The last place given out.
+        pub placed: u64,
         /// Everything MakerFoundry sent the hub, in order.
         pub received: Vec<Value>,
         pub down: bool,
@@ -925,7 +940,15 @@ pub mod stand_in {
 
     /// Puts a message in MakerFoundry's queue, as if a shop (or the hub) had sent it.
     pub fn deliver(s: &Shared, message: Value) {
-        lock(s).queues.entry(contract::me().into()).or_default().push(message);
+        lock(s).queue(contract::me(), message);
+    }
+
+    impl Hub {
+        /// Puts `message` in `to`'s queue, at the next place.
+        fn queue(&mut self, to: &str, message: Value) {
+            self.queues.entry(to.into()).or_default().push(message);
+            self.places.entry(to.into()).or_default().push(None);
+        }
     }
 
     /// A file a shop put in the hub (a proof's mock-up) → its SHA-256.
@@ -1075,7 +1098,7 @@ pub mod stand_in {
                 }
             }
             hub.received.push(m.clone());
-            hub.queues.entry(env.to).or_default().push(m);
+            hub.queue(&env.to, m);
             (StatusCode::ACCEPTED, Json(json!({ "queued": true, "state": "queued" })))
         }
         async fn fetch(
@@ -1083,7 +1106,7 @@ pub mod stand_in {
             h: HeaderMap,
             Query(q): Query<BTreeMap<String, String>>,
         ) -> (StatusCode, Json<Value>) {
-            let hub = lock(&s);
+            let mut hub = lock(&s);
             if hub.down {
                 return err(StatusCode::SERVICE_UNAVAILABLE, "down");
             }
@@ -1094,18 +1117,37 @@ pub mod stand_in {
                 return err(StatusCode::CONFLICT, "hello_first");
             }
             let limit: usize = q.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50);
-            // one message per conversation and sender at a time: the next waits for this one's ack
+            let after: u64 = q
+                .get("after")
+                .and_then(|a| a.strip_prefix('c'))
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            let queue = hub.queues.get(contract::me()).cloned().unwrap_or_default();
+            let mut places = hub.places.remove(contract::me()).unwrap_or_default();
+            places.resize(queue.len(), None);
+            // one message per conversation and sender at a time: the next waits for this one's
+            // ack; one handed out before is handed out again only to a cursor before it
             let mut seen = BTreeSet::new();
-            let page: Vec<Value> = hub
-                .queues
-                .get(contract::me())
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|m| seen.insert((m["conversation"].to_string(), m["from"].to_string())))
-                .take(limit)
-                .collect();
-            let next = format!("c{}", hub.received.len() + page.len());
+            let mut page = Vec::new();
+            let mut next = after;
+            for (m, place) in queue.into_iter().zip(places.iter_mut()) {
+                if page.len() >= limit || !seen.insert((m["conversation"].to_string(), m["from"].to_string())) {
+                    continue;
+                }
+                let at = match *place {
+                    Some(p) if p <= after => continue,
+                    Some(p) => p,
+                    None => {
+                        hub.placed += 1;
+                        *place = Some(hub.placed);
+                        hub.placed
+                    }
+                };
+                next = next.max(at);
+                page.push(m);
+            }
+            hub.places.insert(contract::me().into(), places);
+            let next = format!("c{next}");
             (StatusCode::OK, Json(json!({ "messages": page, "next": next })))
         }
         async fn ack(State(s): State<Shared>, h: HeaderMap, Json(b): Json<Value>) -> StatusCode {
@@ -1117,9 +1159,18 @@ pub mod stand_in {
                 return StatusCode::UNAUTHORIZED;
             }
             let ids: Vec<Value> = b["ids"].as_array().cloned().unwrap_or_default();
-            if let Some(q) = hub.queues.get_mut(contract::me()) {
-                q.retain(|m| !ids.contains(&m["id"]));
-            }
+            let queue = hub.queues.remove(contract::me()).unwrap_or_default();
+            let places = hub.places.remove(contract::me()).unwrap_or_default();
+            let kept: Vec<(Value, Option<u64>)> = queue
+                .into_iter()
+                .enumerate()
+                .map(|(i, m)| (m, places.get(i).copied().flatten()))
+                .filter(|(m, _)| !ids.contains(&m["id"]))
+                .collect();
+            hub.places
+                .insert(contract::me().into(), kept.iter().map(|(_, p)| *p).collect());
+            hub.queues
+                .insert(contract::me().into(), kept.into_iter().map(|(m, _)| m).collect());
             StatusCode::OK
         }
         async fn files_put(State(s): State<Shared>, h: HeaderMap, Json(b): Json<Value>) -> (StatusCode, Json<Value>) {

@@ -521,3 +521,42 @@ async fn a_held_message_that_fails_once_is_applied_on_the_next_round_not_lost() 
         .unwrap();
     assert_eq!(held, 0);
 }
+
+#[tokio::test]
+async fn a_message_that_couldnt_be_applied_comes_again_past_the_cursor() {
+    // (the hub's `next` can pass a message handed out and not acknowledged: StitchHub's PR #45)
+    let Some((pool, hub, shared)) = setup().await else {
+        return;
+    };
+    let applied: Applied = Arc::default();
+    let record = recorder(&applied);
+    let busy = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let is_busy = busy.clone();
+    // while mf-1's order is busy, its messages can't be applied
+    let flaky = move |env: Envelope, msg: Message| {
+        if env.conversation == "mf-1" && is_busy.load(std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(async { Err("busy".to_string()) })
+                as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+        }
+        record(env, msg)
+    };
+    // two conversations: mf-1's message fails, mf-2's is applied from the same page
+    stand_in::deliver(&shared, from_shop(&uuid(1), 1, "proof_sent"));
+    let mut other = from_shop(&uuid(2), 1, "proof_sent");
+    other["conversation"] = "mf-2".into();
+    stand_in::deliver(&shared, other);
+    sync(&pool, &hub, &flaky).await.unwrap();
+    assert_eq!(applied.lock().unwrap().len(), 1, "mf-2's");
+    assert_eq!(
+        shared.lock().unwrap().queues[contract::me()].len(),
+        1,
+        "mf-1's wasn't acknowledged"
+    );
+    // the next round: it comes again and is applied, and so is what follows it
+    busy.store(false, std::sync::atomic::Ordering::SeqCst);
+    stand_in::deliver(&shared, from_shop(&uuid(3), 2, "approved"));
+    sync(&pool, &hub, &flaky).await.unwrap();
+    let got: Vec<(String, u64)> = applied.lock().unwrap().iter().map(|a| (a.1.clone(), a.2)).collect();
+    assert_eq!(got, [("mf-2".to_string(), 1), ("mf-1".into(), 1), ("mf-1".into(), 2)]);
+    assert!(shared.lock().unwrap().queues[contract::me()].is_empty());
+}
