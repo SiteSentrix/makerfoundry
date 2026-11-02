@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn dollars_text_reads_back_as_the_same_cents() {
-        for cents in (0..=MAX_PRICE).chain([99_999_999, 1_000_000_00]) {
+        for cents in (0..=MAX_PRICE).chain([99_999_999, 100_000_000]) {
             let text = dollars(cents);
             assert_eq!(parse_dollars(&text), Some(cents), "{text}");
         }
