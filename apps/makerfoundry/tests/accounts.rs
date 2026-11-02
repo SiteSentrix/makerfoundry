@@ -11563,6 +11563,146 @@ async fn a_paid_models_mesh_is_rough_for_people_who_havent_bought_it() {
     }
 }
 
+// ---------------------------------------------------------------- branded shops (2026-11-02)
+
+/// A request to `path` at `host` (a shop's short address).
+fn at_host(host: &str, path: &str) -> Request<Body> {
+    Request::get(path)
+        .header(header::HOST, host)
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_shop_has_its_own_branded_page_and_short_address() {
+    let Some((s, state, hub, _)) = shops_site().await else {
+        return;
+    };
+    let png = mockup_png();
+    let sha = makerfoundry::shop_orders::hub::stand_in::put_file(&hub, "catalog", &png);
+    let mut c = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c001");
+    c["body"]["shop"]["brand"] = json!({
+        "display_name": "Main Street Threads",
+        "intro": "Family shop since 1998.\n\nWe stitch every order here in <Elmwood>.",
+        "logo": {"size": png.len(), "sha256": sha, "type": "image/png"},
+        "accent": "#1f5fad",
+        "handle": "mainst-threads",
+        "website": "https://mainst.example/"
+    });
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, c);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    shop_can_be_paid(&s).await;
+    // the logo was fetched from the hub, drawn again and kept
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shops WHERE logo_key IS NOT NULL AND logo_type = 'image/png'")
+            .await,
+        1
+    );
+
+    let page = s.get("/shops/mainst", None).await.body;
+    for want in [
+        "<h1>Main Street Threads</h1>",
+        r#"src="/shops/mainst/logo""#,
+        r#"href="/shops/mainst/brand.css""#,
+        "<p>Family shop since 1998.</p><p>We stitch every order here in &lt;Elmwood&gt;.</p>",
+        r#"href="https://mainst.example/" rel="noopener nofollow ugc""#,
+        r#"href="https://mainst-threads.makerfoundry.test/""#,
+        "Sold by Main Street Threads through MakerFoundry",
+        "Heavy cotton tee",
+    ] {
+        assert!(page.contains(want), "{want}: {page}");
+    }
+    s.dump_page("shop-branded", &page, None).await;
+    let logo = s.get("/shops/mainst/logo", None).await;
+    assert_eq!(logo.status, StatusCode::OK);
+    assert_eq!(logo.headers[header::CONTENT_TYPE], "image/png");
+    let css = s.get("/shops/mainst/brand.css", None).await;
+    assert!(css.body.contains("--accent: #1f5fad"), "{}", css.body);
+
+    // its short address: the page, with its stylesheet and logo from the same address
+    let r = s.send(at_host("mainst-threads.makerfoundry.test", "/")).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains(r#"href="/brand.css""#) && r.body.contains(r#"src="/logo""#),
+        "{}",
+        r.body
+    );
+    assert!(r.headers.contains_key(header::CONTENT_SECURITY_POLICY));
+    assert_eq!(
+        s.send(at_host("mainst-threads.makerfoundry.test", "/logo"))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        s.send(at_host("mainst-threads.makerfoundry.test", "/static/site.css"))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // anything else, ordering included, goes to MakerFoundry itself
+    let r = s
+        .send(at_host(
+            "mainst-threads.makerfoundry.test",
+            "/shops/mainst/order/tee-heavy?x=1",
+        ))
+        .await;
+    assert_eq!(r.status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        r.location(),
+        "https://makerfoundry.test/shops/mainst/order/tee-heavy?x=1"
+    );
+    assert_eq!(
+        s.send(at_host("www.makerfoundry.test", "/browse")).await.location(),
+        "https://makerfoundry.test/browse"
+    );
+    assert_eq!(
+        s.send(at_host("nobody.makerfoundry.test", "/")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        s.send(at_host("a.b.makerfoundry.test", "/")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // MakerFoundry itself is unchanged
+    assert_eq!(s.send(at_host(HOST, "/")).await.status, StatusCode::OK);
+
+    // another shop can't take the same address, nor a reserved one; bad branding is left out
+    let mut other = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c099");
+    other["from"] = json!("shop:other");
+    other["body"]["shop"]["brand"] =
+        json!({"handle": "mainst-threads", "accent": "pink", "website": "javascript:alert(1)"});
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, other);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shops WHERE party = 'shop:other' AND subdomain IS NULL")
+            .await,
+        1
+    );
+    let mut again = catalog_message("0192f0c4-7a1b-7c2d-8e3f-00000000c002");
+    again["seq"] = 2.into();
+    again["body"]["shop"]["brand"] = json!({"handle": "admin"});
+    makerfoundry::shop_orders::hub::stand_in::deliver(&hub, again);
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    // (no handle any more: the short address is let go, and the logo with it)
+    assert_eq!(
+        s.scalar(
+            "SELECT count(*) FROM mf_shops WHERE party = 'shop:mainst' AND subdomain IS NULL AND logo_key IS NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        s.send(at_host("mainst-threads.makerfoundry.test", "/")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let page = s.get("/shops/mainst", None).await.body;
+    assert!(
+        page.contains("<h1>Main Street Threadworks</h1>") && !page.contains("brand.css"),
+        "{page}"
+    );
+}
+
 // ---------------------------------------------------------------- a purchase stays the buyer's
 
 #[tokio::test]

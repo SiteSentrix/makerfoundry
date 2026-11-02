@@ -342,3 +342,9 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .gallery a { display: grid; gap: .3rem; color: var(--fg); text-decoration: none; font-size: .9rem; overflow-wrap: anywhere; }
 .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: .6rem; border: 1px solid var(--line); background: var(--card); }
 .gallery a:hover img { border-color: var(--accent); }
+
+/* A shop's branded page */
+.shop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
+.shop-head h1 { margin: 0; }
+.shop-logo { width: 5rem; height: 5rem; object-fit: contain; border-radius: .75rem; border: 1px solid var(--line); background: #fff; }
+.shop-brand > p > a { color: var(--accent); }
