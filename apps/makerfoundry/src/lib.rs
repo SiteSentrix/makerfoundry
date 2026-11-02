@@ -33,6 +33,7 @@ pub mod notices;
 pub mod overview;
 pub mod pages;
 pub mod photos;
+pub mod picks;
 pub mod preview;
 pub mod proofs;
 pub mod scan;
@@ -192,6 +193,8 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}/preview.png", get(listings::preview_png))
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
+        .route("/picks", get(picks::past))
+        .route("/d/{id}/pick", post(picks::pick))
         .route("/d/{id}/save", post(collections::save))
         .route("/d/{id}/like", post(model3d::likes::like))
         .route("/shops", get(shop_orders::shops::list))
@@ -259,6 +262,7 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/account/data.json", get(data::download))
         .route("/account/data/delete", post(data::delete))
+        .route("/account/shops/{handle}/{action}", post(shop_orders::shops::confirm))
         .route("/account/maker", get(makers::edit_page).post(makers::save))
         .route("/d/{id}/report", get(moderation::report_page).post(moderation::report))
         .route(
@@ -459,6 +463,10 @@ async fn favicon() -> Response {
 async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String> {
     let signed_in = accounts::current_user(&state, &headers).await.is_some();
     let newest = listings::newest(&state).await;
+    // picks of the week, and the galleries: what people made, and the most downloaded
+    let picks = picks::home_html(&state).await;
+    let made = picks::makes_html(&state).await;
+    let popular = listings::popular(&state).await;
     // Founding creators (MF-54): before the launch the home page leads with the invitation; after
     // it, a third button while spots are left.
     let left = founding::spots_left(&state).await;
@@ -524,7 +532,10 @@ async fn home(State(state): State<AppState>, headers: HeaderMap) -> Html<String>
     monthly, and your designs stay yours.</p>
   </article>
 </section>
-{newest}"#
+{picks}
+{newest}
+{made}
+{popular}"#
         ),
         signed_in,
     ))
@@ -557,7 +568,7 @@ async fn sitemap(State(state): State<AppState>) -> Response {
         return not_found().await.into_response();
     }
     let base = &state.public_url;
-    let mut urls: Vec<String> = ["/", "/browse", "/terms", "/privacy", "/seller-terms", "/dmca"]
+    let mut urls: Vec<String> = ["/", "/browse", "/picks", "/terms", "/privacy", "/seller-terms", "/dmca"]
         .iter()
         .map(|p| format!("{base}{p}"))
         .collect();
