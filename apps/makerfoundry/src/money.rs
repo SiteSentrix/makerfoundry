@@ -152,6 +152,21 @@ mod tests {
             assert_eq!(parse_dollars(bad), None, "{bad}");
         }
     }
+
+    #[test]
+    fn money_edges_never_panic_or_go_negative() {
+        for price in [i64::MIN, -1, 0, 1, 99, 20_001, i64::MAX] {
+            assert_eq!(split(price), None, "{price}");
+        }
+        assert_eq!(dollars(0), "$0");
+        assert_eq!(dollars(i64::MIN), "-$92233720368547758.08");
+        assert_eq!(dollars(i64::MAX), "$92233720368547758.07");
+        // the largest accepted amount stays inside the price range
+        assert_eq!(parse_dollars("9,999,999.99"), Some(999_999_999));
+        assert_eq!(parse_dollars("$"), Some(0));
+        assert_eq!(parse_dollars("+4"), None);
+    }
+
     #[test]
     fn split_refuses_out_of_range_prices_without_overflowing() {
         for price in [i64::MIN, -1, 0, MIN_PRICE - 1, MAX_PRICE + 1, i64::MAX / 10, i64::MAX] {
