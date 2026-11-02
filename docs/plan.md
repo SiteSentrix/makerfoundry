@@ -148,6 +148,7 @@ Nobody may resell or share the files themselves.
 | MF-62 | The home page leads with founding creators | before the launch, an invitation to become one of the first 100 founding creators (the badge, early access to MakerFoundry 3D, the spots left) with a button to `/founding`, in place of "Coming soon"; after the launch, a third button beside Browse and Share while spots are left. **Done** (2026-10-31) |
 | MF-63 | Facebook link in the footer | every page's footer links to facebook.com/makerfoundryapp beside Terms, Privacy, Seller Terms and Copyright. **Done** (2026-10-31) |
 | MF-90 | YouTube and Buy Me a Coffee in the footer | every page's footer also links to youtube.com/@MakerFoundryApp and buymeacoffee.com/bwattendorf (the owner's, 2026-11-01): plain links, nothing loaded from either site. **Done** (2026-11-01) |
+| MF-92 | Picks of the week and galleries on the home page | the owner's request (2026-11-01). Each week (Monday, UTC) one design per craft (embroidery, laser, 3D printing while MakerFoundry 3D is open): an admin picks it with a button on the design's page, or else the week's most liked and made design of that craft (then most downloaded, then newest) is kept for the week when the home page first shows it (`mf_picks`, migration 0045). The home page shows the picks, then the newest designs, a gallery of what people made (their make photos) and the most downloaded; a pick's page says so; `/picks` keeps the last 26 weeks (in the sitemap). Original wording and layout. **Done** (2026-11-01) |
 | MF-91 | Admins delete an account's data | `/admin/accounts` (issue #55): an admin looks up an account by number (its email and designs) and, typing the number to confirm, deletes its data with the same code as the person's own delete (files in storage too, amounts kept), recorded in the moderation log; admins' accounts are refused. For deletion requests by email and test accounts nobody can sign into. **Done** (2026-11-01) |
 | MF-95 | Nobody pays for a deleted design | deleting a design (or an account's data) first closes the checkouts that could still pay for it (audit, 2026-11-01). **Done** (2026-11-01): `selling::close_checkouts` asks Stripe about each unpaid checkout of the design from the last 30 days: an open one is expired at Stripe (`/v1/checkout/sessions/<id>/expire`) and its order marked expired; while one is paid but not yet confirmed here (or a bank debit is on its way), or Stripe can't be reached, the deletion waits and the maker is told why. The person's own data deletion and an admin's do the same for every design they would delete |
 | MF-54 | Founding creators | MakerFoundry's first 100 creators, with a numbered badge. **Built 2026-10-30** (the owner's decisions: 100 spots, makers apply and an admin approves, a numbered badge): `/founding` explains it and shows the spots left (it works before the launch, with a link preview, for the Facebook post); signed-in makers apply (the name to know them by, an optional link to their work, what they make), one application an account; admins approve or decline at `/admin/founding`, approving giving the lowest free number up to 100 (never more, approvals one at a time); "Founding creator #7" on their maker page, their designs' pages and their account page; removing a badge frees its number; applications in the data download and deleted with the data (`founding.rs`). Early access to MakerFoundry 3D comes with the 3D hub (#22) |
@@ -495,6 +496,20 @@ StitchShop's side is stitchbench#74).
   `message.expired` with `conversation` and `reason`; an `order.placed` the hub refuses is
   refunded like an expired one; email addresses and phone numbers refused in the order's name and
   note. Fixtures converted (7 valid, 34 invalid); `docs/shop-orders-contract.md` rewritten.
+- **Fixes from the code review, 2026-11-01** (`migrations/0044_shop_order_review.sql`), before
+  ordering opens:
+  - a shop is offered only once the Foundry Account its catalogue names has confirmed the shop on
+    its account page (a catalogue naming another account resets it);
+  - a shop's status never takes an order back (except between proofs), and doesn't overwrite a
+    cancel that came in meanwhile;
+  - a held message is taken out of the held ones only once applied, and retried each round;
+  - a payment its order can't take (deleted, paid through another checkout, another amount) is
+    recorded and refunded in full by the sweep; no second checkout is made while Stripe can't say
+    whether the first is still open;
+  - deleting your data waits while an order from a shop is in progress, and blanks the hub's copies
+    of finished orders' messages; an erased order still loads;
+  - refunds that keep failing don't hold up the rest; seqs are taken one at a time per
+    conversation; the sweep runs every minute whether or not StitchHub is on.
 - **A test deploy's own name on the hub, built 2026-11-01** (StitchHub's request): the name
   MakerFoundry signs, sends and takes as comes from `MF_STITCHHUB_SERVICE` (default
   `service:makerfoundry`), so the test deploy, with its own hub key, is
