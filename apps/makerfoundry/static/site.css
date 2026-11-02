@@ -108,6 +108,8 @@ button.secondary { background: transparent; color: var(--fg); border: 1px solid 
 .preview .stitches { display: block; width: 100%; height: auto; max-height: 70vh; }
 /* laser lines: the same width on screen whatever the design's size */
 .preview .lines path { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
+/* a paid design's lower-detail picture, for people who haven't bought it */
+.preview figcaption { padding: .4rem .8rem; font-size: .85rem; color: var(--muted); background: var(--card); border-top: 1px solid var(--line); }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; margin: 0 0 1.5rem; max-width: 40rem; }
 .facts div { background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .8rem; }
 .facts dt { color: var(--muted); font-size: .85rem; }
@@ -340,3 +342,9 @@ blockquote.quoted { margin: 0 0 1rem; padding: .5rem .8rem; border-left: 3px sol
 .gallery a { display: grid; gap: .3rem; color: var(--fg); text-decoration: none; font-size: .9rem; overflow-wrap: anywhere; }
 .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: .6rem; border: 1px solid var(--line); background: var(--card); }
 .gallery a:hover img { border-color: var(--accent); }
+
+/* A shop's branded page */
+.shop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
+.shop-head h1 { margin: 0; }
+.shop-logo { width: 5rem; height: 5rem; object-fit: contain; border-radius: .75rem; border: 1px solid var(--line); background: #fff; }
+.shop-brand > p > a { color: var(--accent); }

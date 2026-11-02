@@ -45,8 +45,14 @@ pub fn shipping_words(s: &super::contract::Shipping) -> String {
     words
 }
 
-/// Keeps a shop's latest catalogue (`from` is `shop:<hub shop id>`; the id is its page's handle).
-pub async fn keep(pool: &PgPool, from: &str, c: &Catalog) -> Result<(), String> {
+/// Keeps a shop's latest catalogue (`from` is `shop:<hub shop id>`; the id is its page's handle),
+/// with its branding: its short address if it's free, and its logo to fetch if it changed.
+pub async fn keep(
+    pool: &PgPool,
+    storage: Option<&crate::storage::Storage>,
+    from: &str,
+    c: &Catalog,
+) -> Result<(), String> {
     let handle = from.strip_prefix("shop:").ok_or("not from a shop")?;
     let value = serde_json::to_value(c).map_err(|e| e.to_string())?;
     sqlx::query(
@@ -68,8 +74,139 @@ pub async fn keep(pool: &PgPool, from: &str, c: &Catalog) -> Result<(), String> 
     .bind(c.shipping.flat_cents)
     .execute(pool)
     .await
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    let brand = super::brand::read(c.shop.brand.as_ref());
+    // its short address: first come first served
+    let subdomain = match &brand.handle {
+        Some(h) => {
+            let taken: bool =
+                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM mf_shops WHERE subdomain = $1 AND party <> $2)")
+                    .bind(h)
+                    .bind(from)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            if taken {
+                eprintln!("shops: {from} asked for an address another shop has");
+                None
+            } else {
+                Some(h.clone())
+            }
+        }
+        None => None,
+    };
+    sqlx::query("UPDATE mf_shops SET subdomain = $2 WHERE party = $1")
+        .bind(from)
+        .bind(&subdomain)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    // its logo: a new one is fetched by the next round; the old one goes
+    let (sha, size) = brand
+        .logo
+        .as_ref()
+        .map_or((None, None), |l| (Some(l.sha256.clone()), i64::try_from(l.size).ok()));
+    let (had_sha, had_key): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT logo_sha256, logo_key FROM mf_shops WHERE party = $1")
+            .bind(from)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    let old = if had_sha == sha {
+        None
+    } else {
+        sqlx::query(
+            "UPDATE mf_shops SET logo_sha256 = $2, logo_size = $3, logo_key = NULL, logo_type = NULL WHERE party = $1",
+        )
+        .bind(from)
+        .bind(&sha)
+        .bind(size)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Some(had_key)
+    };
+    if let (Some(Some(key)), Some(storage)) = (old, storage)
+        && let Err(e) = storage.delete(&key).await
+    {
+        eprintln!("shops: deleting an old logo of {from}: {e}");
+    }
+    Ok(())
+}
+
+/// Shops' logos not fetched yet: each from the hub's files (the `catalog` conversation), checked
+/// by size and SHA-256, drawn again as PNG or JPEG and kept. One that the hub doesn't have, or
+/// that isn't a picture, is let go (the shop shows without one); one that fails for a moment is
+/// tried again next round.
+pub async fn fetch_logos(pool: &PgPool, hub: &super::hub::Hub, storage: &crate::storage::Storage) {
+    let due: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT party, logo_sha256, logo_size FROM mf_shops
+         WHERE logo_sha256 IS NOT NULL AND logo_key IS NULL AND logo_size IS NOT NULL LIMIT 5",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for (party, sha, size) in due {
+        let let_go = |why: String| {
+            let (pool, party) = (pool.clone(), party.clone());
+            async move {
+                eprintln!("shops: {party}'s logo left out: {why}");
+                let _ = sqlx::query("UPDATE mf_shops SET logo_sha256 = NULL, logo_size = NULL WHERE party = $1")
+                    .bind(&party)
+                    .execute(&pool)
+                    .await;
+            }
+        };
+        let bytes = match hub
+            .download(
+                super::contract::CATALOG,
+                &sha,
+                u64::try_from(size).unwrap_or(0),
+                super::brand::MAX_LOGO_BYTES,
+            )
+            .await
+        {
+            Ok(b) => b,
+            Err(why) if why.contains("no such file") || why.contains("isn't the one") || why.contains("too large") => {
+                let_go(why).await;
+                continue;
+            }
+            Err(why) => {
+                eprintln!("shops: {party}'s logo: {why} (tried again)");
+                continue;
+            }
+        };
+        let drawn = tokio::task::spawn_blocking(move || {
+            let out = crate::photos::reencode(&bytes)?;
+            let kind = crate::photos::check(&out)?;
+            Ok::<_, String>((out, kind))
+        })
+        .await;
+        let Ok(Ok((image, kind))) = drawn else {
+            let_go("not a PNG or JPEG".into()).await;
+            continue;
+        };
+        let Ok(key) = crate::storage::new_key("shop-logo") else {
+            continue;
+        };
+        if let Err(e) = storage.put(&key, image, kind).await {
+            eprintln!("shops: {party}'s logo: {e} (tried again)");
+            continue;
+        }
+        let kept = sqlx::query(
+            "UPDATE mf_shops SET logo_key = $3, logo_type = $4 WHERE party = $1 AND logo_sha256 = $2 AND logo_key IS NULL",
+        )
+        .bind(&party)
+        .bind(&sha)
+        .bind(&key)
+        .bind(kind)
+        .execute(pool)
+        .await;
+        if !matches!(kept, Ok(r) if r.rows_affected() == 1) {
+            // (the catalogue changed meanwhile: this one isn't wanted)
+            let _ = storage.delete(&key).await;
+        }
+    }
 }
 
 /// A shop as MakerFoundry keeps it.
@@ -221,14 +358,48 @@ pub async fn list(State(state): State<AppState>, headers: HeaderMap) -> Response
 
 /// `GET /shops/<handle>`: a shop's products and prices.
 pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle): Path<String>) -> Response {
+    render(&state, &headers, &handle, false).await
+}
+
+/// What MakerFoundry keeps of a shop's branding besides its catalogue: its short address and
+/// whether its logo is kept.
+async fn branding(pool: &PgPool, party: &str) -> (Option<String>, bool) {
+    sqlx::query_as::<_, (Option<String>, bool)>("SELECT subdomain, logo_key IS NOT NULL FROM mf_shops WHERE party = $1")
+        .bind(party)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or((None, false))
+}
+
+/// The host MakerFoundry is served at (`makerfoundry.app`), from its public address.
+fn apex(state: &AppState) -> Option<String> {
+    reqwest::Url::parse(&state.public_url)
+        .ok()?
+        .host_str()
+        .map(str::to_ascii_lowercase)
+}
+
+/// A shop's page, at `/shops/<handle>` or (`on_own_address`) at its short address, where its
+/// stylesheet and logo are served from the same address (the pages' CSP allows only their own).
+async fn render(state: &AppState, headers: &HeaderMap, handle: &str, on_own_address: bool) -> Response {
     let (Some(_), Some(pool)) = (state.stitchhub.as_ref(), state.db.as_ref()) else {
         return crate::designs::not_found();
     };
-    let Some(shop) = orderable(&state, pool, &handle).await else {
+    let Some(shop) = orderable(state, pool, handle).await else {
         return crate::designs::not_found();
     };
-    let signed_in = current_user(&state, &headers).await.is_some();
+    let signed_in = current_user(state, headers).await.is_some();
     let c = &shop.catalog;
+    let brand = super::brand::read(c.shop.brand.as_ref());
+    let (subdomain, has_logo) = branding(pool, &shop.party).await;
+    let base = if on_own_address {
+        String::new()
+    } else {
+        format!("/shops/{}", escape(&shop.handle))
+    };
+    let name = brand.display_name.clone().unwrap_or_else(|| c.shop.name.clone());
     let products: String = c.products.iter().map(|p| product_html(&shop.handle, p)).collect();
     let shipping = if c.shop.ships {
         shipping_words(&c.shipping)
@@ -240,16 +411,162 @@ pub async fn show(State(state): State<AppState>, headers: HeaderMap, Path(handle
     } else {
         ""
     };
+    let style = if super::brand::css(&brand).is_empty() {
+        String::new()
+    } else {
+        format!(r#"<link rel="stylesheet" href="{base}/brand.css">"#)
+    };
+    let logo = if has_logo {
+        format!(r#"<img class="shop-logo" src="{base}/logo" alt="{}">"#, escape(&name))
+    } else {
+        String::new()
+    };
+    let intro = brand.intro.as_deref().map(super::brand::intro_html).unwrap_or_default();
+    let website = brand
+        .website
+        .as_deref()
+        .map(|w| {
+            format!(
+                r#"<p><a href="{}" rel="noopener nofollow ugc">The shop's website</a></p>"#,
+                escape(w)
+            )
+        })
+        .unwrap_or_default();
+    let address = match (&subdomain, apex(state)) {
+        (Some(sub), Some(apex)) if !on_own_address => format!(
+            r#"<p class="muted">Its own address: <a href="https://{sub}.{apex}/">{sub}.{apex}</a></p>"#,
+            sub = escape(sub),
+            apex = escape(&apex),
+        ),
+        _ => String::new(),
+    };
+    let back = match apex(state) {
+        Some(apex) if on_own_address => format!(
+            r#"<p><a href="https://{}/shops">Shops on MakerFoundry</a></p>"#,
+            escape(&apex)
+        ),
+        _ => r#"<p><a href="/shops">Shops</a></p>"#.to_string(),
+    };
     Html(page(
-        &format!("{} · MakerFoundry", c.shop.name),
+        &format!("{name} · MakerFoundry"),
         &format!(
-            r#"<section class="design"><p><a href="/shops">Shops</a></p><h1>{name}</h1><p class="lead">{town}</p><p>{shipping}{pickup}</p><div class="products">{products}</div></section>"#,
-            name = escape(&c.shop.name),
+            r#"<section class="design shop-brand">{style}{back}<div class="shop-head">{logo}<div><h1>{name_html}</h1><p class="lead">{town}</p></div></div>{intro}{website}{address}<p>{shipping}{pickup}</p><div class="products">{products}</div><p class="muted">Sold by {name_html} through MakerFoundry, which takes the payment.</p></section>"#,
+            name_html = escape(&name),
             town = escape(&c.shop.town),
         ),
         signed_in,
     ))
     .into_response()
+}
+
+/// `/shops/<handle>/logo` (and `/logo` at its short address): the shop's logo, as drawn again.
+pub async fn logo(State(state): State<AppState>, Path(handle): Path<String>) -> Response {
+    logo_of(&state, &handle).await
+}
+
+async fn logo_of(state: &AppState, handle: &str) -> Response {
+    let not_found = || axum::http::StatusCode::NOT_FOUND.into_response();
+    let (Some(pool), Some(storage)) = (state.db.as_ref(), state.storage.as_ref()) else {
+        return not_found();
+    };
+    if orderable(state, pool, handle).await.is_none() {
+        return not_found();
+    }
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT logo_key, logo_type FROM mf_shops WHERE handle = $1")
+            .bind(handle)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((Some(key), Some(kind))) = row else {
+        return not_found();
+    };
+    let kind = if kind == "image/png" { "image/png" } else { "image/jpeg" };
+    match storage.get(&key).await {
+        Ok(Some(bytes)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, kind),
+                (axum::http::header::CACHE_CONTROL, "public, max-age=3600"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        _ => not_found(),
+    }
+}
+
+/// `/shops/<handle>/brand.css` (and `/brand.css` at its short address): its accent colour.
+pub async fn brand_css(State(state): State<AppState>, Path(handle): Path<String>) -> Response {
+    css_of(&state, &handle).await
+}
+
+async fn css_of(state: &AppState, handle: &str) -> Response {
+    let Some(pool) = state.db.as_ref() else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(shop) = orderable(state, pool, handle).await else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=300"),
+        ],
+        super::brand::css(&super::brand::read(shop.catalog.shop.brand.as_ref())),
+    )
+        .into_response()
+}
+
+/// Shops' short addresses (`<subdomain>.makerfoundry.app`): its page at `/`, with its stylesheet
+/// and logo, and the site's own stylesheet and icon; anything else goes to the same address on
+/// MakerFoundry itself, where signing in and checking out stay. `www.` goes to MakerFoundry; an
+/// address no shop has is "not found". Requests for MakerFoundry itself pass straight through.
+pub async fn subdomains(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.split(':').next().unwrap_or("").to_ascii_lowercase())
+        .unwrap_or_default();
+    let Some(apex) = apex(&state) else {
+        return next.run(request).await;
+    };
+    let Some(label) = host.strip_suffix(&format!(".{apex}")) else {
+        return next.run(request).await;
+    };
+    let path_and_query = request.uri().path_and_query().map_or("/", |p| p.as_str()).to_string();
+    let to_main = || axum::response::Redirect::permanent(&format!("https://{apex}{path_and_query}")).into_response();
+    if label == "www" {
+        return to_main();
+    }
+    let path = request.uri().path().to_string();
+    if path.starts_with("/static/") || path == "/favicon.svg" {
+        return next.run(request).await;
+    }
+    let handle: Option<String> = match (state.db.as_ref(), super::brand::valid_handle(label)) {
+        (Some(pool), true) => sqlx::query_scalar("SELECT handle FROM mf_shops WHERE subdomain = $1")
+            .bind(label)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten(),
+        _ => None,
+    };
+    let Some(handle) = handle else {
+        return crate::designs::not_found();
+    };
+    let headers = request.headers().clone();
+    match path.as_str() {
+        "/" => render(&state, &headers, &handle, true).await,
+        "/logo" => logo_of(&state, &handle).await,
+        "/brand.css" => css_of(&state, &handle).await,
+        _ => to_main(),
+    }
 }
 
 // ---------------------------------------------------------------- a shop's account confirming it
