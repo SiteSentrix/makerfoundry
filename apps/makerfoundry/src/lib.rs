@@ -8,6 +8,7 @@ pub mod accounts;
 pub mod activity;
 pub mod api;
 pub mod cloud;
+pub mod coarse;
 pub mod collections;
 pub mod comments;
 pub mod convert;
@@ -190,6 +191,7 @@ pub fn app(state: AppState) -> Router {
         .route("/d/{id}", get(listings::public_page))
         .route("/d/{id}/download", get(listings::download))
         .route("/d/{id}/open", get(api::open_paid))
+        .route("/d/{id}/preview.png", get(listings::preview_png))
         .route("/d/{id}/{slug}", get(listings::public_page_slug))
         .route("/browse", get(listings::browse))
         .route("/picks", get(picks::past))
