@@ -35,7 +35,7 @@ fn page_html(problem: &str) -> String {
 <p><a class="button" href="/account/data.json">Download a copy</a></p>
 <h2>Delete your MakerFoundry data</h2>
 <p>This deletes your maker profile, your designs with their files and photos, your makes, comments, collections and follows, and signs you out everywhere. It can't be undone.</p>
-<p>Kept, because the law asks us to: your purchases and sales and their amounts, which legal pages you agreed to, and reports and copyright notices. A design people have bought is unpublished but kept, so they keep their downloads. Orders from shops keep their amounts; your name, address, notes, art and the shops' proofs are deleted.</p>
+<p>Kept, because the law asks us to: your purchases and sales and their amounts, which legal pages you agreed to, and reports and copyright notices. A design people have bought is unpublished but kept, so they keep their downloads. Orders from shops keep their amounts; your name, address, notes, art and the shops' proofs are deleted. While an order from a shop is still in progress, it waits until the order is delivered, collected or cancelled.</p>
 <p>Your Foundry Account itself (email, password, credits) is kept by StitchFoundry, and closed there.</p>
 {problem}
 <form method="post" action="/account/data/delete" class="add-file">
@@ -166,6 +166,18 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Form(f): 
     if !f.confirm.trim().eq_ignore_ascii_case("delete") {
         return private("Your data · MakerFoundry", &page_html("Type delete to confirm."), true);
     }
+    match orders_in_progress(pool, user.account_id).await {
+        Ok(0) => {}
+        Ok(_) => return private("Your data · MakerFoundry", &page_html(ORDERS_IN_PROGRESS), true),
+        Err(e) => {
+            eprintln!("data: delete {}: {e}", user.account_id);
+            return private(
+                "Your data · MakerFoundry",
+                &page_html("Your data couldn't be deleted just now. Nothing was changed. Please try again."),
+                true,
+            );
+        }
+    }
     let keys = match erase(pool, user.account_id).await {
         Ok(keys) => keys,
         Err(e) => {
@@ -197,6 +209,23 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Form(f): 
     }
     resp
 }
+
+/// How many of `account`'s orders from shops are still with a shop or have a refund on its way:
+/// while any are, the data isn't deleted (the shop still needs the address and art, and the
+/// refund its order).
+pub async fn orders_in_progress(pool: &PgPool, account: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM mf_shop_orders WHERE buyer_account = $1
+           AND (status IN ('paid', 'sent', 'received', 'proof_sent', 'approved', 'in_production', 'ready')
+                OR (refund_due AND fee_returned_at IS NULL))",
+    )
+    .bind(account)
+    .fetch_one(pool)
+    .await
+}
+
+/// What's said when orders from shops are still in progress.
+pub const ORDERS_IN_PROGRESS: &str = "An order from a shop is still in progress (or its refund is on its way), and the shop needs your address and art to finish it. Your data can be deleted once it's delivered, collected or cancelled.";
 
 /// Deletes `account`'s data in one transaction → the storage keys of the files it had.
 pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Error> {
@@ -278,6 +307,12 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
         "UPDATE mf_showcase_consents SET withdrawn_at = now() WHERE account_id = $1 AND withdrawn_at IS NULL",
         "UPDATE mf_designs SET import_id = NULL WHERE import_id IN (SELECT id FROM mf_imports WHERE account_id = $1)",
         "DELETE FROM mf_imports WHERE account_id = $1",
+        // (the copies of finished orders' messages kept for the hub: their contents blanked)
+        "UPDATE mf_hub_outbox SET envelope = jsonb_set(envelope, '{body}', '{}'::jsonb)
+         WHERE (sent_at IS NOT NULL OR failed IS NOT NULL)
+           AND order_ref IN (SELECT ref FROM mf_shop_orders WHERE buyer_account = $1)",
+        "DELETE FROM mf_hub_held WHERE order_ref IN (SELECT ref FROM mf_shop_orders WHERE buyer_account = $1)",
+        // (an unpaid order goes; a payment that still comes for it is refunded)
         "DELETE FROM mf_shop_orders WHERE buyer_account = $1 AND status IN ('pending', 'abandoned')",
         "UPDATE mf_shop_orders SET customer_name = '', ship_to = NULL, note = '', cancel_why = '', art = '[]'::jsonb
          WHERE buyer_account = $1",
@@ -433,6 +468,24 @@ pub async fn admin_delete(
         )
         .await;
         return private(title, &admin_accounts_html(&lookup, &found), true);
+    }
+    match orders_in_progress(&pool, account).await {
+        Ok(0) => {}
+        Ok(_) => {
+            let found = found_html(&state, &pool, admin.account_id, account, ORDERS_IN_PROGRESS).await;
+            return private(title, &admin_accounts_html(&lookup, &found), true);
+        }
+        Err(e) => {
+            eprintln!("data: admin delete {account}: {e}");
+            return private(
+                title,
+                &admin_accounts_html(
+                    &lookup,
+                    r#"<p class="problem" role="alert">That couldn't be done just now. Nothing was changed. Please try again.</p>"#,
+                ),
+                true,
+            );
+        }
     }
     match account_summary(&pool, account).await {
         Ok(Some(_)) => {}

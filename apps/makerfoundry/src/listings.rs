@@ -223,16 +223,27 @@ pub fn cards_html(cards: &[Card]) -> String {
     if cards.is_empty() {
         return String::new();
     }
-    let items: String = cards
-        .iter()
-        .map(|c| {
+    let items: String = cards.iter().map(|c| card_html(c, None)).collect();
+    format!(r#"<ul class="cards">{items}</ul>"#)
+}
+
+/// One card, with a label above its title (`Embroidery pick`) when given.
+pub fn card_html(c: &Card, label: Option<&str>) -> String {
+    {
+        {
             let picture = match (c.photo, c.model_file) {
-                (Some(p), _) => format!(r#"<img src="/designs/{}/photos/{p}/thumb" alt="" loading="lazy">"#, c.id),
+                (Some(p), _) => format!(
+                    r#"<img src="/designs/{}/photos/{p}/thumb" alt="" loading="lazy">"#,
+                    c.id
+                ),
                 (None, Some(f)) => format!(r#"<img src="/3d/{}/files/{f}/hero" alt="" loading="lazy">"#, c.id),
                 _ => r#"<span class="muted">No photo</span>"#.to_string(),
             };
             format!(
-                r#"<li><a href="/d/{id}/{slug}"><span class="thumb">{picture}</span><strong>{title}</strong><span class="muted">by {maker} · {kind}, {format}{downloads}</span><span class="price">{price}</span></a></li>"#,
+                r#"<li><a href="/d/{id}/{slug}"><span class="thumb">{picture}</span>{label}<strong>{title}</strong><span class="muted">by {maker} · {kind}, {format}{downloads}</span><span class="price">{price}</span></a></li>"#,
+                label = label
+                    .map(|l| format!(r#"<span class="pick">{}</span>"#, escape(l)))
+                    .unwrap_or_default(),
                 id = c.id,
                 slug = slug(&c.title),
                 title = escape(&c.title),
@@ -244,11 +255,48 @@ pub fn cards_html(cards: &[Card]) -> String {
                     1 => " · 1 download".to_string(),
                     n => format!(" · {n} downloads"),
                 },
-                price = if c.price == 0 { "Free".to_string() } else { dollars(c.price) },
+                price = if c.price == 0 {
+                    "Free".to_string()
+                } else {
+                    dollars(c.price)
+                },
             )
+        }
+    }
+}
+
+/// Published designs `ids` as cards, in that order (3D models only while `three_d`).
+pub async fn cards_of(pool: &PgPool, ids: &[i64], three_d: bool) -> Vec<Card> {
+    let rows = sqlx::query(
+        "SELECT d.id, d.title, d.kind, d.format, d.downloads, d.price_cents, m.name AS maker,
+                (SELECT p.id FROM mf_design_photos p WHERE p.design_id = d.id ORDER BY p.position LIMIT 1) AS photo,
+                (SELECT f.id FROM mf_model_files f WHERE f.design_id = d.id AND f.thumb_key IS NOT NULL ORDER BY f.position LIMIT 1) AS model_file
+         FROM mf_designs d JOIN mf_makers m ON m.account_id = d.account_id
+         WHERE d.id = ANY($1) AND d.status = 'published' AND (d.kind <> 'model3d' OR $2)",
+    )
+    .bind(ids)
+    .bind(three_d)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let mut cards: Vec<Card> = rows
+        .iter()
+        .filter_map(|r| {
+            Some(Card {
+                id: r.try_get("id").ok()?,
+                title: r.try_get("title").ok()?,
+                kind: r.try_get("kind").ok()?,
+                format: r.try_get("format").ok()?,
+                photo: r.try_get("photo").ok()?,
+                model_file: r.try_get("model_file").ok()?,
+                maker: r.try_get("maker").ok()?,
+                downloads: r.try_get("downloads").ok()?,
+                price: r.try_get("price_cents").ok()?,
+            })
         })
         .collect();
-    format!(r#"<ul class="cards">{items}</ul>"#)
+    cards.sort_by_key(|c| ids.iter().position(|i| *i == c.id).unwrap_or(usize::MAX));
+    cards
 }
 
 /// A maker's published designs, as cards.
@@ -263,6 +311,33 @@ pub async fn cards(pool: &PgPool, account: i64, limit: i64) -> String {
             limit,
         )
         .await,
+    )
+}
+
+/// The home page's most downloaded designs (empty until something has been downloaded).
+pub async fn popular(state: &AppState) -> String {
+    let Some(pool) = state.db.as_ref() else {
+        return String::new();
+    };
+    let found: Vec<Card> = find(
+        pool,
+        &Filter {
+            three_d: state.three_d,
+            popular: true,
+            ..Filter::default()
+        },
+        8,
+    )
+    .await
+    .into_iter()
+    .filter(|c| c.downloads > 0)
+    .collect();
+    if found.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<section class="design"><h2>Most downloaded</h2>{}<p><a href="/browse?sort=popular">See more</a></p></section>"#,
+        cards_html(&found)
     )
 }
 
@@ -655,8 +730,16 @@ async fn show(state: AppState, headers: HeaderMap, id: i64) -> Response {
         ),
         None => String::new(),
     };
+    // picks of the week (an admin's button to pick it; its weeks as a pick for everyone)
+    let picked = crate::picks::badge_html(pool, id).await;
+    let pick_button =
+        if d.status == "published" && viewer.as_ref().is_some_and(|u| state.admins.contains(&u.account_id)) {
+            crate::picks::admin_button(id, &d.kind)
+        } else {
+            String::new()
+        };
     let intro = format!(
-        r#"{draft_note}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{origin}{buy}{open}{save}"#
+        r#"{draft_note}{picked}<p class="byline">{byline}{fits}{downloads}{made}{talk}{saves}</p>{origin}{buy}{open}{save}{pick_button}"#
     );
     let photos = designs::photos_html(pool, id).await;
     let (_, may_download) = access(&state, pool, viewer.as_ref(), &d, id).await;
