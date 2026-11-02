@@ -31,6 +31,10 @@ phone. Plain, step-by-step instructions work best for anything he has to click t
   the like) from shops through MakerFoundry, live, never a demo; MakerFoundry takes the payment and
   keeps 10%, and the card fee comes out of the shop's share (issue #2,
   `docs/stitchshop-ordering-audit.md`).
+- **Branded shops** (2026-11-02): each shop selling through MakerFoundry gets a free branded page
+  (its name, logo, colour, intro, products) at `<shop>.makerfoundry.app`. No monthly fee: the
+  shop pays only MakerFoundry's 10% of each order and the card fee (2.9% + 30¢), both stated plainly
+  on the site and in the terms. Sales tax stays MakerFoundry's to collect, as the marketplace.
 - **Stripe** (2026-10-20): MakerFoundry uses StitchFoundry's Stripe account, with Connect turned
   on, its own restricted key and its own webhooks (`docs/deploy.md` › Stripe).
 - Same working rules as StitchFoundry (`CLAUDE.md`); commits authored as Bruce Wattendorf.

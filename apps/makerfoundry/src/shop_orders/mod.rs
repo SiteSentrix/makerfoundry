@@ -4,6 +4,7 @@
 //! `MF_STITCHHUB_URL`, `MF_STITCHHUB_KEY` and `MF_STITCHHUB_SIGNING_KEY` are set.
 
 pub mod after;
+pub mod brand;
 pub mod contract;
 pub mod hub;
 pub mod orders;
@@ -22,7 +23,7 @@ use contract::{Envelope, Message};
 /// Applies a checked message from a shop (or the hub), once and in order (`hub::sync`).
 pub async fn apply(state: AppState, pool: PgPool, env: Envelope, msg: Message) -> Result<(), String> {
     match &msg {
-        Message::Catalog(c) => shops::keep(&pool, env.sender(), c).await,
+        Message::Catalog(c) => shops::keep(&pool, state.storage.as_ref(), env.sender(), c).await,
         Message::OrderStatus(s) => after::status(&pool, &env, s).await,
         Message::ProofSent(p) => after::proof(&state, &pool, &env, p).await,
         Message::OrderCancel(c) => after::shop_cancelled(&state, &pool, &env, c).await,
@@ -53,6 +54,10 @@ pub async fn sync(state: &AppState) -> Result<(), String> {
             shops::refresh(pool, &ready).await?;
         }
         Err(e) => eprintln!("stitchhub: shops: {e}"),
+    }
+    // shops' logos not fetched yet
+    if let Some(storage) = state.storage.as_ref() {
+        shops::fetch_logos(pool, hub, storage).await;
     }
     result
 }
