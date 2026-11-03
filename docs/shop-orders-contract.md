@@ -161,10 +161,13 @@ verified webhook), never before; signed (above). Only these fields: the hub refu
                                            "postcode" (or "postal"), "country" } },
   "totals": { "goods_cents": 0, "setup_cents": 0, "shipping_cents": 0, "tax_cents": 0,
               "paid_cents": 0, "fee_cents": 0, "card_fee_cents": 0, "shop_gets_cents": 0 },
-  "note": "…" }
+  "note"?: "…" }
 ```
 - Art is in the hub for the conversation (Files, above); the shop checks it by size and SHA-256.
   `preview` is optional.
+- `note` is optional: when the customer leaves it blank (empty or only spaces) it is **left out**,
+  never sent as `""` (the hub refuses an empty note; issue #77). The same holds for `note` in
+  `order.status`, `proof.sent` and `proof.answer`.
 - `ship_to` is there exactly when `fulfilment` is `ship`.
 - The customer's email and phone are **never** sent, nor allowed in the name or the note (the
   order form refuses them; the hub refuses them too); the shop reaches the customer through the
@@ -179,11 +182,12 @@ This maps StitchShop's `QUOTED → APPROVED → IN_PRODUCTION → READY → COLL
 out (the issue's "proof sent").
 
 **`proof.sent` (shop → MakerFoundry), v1.** `{ "proof": 1, "mockup": { size, sha256, type },
-"note": "…" }`, the mock-up in the hub for the conversation (Files, above). MakerFoundry shows the mock-up on the customer's order page (re-drawn from the
+"note"?: "…" }`, the mock-up in the hub for the conversation (Files, above). MakerFoundry shows the mock-up on the customer's order page (re-drawn from the
 checked image, never served as sent).
 
 **`proof.answer` (MakerFoundry → shop), v1.** `{ "proof": 1, "answer": "approved" |
-"changes", "note": "…" }`. After `approved`, the shop moves the order to `APPROVED`.
+"changes", "note"?: "…" }`; a note is needed for `changes`, and an approval without one leaves
+`note` out. After `approved`, the shop moves the order to `APPROVED`.
 
 **`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`, `by` matching who sent it. Before
 `in_production`, either side may cancel, for a full refund (MakerFoundry gives back its 10%, as
