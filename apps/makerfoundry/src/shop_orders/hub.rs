@@ -1064,6 +1064,37 @@ pub mod stand_in {
             if secs(&env.created_at).is_none_or(|t| (t - now).abs() > 600) {
                 return err(StatusCode::BAD_REQUEST, "clock");
             }
+            // as StitchHub's sync-orders.mjs: an optional text is left out, never empty; a reason is
+            // needed to cancel; notes and reasons at most 500 characters (issue #77)
+            for field in ["note", "tracking"] {
+                if env
+                    .body
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t.trim().is_empty())
+                {
+                    return err(StatusCode::BAD_REQUEST, "bad_field");
+                }
+            }
+            if env.kind == "order.cancel"
+                && env
+                    .body
+                    .get("why")
+                    .and_then(Value::as_str)
+                    .is_none_or(|t| t.trim().is_empty())
+            {
+                return err(StatusCode::BAD_REQUEST, "bad_field");
+            }
+            for field in ["note", "why"] {
+                if env
+                    .body
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t.chars().count() > 500)
+                {
+                    return err(StatusCode::BAD_REQUEST, "bad_field");
+                }
+            }
             if env.kind == "order.placed" {
                 let signed = hub
                     .public_key

@@ -113,8 +113,8 @@ fn form_html(shop: &Shop, sku: &str, problem: &str) -> Option<String> {
         r#"<fieldset><legend>Shipping address <small>(only if it's shipped)</small></legend>
 <label>Street <input name="line1" maxlength="100" autocomplete="address-line1"></label>
 <label>Apartment, suite <small>(optional)</small> <input name="line2" maxlength="100" autocomplete="address-line2"></label>
-<label>City <input name="city" maxlength="100" autocomplete="address-level2"></label>
-<label>State <input name="region" maxlength="100" autocomplete="address-level1"></label>
+<label>City <input name="city" maxlength="80" autocomplete="address-level2"></label>
+<label>State <input name="region" maxlength="40" autocomplete="address-level1"></label>
 <label>ZIP code <input name="postcode" maxlength="20" autocomplete="postal-code"></label>
 <input type="hidden" name="country" value="US"></fieldset>"#
     } else {
@@ -134,7 +134,7 @@ fn form_html(shop: &Shop, sku: &str, problem: &str) -> Option<String> {
 <label>Your art <small>(an embroidery file for embroidery; a PNG or JPEG for printing; 10 MB at most)</small><input type="file" name="art" required></label>
 <label>Your name <small>(for the shop)</small> <input name="name" maxlength="100" required autocomplete="name"></label>
 {delivery}{address}
-<label>A note for the shop <small>(optional)</small> <textarea name="note" maxlength="1000" rows="3"></textarea></label>
+<label>A note for the shop <small>(optional)</small> <textarea name="note" maxlength="500" rows="3"></textarea></label>
 <label class="choice"><input type="checkbox" name="rights" value="yes"> <span>I own this art or have the right to have it printed or stitched.</span></label>
 <button type="submit">See the price</button>
 </form></section>"#,
@@ -302,6 +302,17 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
         if a.line1.is_empty() || a.city.is_empty() || a.region.is_empty() || a.postcode.is_empty() {
             return Err("Give the shipping address.".into());
         }
+        // (as long as the shop's hub takes: never an order paid and then refused)
+        let longest = [
+            (&a.line1, contract::MAX_NAME),
+            (&a.line2, contract::MAX_NAME),
+            (&a.city, contract::MAX_CITY),
+            (&a.region, contract::MAX_REGION),
+            (&a.postcode, contract::MAX_POSTCODE),
+        ];
+        if longest.iter().any(|(v, max)| v.chars().count() > *max) {
+            return Err("Part of the address is too long: the street at most 120 characters, the city 80, the state 40, the ZIP code 20.".into());
+        }
         Some(a)
     } else {
         None
@@ -335,6 +346,9 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
         }],
     };
     let note = f("note");
+    if note.chars().count() > contract::MAX_NOTE {
+        return Err(format!("Keep the note to {} characters.", contract::MAX_NOTE));
+    }
     // (the hub refuses an order that carries them: the shop reaches the customer through the order)
     if contract::has_contact(&note) || contract::has_contact(&name) {
         return Err("Leave email addresses and phone numbers out of your name and the note: the shop answers you on your order's page.".into());

@@ -11953,3 +11953,86 @@ async fn copies_of_messages_to_shops_go_30_days_after_the_order_is_done() {
         0
     );
 }
+
+// ---------------------------------------------------------------- issue #77: no empty texts to the hub
+
+#[tokio::test]
+async fn an_order_without_a_note_reaches_the_shop_and_blank_texts_are_never_sent() {
+    // (issue #77: StitchHub refuses "note": "", so every order without a note was refunded)
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let pes = sample(sf_formats::Format::Pes);
+    let mut fields = tee_order();
+    fields.retain(|(k, _)| *k != "note");
+    fields.push(("note", "   "));
+    let path = s
+        .send(order_form(TEE, &fields, Some(("logo.pes", &pes)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert!(path.starts_with("/shop-orders/"), "{path}");
+    s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_n1",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, true),
+    )
+    .await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
+    // the hub took it, with no note at all; nothing refused, nothing refunded
+    let placed = sent_of(&hub, "order.placed");
+    assert_eq!(placed.len(), 1, "the hub refused the order");
+    assert!(placed[0]["body"].get("note").is_none(), "{}", placed[0]["body"]);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE failed IS NOT NULL")
+            .await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'sent'")
+            .await,
+        1
+    );
+    assert!(st.lock().unwrap().refunds.is_empty());
+
+    // approving a proof without a note: no note in the answer, and the hub takes it
+    let r = path.trim_start_matches("/shop-orders/").to_string();
+    let png = mockup_png();
+    let m1 = mockup(&hub, &r, &png);
+    makerfoundry::shop_orders::hub::stand_in::deliver(
+        &hub,
+        from_shop("proof.sent", 1, &r, 1, json!({"proof": 1, "mockup": m1})),
+    );
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    s.post(&format!("{path}/proofs/1"), "answer=approved&note=", Some(&bea))
+        .await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let answers = sent_of(&hub, "proof.answer");
+    assert_eq!(answers.len(), 1, "the hub refused the answer");
+    assert_eq!(answers[0]["body"], json!({"proof": 1, "answer": "approved"}));
+
+    // cancelling without a reason (or with a phone number in it): the shop still gets one
+    s.post(&format!("{path}/cancel"), "why=", Some(&bea)).await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let cancels = sent_of(&hub, "order.cancel");
+    assert_eq!(cancels.len(), 1, "the hub refused the cancel");
+    assert_eq!(cancels[0]["body"]["why"], "The customer cancelled the order.");
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_hub_outbox WHERE failed IS NOT NULL")
+            .await,
+        0
+    );
+
+    // a note longer than the hub takes is refused on the form, before anyone pays
+    let mut long = tee_order();
+    long.retain(|(k, _)| *k != "note");
+    let words = "a".repeat(501);
+    long.push(("note", &words));
+    let a = s.send(order_form(TEE, &long, Some(("logo.pes", &pes)), &bea)).await;
+    assert!(a.body.contains("Keep the note to 500 characters"), "{}", a.body);
+}

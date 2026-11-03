@@ -252,6 +252,22 @@ pub struct Totals {
     pub shop_gets_cents: i64,
 }
 
+/// Whether an optional text is blank: then it's left out of the message, never sent as `""`
+/// (StitchHub refuses an empty optional text, issue #77).
+#[allow(clippy::ptr_arg)]
+fn blank(s: &String) -> bool {
+    s.trim().is_empty()
+}
+
+/// The longest texts StitchHub takes (its `sync-orders.mjs`), so MakerFoundry never sends one it
+/// refuses: notes and reasons, names and street lines, city, region (state) and tracking numbers.
+pub const MAX_NOTE: usize = 500;
+pub const MAX_NAME: usize = 120;
+pub const MAX_CITY: usize = 80;
+pub const MAX_REGION: usize = 40;
+pub const MAX_POSTCODE: usize = 20;
+pub const MAX_TRACKING: usize = 80;
+
 /// `order.placed` v1: sent once the customer's payment has succeeded, signed. Its art and preview
 /// are named by hash and travel through the hub's files (`hub::upload`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -263,7 +279,7 @@ pub struct OrderPlaced {
     pub preview: Option<Image>,
     pub customer: Customer,
     pub totals: Totals,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -271,9 +287,9 @@ pub struct OrderPlaced {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct OrderStatus {
     pub status: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub tracking: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -282,7 +298,7 @@ pub struct OrderStatus {
 pub struct ProofSent {
     pub proof: u32,
     pub mockup: Image,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -291,7 +307,7 @@ pub struct ProofSent {
 pub struct ProofAnswer {
     pub proof: u32,
     pub answer: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -392,15 +408,15 @@ fn text(field: &str, s: &str, max: usize, required: bool) -> Result<(), String> 
 }
 
 fn address(field: &str, a: &Address) -> Result<(), String> {
-    for (f, v, req) in [
-        ("name", &a.name, false),
-        ("line1", &a.line1, true),
-        ("line2", &a.line2, false),
-        ("city", &a.city, true),
-        ("region", &a.region, false),
-        ("postcode", &a.postcode, true),
+    for (f, v, req, max) in [
+        ("name", &a.name, false, MAX_NAME),
+        ("line1", &a.line1, true, MAX_NAME),
+        ("line2", &a.line2, false, MAX_NAME),
+        ("city", &a.city, true, MAX_CITY),
+        ("region", &a.region, false, MAX_REGION),
+        ("postcode", &a.postcode, true, MAX_POSTCODE),
     ] {
-        text(&format!("{field}.{f}"), v, 100, req)?;
+        text(&format!("{field}.{f}"), v, max, req)?;
     }
     if a.country.len() != 2 || !a.country.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(format!("{field}.country is a two-letter code"));
@@ -671,7 +687,7 @@ fn check_placed(o: &OrderPlaced) -> Result<(), String> {
         _ => return Err("fulfilment is ship or pickup".into()),
     }
     check_totals(&o.totals)?;
-    text("note", &o.note, 1000, false)?;
+    text("note", &o.note, MAX_NOTE, false)?;
     if has_contact(&o.note) || has_contact(&o.customer.name) {
         return Err("the note has an email address or phone number".into());
     }
@@ -686,15 +702,15 @@ fn check(m: &Message) -> Result<(), String> {
             if !STATUSES.contains(&s.status.as_str()) {
                 return Err(format!("unknown status {}", s.status));
             }
-            text("tracking", &s.tracking, 100, false)?;
-            text("note", &s.note, 1000, false)
+            text("tracking", &s.tracking, MAX_TRACKING, false)?;
+            text("note", &s.note, MAX_NOTE, false)
         }
         Message::ProofSent(p) => {
             if !(1..=100).contains(&p.proof) {
                 return Err("proof is numbered 1 to 100".into());
             }
             image("mockup", &p.mockup)?;
-            text("note", &p.note, 1000, false)
+            text("note", &p.note, MAX_NOTE, false)
         }
         Message::ProofAnswer(a) => {
             if !(1..=100).contains(&a.proof) {
@@ -706,13 +722,22 @@ fn check(m: &Message) -> Result<(), String> {
                 "changes" => return Err("asking for changes needs a note".into()),
                 _ => return Err("an answer is approved or changes".into()),
             }
-            text("note", &a.note, 1000, false)
+            text("note", &a.note, MAX_NOTE, false)?;
+            if has_contact(&a.note) {
+                return Err("the note has an email address or phone number".into());
+            }
+            Ok(())
         }
         Message::OrderCancel(c) => {
             if c.by != "shop" && c.by != "customer" {
                 return Err("by is shop or customer".into());
             }
-            text("why", &c.why, 1000, false)
+            // (StitchHub needs a reason: MakerFoundry gives one when the customer didn't)
+            text("why", &c.why, MAX_NOTE, true)?;
+            if has_contact(&c.why) {
+                return Err("the reason has an email address or phone number".into());
+            }
+            Ok(())
         }
         Message::MessageExpired(e) => {
             if !is_uuid(&e.id) {
@@ -878,6 +903,41 @@ pub fn make(message: &Message, conversation: &str, seq: u64, to: &str, days: i64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blank_optional_texts_are_left_out_never_sent_empty() {
+        // (issue #77: StitchHub refuses an empty optional text)
+        let answer = ProofAnswer {
+            proof: 1,
+            answer: "approved".into(),
+            note: "  ".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&answer).unwrap(),
+            serde_json::json!({"proof": 1, "answer": "approved"})
+        );
+        let status = OrderStatus {
+            status: "received".into(),
+            tracking: String::new(),
+            note: String::new(),
+        };
+        assert_eq!(
+            serde_json::to_value(&status).unwrap(),
+            serde_json::json!({"status": "received"})
+        );
+        let with = ProofAnswer {
+            proof: 1,
+            answer: "changes".into(),
+            note: "Smaller".into(),
+        };
+        assert_eq!(serde_json::to_value(&with).unwrap()["note"], "Smaller");
+        // and a cancel needs its reason
+        let cancel = Message::OrderCancel(OrderCancel {
+            by: "customer".into(),
+            why: String::new(),
+        });
+        assert!(make(&cancel, "mf-8f3a1", 1, "shop:mainst", 7).is_err());
+    }
 
     #[test]
     fn a_service_name_is_service_and_plain_letters() {

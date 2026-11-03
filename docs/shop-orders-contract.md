@@ -161,8 +161,13 @@ verified webhook), never before; signed (above). Only these fields: the hub refu
                                            "postcode" (or "postal"), "country" } },
   "totals": { "goods_cents": 0, "setup_cents": 0, "shipping_cents": 0, "tax_cents": 0,
               "paid_cents": 0, "fee_cents": 0, "card_fee_cents": 0, "shop_gets_cents": 0 },
-  "note": "…" }
+  "note"?: "…" }
 ```
+- **Optional texts are left out when empty, never sent as `""`** (2026-11-03, MF-100, issue #77):
+  `note` here, and `tracking` and `note` in the messages below. The hub's free text needs at least
+  one character, so an empty `note` made it refuse every order with no note. Notes and reasons are
+  at most 500 characters; the address at most 120 for the name and each street line, 80 for the
+  city, 40 for the region and 20 for the postcode (the order form keeps to these).
 - Art is in the hub for the conversation (Files, above); the shop checks it by size and SHA-256.
   `preview` is optional.
 - `ship_to` is there exactly when `fulfilment` is `ship`.
@@ -179,13 +184,16 @@ This maps StitchShop's `QUOTED → APPROVED → IN_PRODUCTION → READY → COLL
 out (the issue's "proof sent").
 
 **`proof.sent` (shop → MakerFoundry), v1.** `{ "proof": 1, "mockup": { size, sha256, type },
-"note": "…" }`, the mock-up in the hub for the conversation (Files, above). MakerFoundry shows the mock-up on the customer's order page (re-drawn from the
+"note"?: "…" }`, the mock-up in the hub for the conversation (Files, above). MakerFoundry shows the mock-up on the customer's order page (re-drawn from the
 checked image, never served as sent).
 
 **`proof.answer` (MakerFoundry → shop), v1.** `{ "proof": 1, "answer": "approved" |
-"changes", "note": "…" }`. After `approved`, the shop moves the order to `APPROVED`.
+"changes", "note"?: "…" }` (an approval usually has no note, so none is sent). After `approved`, the shop moves the order to `APPROVED`.
 
-**`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`, `by` matching who sent it. Before
+**`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`, `by` matching who sent it. `why` is required (at
+most 500 characters, no email or phone): when the customer gives no reason, or one with contact
+details, MakerFoundry sends "The customer cancelled the order." and keeps the customer's own words
+on its side. Before
 `in_production`, either side may cancel, for a full refund (MakerFoundry gives back its 10%, as
 for designs). After, only the shop may, and a refund is the shop's to decide (Seller Terms).
 

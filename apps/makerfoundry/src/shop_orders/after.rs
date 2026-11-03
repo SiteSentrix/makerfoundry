@@ -584,8 +584,20 @@ fn clean(text: &str) -> String {
     text.trim()
         .chars()
         .filter(|c| !c.is_control() || *c == '\n')
-        .take(1000)
-        .collect()
+        .take(super::contract::MAX_NOTE)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// The reason the shop is given when the customer cancels: theirs, unless they gave none or it has
+/// an email address or phone number in it (StitchHub needs a reason, and refuses contact details).
+fn reason_for_shop(why: &str) -> String {
+    if why.is_empty() || super::contract::has_contact(why) {
+        "The customer cancelled the order.".to_string()
+    } else {
+        why.to_string()
+    }
 }
 
 /// `POST /shop-orders/<ref>/cancel`: before production, the customer cancels for a full refund.
@@ -623,7 +635,7 @@ pub async fn cancel(
         }
         let message = Message::OrderCancel(OrderCancel {
             by: "customer".into(),
-            why,
+            why: reason_for_shop(&why),
         });
         super::hub::enqueue(&mut tx, &message, &o.reference, &o.shop_party, MESSAGE_DAYS, &[]).await?;
         tx.commit().await.map_err(|e| e.to_string())?;
@@ -656,6 +668,10 @@ pub async fn answer(
     let approved = said.answer == "approved";
     if !approved && (said.answer != "changes" || note.is_empty()) {
         // (asking for changes needs a note: the page's form requires one)
+        return back;
+    }
+    if super::contract::has_contact(&note) {
+        // (the shop answers on the order's page; the hub refuses contact details)
         return back;
     }
     let number = i32::try_from(proof).unwrap_or(i32::MAX);
@@ -771,7 +787,7 @@ pub async fn page_html(pool: &PgPool, o: &Order) -> String {
             Some(_) => format!("<p><strong>You asked for changes:</strong> {}</p>", escape(answer_note)),
             None if i == 0 && o.status == "proof_sent" => format!(
                 r#"<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="approved"><button type="submit">Approve this proof</button></form>
-<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="changes"><label>Or ask for changes <textarea name="note" maxlength="1000" rows="2" required></textarea></label><button type="submit" class="secondary">Ask for changes</button></form>"#
+<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="changes"><label>Or ask for changes <small>(no email address or phone number: the shop answers here)</small> <textarea name="note" maxlength="500" rows="2" required></textarea></label><button type="submit" class="secondary">Ask for changes</button></form>"#
             ),
             None => String::new(),
         };
@@ -811,7 +827,7 @@ pub async fn page_html(pool: &PgPool, o: &Order) -> String {
     }
     if BEFORE_PRODUCTION.contains(&o.status.as_str()) {
         html.push_str(&format!(
-            r#"<details class="cancel"><summary>Cancel the order</summary><form method="post" action="/shop-orders/{r}/cancel"><p>Until production starts you can cancel for a full refund.</p><label>Why <small>(optional, for the shop)</small> <textarea name="why" maxlength="1000" rows="2"></textarea></label><button type="submit" class="secondary">Cancel the order</button></form></details>"#,
+            r#"<details class="cancel"><summary>Cancel the order</summary><form method="post" action="/shop-orders/{r}/cancel"><p>Until production starts you can cancel for a full refund.</p><label>Why <small>(optional, for the shop)</small> <textarea name="why" maxlength="500" rows="2"></textarea></label><button type="submit" class="secondary">Cancel the order</button></form></details>"#,
             r = escape(&o.reference)
         ));
     }
