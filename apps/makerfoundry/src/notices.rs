@@ -5,6 +5,11 @@
 //! noted for members who turned it on; a digest goes at most once a day; every email has a
 //! one-click unsubscribe link that works without signing in (RFC 8058). A notice names people by
 //! their maker name only, never by an email address.
+//!
+//! A staging deploy sets `MF_MAIL_CATCHER_URL` (a Mailpit test mailbox,
+//! <https://mailpit.axllent.org/docs/api-v1/view.html#post-/api/v1/send>): notices are then on and
+//! every one goes to that mailbox's send API instead of Resend, so no real person gets staging
+//! mail and the end-to-end tests can read it; Resend's key is never sent there.
 
 use std::time::Duration;
 
@@ -28,8 +33,46 @@ pub struct Notices {
     key: String,
     from: String,
     api: String,
+    /// A staging test mailbox's send address and its sign-in (`MF_MAIL_CATCHER_URL`), in place of
+    /// Resend.
+    catcher: Option<Catcher>,
     http: reqwest::Client,
 }
+
+/// Mailpit's send API, and the user name and password its address carried.
+#[derive(Clone)]
+struct Catcher {
+    send: reqwest::Url,
+    user: Option<(String, String)>,
+}
+
+/// `%XX` escapes decoded (a password may carry `@` or `:` written so); anything else as it is.
+fn decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        let hex = b
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (c, hex) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// What stands in for the sending key with a test mailbox and no `MF_RESEND_KEY`: it only makes
+/// the unsubscribe links (a staging deploy's), and is never sent anywhere.
+const CATCHER_KEY: &str = "mail-catcher";
 
 impl std::fmt::Debug for Notices {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -55,8 +98,40 @@ impl Notices {
                 .unwrap_or("https://api.resend.com")
                 .trim_end_matches('/')
                 .to_string(),
+            catcher: None,
             http,
         })
+    }
+
+    /// Notices for a staging deploy: every email goes to the Mailpit test mailbox at `address`
+    /// (`http://mailpit.railway.internal:8025`, or `http://user:password@host:port`), never to
+    /// Resend. `key`, if set, only makes the unsubscribe links.
+    pub fn to_catcher(key: &str, from: Option<&str>, address: &str) -> Result<Self, String> {
+        const WHAT: &str =
+            "MF_MAIL_CATCHER_URL is the test mailbox's address, like http://mailpit.railway.internal:8025";
+        let mut url = reqwest::Url::parse(address.trim()).map_err(|_| WHAT)?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none_or(str::is_empty)
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(WHAT.into());
+        }
+        let user =
+            (!url.username().is_empty()).then(|| (decode(url.username()), decode(url.password().unwrap_or_default())));
+        url.set_username("").map_err(|_| WHAT)?;
+        url.set_password(None).map_err(|_| WHAT)?;
+        let path = format!("{}/api/v1/send", url.path().trim_end_matches('/'));
+        url.set_path(&path);
+        let key = if key.trim().is_empty() { CATCHER_KEY } else { key };
+        let mut notices = Notices::new(key, from, None).ok_or(WHAT)?;
+        notices.catcher = Some(Catcher { send: url, user });
+        Ok(notices)
+    }
+
+    /// Where a test mailbox's emails go (no password), when there is one.
+    pub fn catcher(&self) -> Option<String> {
+        self.catcher.as_ref().map(|c| c.send.to_string())
     }
 
     /// The token in an account's unsubscribe link: an HMAC of its id with the sending key.
@@ -74,6 +149,9 @@ impl Notices {
     }
 
     async fn send(&self, to: &str, subject: &str, text: &str, unsubscribe: &str) -> Result<(), String> {
+        if let Some(c) = &self.catcher {
+            return self.send_to_catcher(c, to, subject, text, unsubscribe).await;
+        }
         let body = serde_json::json!({
             "from": self.from,
             "to": [to],
@@ -96,6 +174,46 @@ impl Notices {
             Ok(())
         } else {
             Err(format!("resend: {}", answer.status()))
+        }
+    }
+}
+
+impl Notices {
+    /// `send`, to a staging test mailbox in Mailpit's shape (no Resend key goes with it).
+    async fn send_to_catcher(
+        &self,
+        c: &Catcher,
+        to: &str,
+        subject: &str,
+        text: &str,
+        unsubscribe: &str,
+    ) -> Result<(), String> {
+        let (name, email) = match self.from.rsplit_once('<') {
+            Some((name, rest)) => (name.trim().trim_matches('"'), rest.trim_end_matches('>').trim()),
+            None => ("", self.from.trim()),
+        };
+        let body = serde_json::json!({
+            "From": { "Email": email, "Name": name },
+            "To": [{ "Email": to, "Name": "" }],
+            "Subject": subject,
+            "Text": text,
+            "Headers": {
+                "List-Unsubscribe": format!("<{unsubscribe}>"),
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
+        });
+        let mut request = self.http.post(c.send.clone()).json(&body);
+        if let Some((user, password)) = &c.user {
+            request = request.basic_auth(user, Some(password));
+        }
+        let answer = request
+            .send()
+            .await
+            .map_err(|e| format!("mail catcher: {}", e.without_url()))?;
+        if answer.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("mail catcher: {}", answer.status()))
         }
     }
 }
@@ -348,12 +466,83 @@ pub mod stand_in {
             }
             r#"{"id": "test"}"#
         }
-        let app = Router::new().route("/emails", post(email)).with_state(sent.clone());
+        // Mailpit's send API, as a staging deploy's test mailbox: kept as
+        // `{"mailpit": <body>, "authorization": <header or null>}`
+        async fn mailpit(State(sent): State<Sent>, headers: axum::http::HeaderMap, body: String) -> &'static str {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                let auth = headers
+                    .get("authorization")
+                    .and_then(|h| h.to_str().ok())
+                    .map(str::to_string);
+                sent.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(serde_json::json!({ "mailpit": v, "authorization": auth }));
+            }
+            r#"{"ID": "test"}"#
+        }
+        let app = Router::new()
+            .route("/emails", post(email))
+            .route("/api/v1/send", post(mailpit))
+            .with_state(sent.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let base = format!("http://{}", listener.local_addr()?);
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
         Ok((base, sent))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_test_mailbox_address_is_read_and_checked() {
+        let n = Notices::to_catcher("", None, "http://mailpit.railway.internal:8025").unwrap();
+        assert_eq!(
+            n.catcher().as_deref(),
+            Some("http://mailpit.railway.internal:8025/api/v1/send")
+        );
+        assert_eq!(n.key, CATCHER_KEY);
+        let n = Notices::to_catcher("k", None, "https://qa:p%40ss@mail.example.com/").unwrap();
+        assert_eq!(n.catcher().as_deref(), Some("https://mail.example.com/api/v1/send"));
+        assert_eq!(
+            n.catcher.as_ref().and_then(|c| c.user.clone()),
+            Some(("qa".to_string(), "p@ss".to_string()))
+        );
+        for bad in [
+            "",
+            "mailpit:8025",
+            "ftp://mailpit",
+            "http://mailpit?x=1",
+            "http://mailpit#x",
+        ] {
+            assert!(Notices::to_catcher("", None, bad).is_err(), "{bad}");
+        }
+        assert!(Notices::new("k", None, None).unwrap().catcher().is_none());
+    }
+
+    #[tokio::test]
+    async fn notices_go_to_the_test_mailbox_without_resends_key() {
+        let (base, sent) = stand_in::start().await.unwrap();
+        let address = base.replace("http://", "http://qa:secret@");
+        let n = Notices::to_catcher("re_live_key", None, &address).unwrap();
+        n.send("ann@test.example", "Your update", "Hello", "https://mf.test/u/1/x")
+            .await
+            .unwrap();
+        let sent = sent.lock().unwrap();
+        let v = &sent[0];
+        assert_eq!(
+            v["authorization"], "Basic cWE6c2VjcmV0",
+            "base64(qa:secret), not Resend's key"
+        );
+        let m = &v["mailpit"];
+        assert_eq!(m["From"]["Email"], "notices@makerfoundry.app");
+        assert_eq!(m["From"]["Name"], "MakerFoundry");
+        assert_eq!(m["To"][0]["Email"], "ann@test.example");
+        assert_eq!(m["Subject"], "Your update");
+        assert_eq!(m["Headers"]["List-Unsubscribe"], "<https://mf.test/u/1/x>");
+        assert!(!m.to_string().contains("re_live_key"));
     }
 }

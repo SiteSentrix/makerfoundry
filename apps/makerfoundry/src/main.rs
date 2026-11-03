@@ -192,6 +192,34 @@ async fn main() -> ExitCode {
     let public_url = std::env::var("MF_PUBLIC_URL")
         .map(|u| u.trim_end_matches('/').to_string())
         .unwrap_or_else(|_| "https://makerfoundry.app".to_string());
+    // staging: notices go to a test mailbox (MF_MAIL_CATCHER_URL), never through Resend
+    let notices = match std::env::var("MF_MAIL_CATCHER_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    {
+        Some(address) => match makerfoundry::notices::Notices::to_catcher(
+            &std::env::var("MF_RESEND_KEY").unwrap_or_default(),
+            std::env::var("MF_NOTICE_FROM").ok().as_deref(),
+            &address,
+        ) {
+            Ok(n) => {
+                eprintln!(
+                    "notices: to the test mailbox at {}, never to Resend",
+                    n.catcher().unwrap_or_default()
+                );
+                Some(n)
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => makerfoundry::notices::Notices::new(
+            &std::env::var("MF_RESEND_KEY").unwrap_or_default(),
+            std::env::var("MF_NOTICE_FROM").ok().as_deref(),
+            std::env::var("RESEND_API_URL").ok().as_deref(),
+        ),
+    };
     let limits = std::sync::Arc::new(makerfoundry::limits::Limits::default());
     let state = makerfoundry::AppState {
         cloud,
@@ -223,11 +251,7 @@ async fn main() -> ExitCode {
             &std::env::var("MF_INSTAGRAM_USER_ID").unwrap_or_default(),
             std::env::var("META_GRAPH_URL").ok().as_deref(),
         ),
-        notices: makerfoundry::notices::Notices::new(
-            &std::env::var("MF_RESEND_KEY").unwrap_or_default(),
-            std::env::var("MF_NOTICE_FROM").ok().as_deref(),
-            std::env::var("RESEND_API_URL").ok().as_deref(),
-        ),
+        notices,
         step: std::env::var("MF_STEP_CONVERTER").ok().and_then(|u| {
             makerfoundry::model3d::step::Converter::new(&u, std::env::var("MF_STEP_CONVERTER_KEY").ok().as_deref())
         }),
