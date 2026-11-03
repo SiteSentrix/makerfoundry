@@ -252,6 +252,13 @@ pub struct Totals {
     pub shop_gets_cents: i64,
 }
 
+/// A note that says nothing (empty or only spaces) is left out of what MakerFoundry sends: `note`
+/// is optional and the hub refuses an empty one (issue #77).
+#[allow(clippy::ptr_arg)] // serde's `skip_serializing_if` passes `&String`
+fn blank(note: &String) -> bool {
+    note.trim().is_empty()
+}
+
 /// `order.placed` v1: sent once the customer's payment has succeeded, signed. Its art and preview
 /// are named by hash and travel through the hub's files (`hub::upload`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -263,7 +270,7 @@ pub struct OrderPlaced {
     pub preview: Option<Image>,
     pub customer: Customer,
     pub totals: Totals,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -273,7 +280,7 @@ pub struct OrderStatus {
     pub status: String,
     #[serde(default)]
     pub tracking: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -282,7 +289,7 @@ pub struct OrderStatus {
 pub struct ProofSent {
     pub proof: u32,
     pub mockup: Image,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -291,7 +298,7 @@ pub struct ProofSent {
 pub struct ProofAnswer {
     pub proof: u32,
     pub answer: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "blank")]
     pub note: String,
 }
 
@@ -1068,6 +1075,57 @@ mod tests {
         ] {
             assert!(!is_time(bad), "{bad}");
         }
+    }
+
+    /// Issue #77: the hub refuses `"note": ""`, so a blank note is left out of every message
+    /// MakerFoundry sends, and a real one is sent as it is.
+    #[test]
+    fn a_blank_note_is_left_out_and_a_real_one_kept() {
+        let (_, b) = fixtures("valid")
+            .into_iter()
+            .find(|(n, _)| n == "order.placed.json")
+            .unwrap();
+        let (_, msg) = parse(&b).unwrap();
+        let Message::OrderPlaced(placed) = msg else {
+            panic!("an order")
+        };
+        for blank in ["", "   ", " \n\t "] {
+            let mut o = placed.clone();
+            o.note = blank.into();
+            let body = Message::OrderPlaced(o).body().unwrap();
+            assert!(body.get("note").is_none(), "{blank:?} is left out: {body}");
+            assert!(body.get("customer").is_some());
+        }
+        let mut o = placed.clone();
+        o.note = "Thread to match the logo, please.".into();
+        let body = Message::OrderPlaced(o).body().unwrap();
+        assert_eq!(body["note"], "Thread to match the logo, please.");
+
+        let answer = |note: &str| {
+            Message::ProofAnswer(ProofAnswer {
+                proof: 1,
+                answer: "approved".into(),
+                note: note.into(),
+            })
+            .body()
+            .unwrap()
+        };
+        assert!(answer("").get("note").is_none(), "approving says nothing");
+        assert_eq!(answer("Lovely").get("note").unwrap(), "Lovely");
+        let status = Message::OrderStatus(OrderStatus {
+            status: "ready".into(),
+            tracking: String::new(),
+            note: " ".into(),
+        });
+        assert!(status.body().unwrap().get("note").is_none());
+
+        // a message made without a note is checked and reads back the same
+        let mut o = placed.clone();
+        o.note = String::new();
+        let made = make(&Message::OrderPlaced(o.clone()), "mf-8f3a1", 1, "shop:mainst", 7).unwrap();
+        assert!(made.body.get("note").is_none());
+        let (_, back) = parse(&serde_json::to_vec(&made).unwrap()).unwrap();
+        assert_eq!(back, Message::OrderPlaced(o));
     }
 
     #[test]
