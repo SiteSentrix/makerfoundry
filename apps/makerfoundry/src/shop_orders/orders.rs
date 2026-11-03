@@ -134,7 +134,7 @@ fn form_html(shop: &Shop, sku: &str, problem: &str) -> Option<String> {
 <label>Your art <small>(an embroidery file for embroidery; a PNG or JPEG for printing; 10 MB at most)</small><input type="file" name="art" required></label>
 <label>Your name <small>(for the shop)</small> <input name="name" maxlength="100" required autocomplete="name"></label>
 {delivery}{address}
-<label>A note for the shop <small>(optional)</small> <textarea name="note" maxlength="1000" rows="3"></textarea></label>
+<label>A note for the shop <small>(optional, {max_note} characters at most)</small> <textarea name="note" maxlength="{max_note}" rows="3"></textarea></label>
 <label class="choice"><input type="checkbox" name="rights" value="yes"> <span>I own this art or have the right to have it printed or stitched.</span></label>
 <button type="submit">See the price</button>
 </form></section>"#,
@@ -142,8 +142,21 @@ fn form_html(shop: &Shop, sku: &str, problem: &str) -> Option<String> {
         shop_name = escape(&c.shop.name),
         name = escape(&p.name),
         sku = escape(sku),
+        max_note = contract::MAX_NOTE,
     ))
 }
+
+/// What the customer is told when their note is longer than the hub takes (issue #80): the note is
+/// never cut short behind their back.
+fn note_too_long(n: usize) -> String {
+    format!(
+        "Your note for the shop is {n} characters long; it can be {} at most. Please shorten it.",
+        contract::MAX_NOTE
+    )
+}
+
+/// The longest text field the order form reads; anything longer is refused, never cut.
+const MAX_FIELD_CHARS: usize = 5000;
 
 async fn signed_in_shop(state: &AppState, headers: &HeaderMap, handle: &str) -> Result<(User, PgPool, Shop), Response> {
     let (Some(_), Some(pool)) = (state.stitchhub.as_ref(), state.db.clone()) else {
@@ -215,7 +228,15 @@ async fn read_form(mut multipart: Multipart) -> Result<Sent, String> {
                 .text()
                 .await
                 .map_err(|_| "The form didn't come through whole.".to_string())?;
-            sent.fields.insert(name, text.chars().take(1000).collect());
+            let n = text.chars().count();
+            if n > MAX_FIELD_CHARS {
+                return Err(if name == "note" {
+                    note_too_long(n)
+                } else {
+                    "Something in the form is longer than it can be.".into()
+                });
+            }
+            sent.fields.insert(name, text);
         }
     }
     Ok(sent)
@@ -334,7 +355,11 @@ fn work_out(shop: &Shop, sku: &str, sent: Sent) -> Result<Draft, String> {
             },
         }],
     };
-    let note = f("note");
+    let note = contract::tidy(&f("note"));
+    let length = contract::hub_len(&note);
+    if length > contract::MAX_NOTE {
+        return Err(note_too_long(length));
+    }
     // (the hub refuses an order that carries them: the shop reaches the customer through the order)
     if contract::has_contact(&note) || contract::has_contact(&name) {
         return Err("Leave email addresses and phone numbers out of your name and the note: the shop answers you on your order's page.".into());
@@ -807,6 +832,8 @@ pub async fn confirm_paid(conn: &mut PgConnection, reference: &str, session: &Va
 #[serde(default)]
 pub struct Back {
     session: String,
+    /// What went wrong with a cancel or an answer just sent (`after::problem_words`).
+    problem: String,
 }
 
 /// What a status means to the customer.
@@ -950,7 +977,7 @@ pub async fn page(
     private(
         &format!("Order {} · MakerFoundry", o.reference),
         &format!(
-            r#"<section class="form"><h1>Your order from {shop}</h1>
+            r#"<section class="form"><h1>Your order from {shop}</h1>{problem}
 <p class="lead">{status}</p>
 <p class="muted">Order {r}{shop_link}</p>
 <ul class="order-lines">{lines}</ul>
@@ -959,6 +986,9 @@ pub async fn page(
 {totals}
 {action}</section>"#,
             shop = escape(&shop_name),
+            problem = super::after::problem_words(&back.problem)
+                .map(|p| format!(r#"<p class="problem" role="alert">{}</p>"#, escape(&p)))
+                .unwrap_or_default(),
             status = status_name(&o.status),
             r = escape(&o.reference),
             shop_link = if handle.is_empty() {

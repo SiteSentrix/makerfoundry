@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use sqlx::{PgConnection, PgPool, Row};
 
-use super::contract::{Envelope, Message, MessageExpired, OrderCancel, OrderStatus, ProofAnswer, ProofSent};
+use super::contract::{self, Envelope, Message, MessageExpired, OrderCancel, OrderStatus, ProofAnswer, ProofSent};
 use super::orders::{Order, order};
 use crate::AppState;
 use crate::accounts::{current_user, forbidden, same_origin};
@@ -577,15 +577,63 @@ async fn buyers_order(state: &AppState, headers: &HeaderMap, reference: &str) ->
 pub struct Said {
     answer: String,
     note: String,
-    why: String,
+    /// Why the customer cancels: one of `CANCEL_REASONS`.
+    reason: String,
+    /// A few words more (needed for `other`).
+    detail: String,
 }
 
-fn clean(text: &str) -> String {
-    text.trim()
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n')
-        .take(1000)
-        .collect()
+/// Why a customer may cancel (issue #80: the hub needs a reason on every `order.cancel`). `other`
+/// needs a few words of the customer's own.
+pub const CANCEL_REASONS: &[(&str, &str)] = &[
+    ("mistake", "I ordered by mistake"),
+    ("change", "I need to change the order"),
+    ("late", "It won't arrive in time"),
+    ("other", "Another reason"),
+];
+
+/// The most a customer may add to their reason for cancelling: with the longest reason before it,
+/// well inside `contract::MAX_NOTE`.
+pub const CANCEL_DETAIL_CHARS: usize = 400;
+
+/// What the customer's order page says went wrong, for the `?problem=` their cancel or answer was
+/// sent back with. Unknown codes say nothing.
+pub fn problem_words(code: &str) -> Option<String> {
+    Some(match code {
+        "cancel-reason" => {
+            "Choose why you're cancelling: the shop needs a reason. \"Another reason\" needs a few words.".into()
+        }
+        "too-long" => format!(
+            "That's longer than the shop can take: {} characters at most. Please shorten it.",
+            contract::MAX_NOTE
+        ),
+        "contact" => "Leave email addresses and phone numbers out: the shop answers you on your order's page.".into(),
+        _ => return None,
+    })
+}
+
+/// The customer's reason for cancelling, as `order.cancel`'s `why`, or the `?problem=` code that
+/// says what's missing. Never empty, never cut short.
+pub fn cancel_why(reason: &str, detail: &str) -> Result<String, &'static str> {
+    let detail = contract::tidy(detail);
+    let label = CANCEL_REASONS
+        .iter()
+        .find(|(k, _)| *k == reason)
+        .map(|(_, label)| *label)
+        .ok_or("cancel-reason")?;
+    let why = match (reason, detail.is_empty()) {
+        ("other", true) => return Err("cancel-reason"),
+        ("other", false) => detail,
+        (_, true) => label.to_string(),
+        (_, false) => format!("{label}: {detail}"),
+    };
+    if contract::hub_len(&why) > contract::MAX_NOTE {
+        return Err("too-long");
+    }
+    if contract::has_contact(&why) {
+        return Err("contact");
+    }
+    Ok(why)
 }
 
 /// `POST /shop-orders/<ref>/cancel`: before production, the customer cancels for a full refund.
@@ -603,7 +651,10 @@ pub async fn cancel(
         Err(r) => return r,
     };
     let back = Redirect::to(&format!("/shop-orders/{reference}")).into_response();
-    let why = clean(&said.why);
+    let why = match cancel_why(&said.reason, &said.detail) {
+        Ok(why) => why,
+        Err(problem) => return Redirect::to(&format!("/shop-orders/{reference}?problem={problem}")).into_response(),
+    };
     let done = async {
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let cancelled = sqlx::query(
@@ -652,7 +703,13 @@ pub async fn answer(
         Err(r) => return r,
     };
     let back = Redirect::to(&format!("/shop-orders/{reference}")).into_response();
-    let note = clean(&said.note);
+    let note = contract::tidy(&said.note);
+    if contract::hub_len(&note) > contract::MAX_NOTE {
+        return Redirect::to(&format!("/shop-orders/{reference}?problem=too-long")).into_response();
+    }
+    if contract::has_contact(&note) {
+        return Redirect::to(&format!("/shop-orders/{reference}?problem=contact")).into_response();
+    }
     let approved = said.answer == "approved";
     if !approved && (said.answer != "changes" || note.is_empty()) {
         // (asking for changes needs a note: the page's form requires one)
@@ -766,12 +823,13 @@ pub async fn page_html(pool: &PgPool, o: &Order) -> String {
     .unwrap_or_default();
     for (i, (n, note, answer, answer_note)) in proofs.iter().enumerate() {
         let r = escape(&o.reference);
+        let max = contract::MAX_NOTE;
         let said = match answer.as_deref() {
             Some("approved") => "<p><strong>You approved this proof.</strong></p>".to_string(),
             Some(_) => format!("<p><strong>You asked for changes:</strong> {}</p>", escape(answer_note)),
             None if i == 0 && o.status == "proof_sent" => format!(
                 r#"<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="approved"><button type="submit">Approve this proof</button></form>
-<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="changes"><label>Or ask for changes <textarea name="note" maxlength="1000" rows="2" required></textarea></label><button type="submit" class="secondary">Ask for changes</button></form>"#
+<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="changes"><label>Or ask for changes <small>({max} characters at most)</small> <textarea name="note" maxlength="{max}" rows="2" required></textarea></label><button type="submit" class="secondary">Ask for changes</button></form>"#
             ),
             None => String::new(),
         };
@@ -811,9 +869,54 @@ pub async fn page_html(pool: &PgPool, o: &Order) -> String {
     }
     if BEFORE_PRODUCTION.contains(&o.status.as_str()) {
         html.push_str(&format!(
-            r#"<details class="cancel"><summary>Cancel the order</summary><form method="post" action="/shop-orders/{r}/cancel"><p>Until production starts you can cancel for a full refund.</p><label>Why <small>(optional, for the shop)</small> <textarea name="why" maxlength="1000" rows="2"></textarea></label><button type="submit" class="secondary">Cancel the order</button></form></details>"#,
-            r = escape(&o.reference)
+            r#"<details class="cancel"><summary>Cancel the order</summary><form method="post" action="/shop-orders/{r}/cancel"><p>Until production starts you can cancel for a full refund.</p><fieldset><legend>Why are you cancelling? <small>(the shop is told)</small></legend>{reasons}</fieldset><label>A few words more <small>(needed for "Another reason"; {detail} characters at most)</small> <textarea name="detail" maxlength="{detail}" rows="2"></textarea></label><button type="submit" class="secondary">Cancel the order</button></form></details>"#,
+            r = escape(&o.reference),
+            reasons = CANCEL_REASONS
+                .iter()
+                .map(|(k, label)| format!(
+                    r#"<label class="choice"><input type="radio" name="reason" value="{k}" required> <span>{label}</span></label>"#
+                ))
+                .collect::<String>(),
+            detail = CANCEL_DETAIL_CHARS,
         ));
     }
     html
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #80: a customer's cancel always says why, within what the hub takes.
+    #[test]
+    fn a_cancel_says_why_and_is_never_cut() {
+        assert_eq!(cancel_why("mistake", "").unwrap(), "I ordered by mistake");
+        assert_eq!(
+            cancel_why("change", "  bigger sizes ").unwrap(),
+            "I need to change the order: bigger sizes"
+        );
+        assert_eq!(cancel_why("other", "Wrong colour").unwrap(), "Wrong colour");
+        for (reason, detail) in [("", ""), ("other", ""), ("other", " \r\n "), ("bored", "x")] {
+            assert_eq!(
+                cancel_why(reason, detail),
+                Err("cancel-reason"),
+                "{reason:?} {detail:?}"
+            );
+        }
+        assert_eq!(cancel_why("other", &"w".repeat(501)), Err("too-long"));
+        assert_eq!(cancel_why("other", &"w".repeat(500)).unwrap().len(), 500);
+        assert_eq!(cancel_why("late", "call 401 555 0100"), Err("contact"));
+        // the longest reason with the most the form lets through still fits
+        let longest = CANCEL_REASONS.iter().map(|(_, l)| l.len()).max().unwrap();
+        assert!(longest + 2 + CANCEL_DETAIL_CHARS <= contract::MAX_NOTE);
+        for (k, _) in CANCEL_REASONS {
+            if *k != "other" {
+                assert!(cancel_why(k, &"d".repeat(CANCEL_DETAIL_CHARS)).is_ok(), "{k}");
+            }
+        }
+        for code in ["cancel-reason", "too-long", "contact"] {
+            assert!(problem_words(code).is_some(), "{code}");
+        }
+        assert!(problem_words("<script>").is_none());
+    }
 }

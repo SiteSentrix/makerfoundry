@@ -10304,6 +10304,13 @@ async fn order_problems_are_explained_and_nothing_is_kept() {
     email_note.push(("note", "Mail me at bea@example.com"));
     let mut phone_name = without("name");
     phone_name.push(("name", "Bea 555 123 4567"));
+    // issue #80: the hub takes a note of 500 characters at most; a longer one is refused, not cut
+    let long = "a".repeat(501);
+    let mut long_note = without("note");
+    long_note.push(("note", &long));
+    let longer = "a".repeat(6000);
+    let mut longer_note = without("note");
+    longer_note.push(("note", &longer));
     for (fields, art, want) in [
         (
             email_note,
@@ -10314,6 +10321,16 @@ async fn order_problems_are_explained_and_nothing_is_kept() {
             phone_name,
             Some(("logo.pes", &pes[..])),
             "Leave email addresses and phone numbers out",
+        ),
+        (
+            long_note,
+            Some(("logo.pes", &pes[..])),
+            "Your note for the shop is 501 characters long; it can be 500 at most.",
+        ),
+        (
+            longer_note,
+            Some(("logo.pes", &pes[..])),
+            "Your note for the shop is 6000 characters long; it can be 500 at most.",
         ),
         (
             without("rights"),
@@ -10345,6 +10362,48 @@ async fn order_problems_are_explained_and_nothing_is_kept() {
     assert_eq!(s.send(req).await.status, StatusCode::FORBIDDEN);
     assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_orders").await, 0);
     assert!(s.stored.lock().unwrap().is_empty());
+}
+
+/// Issue #80: a note of exactly 500 characters (the hub's limit, as it counts) is sent whole, and
+/// the form says so; a browser's line ends are sent as `\n`.
+#[tokio::test]
+async fn a_note_of_500_characters_goes_to_the_shop_whole() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    let bea = s.sign_up("bea%40example.com").await;
+    let form = s.get(TEE, Some(&bea)).await.body;
+    assert!(
+        form.contains(r#"<textarea name="note" maxlength="500""#) && form.contains("500 characters at most"),
+        "{form}"
+    );
+    // 249 + a line break (one space, as the hub counts) + 250 = 500
+    let note = format!("{}\r\n{}", "a".repeat(249), "b".repeat(250));
+    let mut fields = tee_order();
+    fields.retain(|(k, _)| *k != "note");
+    fields.push(("note", &note));
+    let pes = sample(sf_formats::Format::Pes);
+    let path = s
+        .send(order_form(TEE, &fields, Some(("logo.pes", &pes)), &bea))
+        .await
+        .location()
+        .to_string();
+    assert!(path.starts_with("/shop-orders/mf-"), "{path}");
+    s.post(&format!("{path}/pay"), "", Some(&bea)).await;
+    let f = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    s.stripe_event(
+        WEBHOOK_SECRET,
+        "evt_paid",
+        "checkout.session.completed",
+        session_json("cs_test_1", &f, true),
+    )
+    .await;
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    let placed = sent_of(&hub, "order.placed");
+    assert_eq!(placed.len(), 1);
+    let sent = placed[0]["body"]["note"].as_str().unwrap();
+    assert_eq!(sent, format!("{}\n{}", "a".repeat(249), "b".repeat(250)));
+    assert_eq!(makerfoundry::shop_orders::contract::hub_len(sent), 500);
 }
 
 /// A paid order (the tee, shipped) from bea → bea's cookie, the order's page and its reference.
@@ -10542,8 +10601,12 @@ async fn the_shop_reports_progress_and_the_customer_answers_proofs() {
         "{page}"
     );
     assert!(!page.contains("Cancel the order"));
-    s.post(&format!("{path}/cancel"), "why=changed+my+mind", Some(&bea))
-        .await;
+    s.post(
+        &format!("{path}/cancel"),
+        "reason=other&detail=changed+my+mind",
+        Some(&bea),
+    )
+    .await;
     assert_eq!(
         s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'in_production'")
             .await,
@@ -10572,7 +10635,41 @@ async fn a_cancelled_order_is_refunded_and_the_shop_is_out_only_the_card_fee() {
     };
     let (bea, path, r) = paid_order(&s, &st).await;
     st.lock().unwrap().fee_refunds_fail = true;
-    s.post(&format!("{path}/cancel"), "why=Wrong+colour", Some(&bea)).await;
+    // issue #80: the hub needs a reason on every cancel, so one without is sent back, explained,
+    // and nothing is cancelled or sent
+    let form = s.get(&path, Some(&bea)).await.body;
+    assert!(
+        form.contains(r#"name="reason" value="mistake" required"#) && form.contains("Another reason"),
+        "{form}"
+    );
+    for (sent, problem) in [
+        ("", "cancel-reason"),
+        ("reason=other", "cancel-reason"),
+        ("reason=other&detail=+++", "cancel-reason"),
+        ("reason=bored", "cancel-reason"),
+        ("reason=other&detail=Call+me+on+401+555+0100", "contact"),
+    ] {
+        let a = s.post(&format!("{path}/cancel"), sent, Some(&bea)).await;
+        assert_eq!(a.location(), format!("{path}?problem={problem}"), "{sent}");
+    }
+    let long = format!("reason=change&detail={}", "a".repeat(600));
+    let a = s.post(&format!("{path}/cancel"), &long, Some(&bea)).await;
+    assert_eq!(a.location(), format!("{path}?problem=too-long"));
+    let page = s.get(&format!("{path}?problem=cancel-reason"), Some(&bea)).await.body;
+    assert!(page.contains("the shop needs a reason"), "{page}");
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'cancelled'")
+            .await,
+        0
+    );
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(sent_of(&hub, "order.cancel").is_empty());
+    s.post(
+        &format!("{path}/cancel"),
+        "reason=other&detail=Wrong+colour",
+        Some(&bea),
+    )
+    .await;
     // the shop is told; the payment comes back, taken from the shop
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     let cancels = sent_of(&hub, "order.cancel");
@@ -10628,7 +10725,7 @@ async fn a_cancelled_order_is_refunded_and_the_shop_is_out_only_the_card_fee() {
         .await;
     assert_eq!(s.scalar("SELECT count(*) FROM mf_shop_ledger").await, 6);
     // and cancelling again does nothing
-    s.post(&format!("{path}/cancel"), "", Some(&bea)).await;
+    s.post(&format!("{path}/cancel"), "reason=mistake", Some(&bea)).await;
     makerfoundry::shop_orders::sync(&state).await.unwrap();
     assert_eq!(sent_of(&hub, "order.cancel").len(), 1);
 }
@@ -10900,7 +10997,7 @@ async fn sales_tax_on_a_shop_order_is_makerfoundrys_and_comes_back_with_a_refund
 
     // cancelled: the customer gets it all back, the tax transaction is reversed, and the shop is
     // still out only the card fee
-    s.post(&format!("{path}/cancel"), "", Some(&bea)).await;
+    s.post(&format!("{path}/cancel"), "reason=late", Some(&bea)).await;
     makerfoundry::shop_orders::after::sweep(&state).await.unwrap();
     let reversal = posted(&st, "/v1/tax/transactions/create_reversal");
     assert_eq!(reversal.len(), 1);
