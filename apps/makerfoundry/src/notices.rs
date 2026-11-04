@@ -149,19 +149,31 @@ impl Notices {
     }
 
     async fn send(&self, to: &str, subject: &str, text: &str, unsubscribe: &str) -> Result<(), String> {
+        self.send_mail(to, subject, text, Some(unsubscribe)).await
+    }
+
+    /// An email about something the member did (an order they placed): it goes whatever their
+    /// digest setting, and has no unsubscribe link (issue #82).
+    pub async fn send_about_order(&self, to: &str, subject: &str, text: &str) -> Result<(), String> {
+        self.send_mail(to, subject, text, None).await
+    }
+
+    async fn send_mail(&self, to: &str, subject: &str, text: &str, unsubscribe: Option<&str>) -> Result<(), String> {
         if let Some(c) = &self.catcher {
             return self.send_to_catcher(c, to, subject, text, unsubscribe).await;
         }
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "from": self.from,
             "to": [to],
             "subject": subject,
             "text": text,
-            "headers": {
-                "List-Unsubscribe": format!("<{unsubscribe}>"),
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            },
         });
+        if let Some(u) = unsubscribe {
+            body["headers"] = serde_json::json!({
+                "List-Unsubscribe": format!("<{u}>"),
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            });
+        }
         let answer = self
             .http
             .post(format!("{}/emails", self.api))
@@ -186,22 +198,24 @@ impl Notices {
         to: &str,
         subject: &str,
         text: &str,
-        unsubscribe: &str,
+        unsubscribe: Option<&str>,
     ) -> Result<(), String> {
         let (name, email) = match self.from.rsplit_once('<') {
             Some((name, rest)) => (name.trim().trim_matches('"'), rest.trim_end_matches('>').trim()),
             None => ("", self.from.trim()),
         };
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "From": { "Email": email, "Name": name },
             "To": [{ "Email": to, "Name": "" }],
             "Subject": subject,
             "Text": text,
-            "Headers": {
-                "List-Unsubscribe": format!("<{unsubscribe}>"),
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            },
         });
+        if let Some(u) = unsubscribe {
+            body["Headers"] = serde_json::json!({
+                "List-Unsubscribe": format!("<{u}>"),
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            });
+        }
         let mut request = self.http.post(c.send.clone()).json(&body);
         if let Some((user, password)) = &c.user {
             request = request.basic_auth(user, Some(password));
