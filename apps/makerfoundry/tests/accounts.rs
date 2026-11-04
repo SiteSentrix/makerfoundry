@@ -10377,6 +10377,17 @@ async fn a_note_of_500_characters_goes_to_the_shop_whole() {
         form.contains(r#"<textarea name="note" maxlength="500""#) && form.contains("500 characters at most"),
         "{form}"
     );
+    // the live counter (owner's yes, 2026-11-03): our own script file, allowed by the page's policy
+    let page = s.get(TEE, Some(&bea)).await;
+    assert!(
+        form.contains(r#"data-count="500""#)
+            && form.contains(r#"<script src="/static/note-counter.js" defer></script>"#),
+        "{form}"
+    );
+    assert_eq!(
+        page.headers[header::CONTENT_SECURITY_POLICY],
+        makerfoundry::NOTE_COUNTER_SECURITY_POLICY
+    );
     // 249 + a line break (one space, as the hub counts) + 250 = 500
     let note = format!("{}\r\n{}", "a".repeat(249), "b".repeat(250));
     let mut fields = tee_order();

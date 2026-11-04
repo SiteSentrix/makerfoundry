@@ -134,10 +134,10 @@ fn form_html(shop: &Shop, sku: &str, problem: &str) -> Option<String> {
 <label>Your art <small>(an embroidery file for embroidery; a PNG or JPEG for printing; 10 MB at most)</small><input type="file" name="art" required></label>
 <label>Your name <small>(for the shop)</small> <input name="name" maxlength="100" required autocomplete="name"></label>
 {delivery}{address}
-<label>A note for the shop <small>(optional, {max_note} characters at most)</small> <textarea name="note" maxlength="{max_note}" rows="3"></textarea></label>
+<label>A note for the shop <small>(optional, {max_note} characters at most)</small> <textarea name="note" maxlength="{max_note}" rows="3" data-count="{max_note}"></textarea></label>
 <label class="choice"><input type="checkbox" name="rights" value="yes"> <span>I own this art or have the right to have it printed or stitched.</span></label>
 <button type="submit">See the price</button>
-</form></section>"#,
+</form></section><script src="/static/note-counter.js" defer></script>"#,
         handle = escape(&shop.handle),
         shop_name = escape(&c.shop.name),
         name = escape(&p.name),
@@ -182,11 +182,11 @@ pub async fn form(
         Err(r) => return r,
     };
     match form_html(&shop, &sku, "") {
-        Some(html) => private(
+        Some(html) => crate::with_note_counter(private(
             &format!("Order from {} · MakerFoundry", shop.catalog.shop.name),
             &html,
             true,
-        ),
+        )),
         None => crate::designs::not_found(),
     }
 }
@@ -388,7 +388,7 @@ pub async fn create(
         Err(r) => return r,
     };
     let again = |why: &str| match form_html(&shop, &sku, why) {
-        Some(html) => private("Order · MakerFoundry", &html, true),
+        Some(html) => crate::with_note_counter(private("Order · MakerFoundry", &html, true)),
         None => crate::designs::not_found(),
     };
     if user.account_id == shop.account {
@@ -974,7 +974,7 @@ pub async fn page(
         ),
         None => "Pick up at the shop".to_string(),
     };
-    private(
+    crate::with_note_counter(private(
         &format!("Order {} · MakerFoundry", o.reference),
         &format!(
             r#"<section class="form"><h1>Your order from {shop}</h1>{problem}
@@ -984,7 +984,7 @@ pub async fn page(
 <p>{delivery}</p>
 {after}
 {totals}
-{action}</section>"#,
+{action}</section>{counter}"#,
             shop = escape(&shop_name),
             problem = super::after::problem_words(&back.problem)
                 .map(|p| format!(r#"<p class="problem" role="alert">{}</p>"#, escape(&p)))
@@ -998,9 +998,14 @@ pub async fn page(
             },
             lines = lines_html(&o.lines),
             totals = totals_html(&o.totals),
+            counter = if after.contains("data-count") {
+                r#"<script src="/static/note-counter.js" defer></script>"#
+            } else {
+                ""
+            },
         ),
         true,
-    )
+    ))
 }
 
 #[cfg(test)]

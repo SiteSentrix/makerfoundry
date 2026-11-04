@@ -829,7 +829,7 @@ pub async fn page_html(pool: &PgPool, o: &Order) -> String {
             Some(_) => format!("<p><strong>You asked for changes:</strong> {}</p>", escape(answer_note)),
             None if i == 0 && o.status == "proof_sent" => format!(
                 r#"<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="approved"><button type="submit">Approve this proof</button></form>
-<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="changes"><label>Or ask for changes <small>({max} characters at most)</small> <textarea name="note" maxlength="{max}" rows="2" required></textarea></label><button type="submit" class="secondary">Ask for changes</button></form>"#
+<form method="post" action="/shop-orders/{r}/proofs/{n}"><input type="hidden" name="answer" value="changes"><label>Or ask for changes <small>({max} characters at most)</small> <textarea name="note" maxlength="{max}" rows="2" required data-count="{max}"></textarea></label><button type="submit" class="secondary">Ask for changes</button></form>"#
             ),
             None => String::new(),
         };
@@ -869,7 +869,7 @@ pub async fn page_html(pool: &PgPool, o: &Order) -> String {
     }
     if BEFORE_PRODUCTION.contains(&o.status.as_str()) {
         html.push_str(&format!(
-            r#"<details class="cancel"><summary>Cancel the order</summary><form method="post" action="/shop-orders/{r}/cancel"><p>Until production starts you can cancel for a full refund.</p><fieldset><legend>Why are you cancelling? <small>(the shop is told)</small></legend>{reasons}</fieldset><label>A few words more <small>(needed for "Another reason"; {detail} characters at most)</small> <textarea name="detail" maxlength="{detail}" rows="2"></textarea></label><button type="submit" class="secondary">Cancel the order</button></form></details>"#,
+            r#"<details class="cancel"><summary>Cancel the order</summary><form method="post" action="/shop-orders/{r}/cancel"><p>Until production starts you can cancel for a full refund.</p><fieldset><legend>Why are you cancelling? <small>(the shop is told)</small></legend>{reasons}</fieldset><label>A few words more <small>(needed for "Another reason"; {detail} characters at most)</small> <textarea name="detail" maxlength="{detail}" rows="2" data-count="{detail}"></textarea></label><button type="submit" class="secondary">Cancel the order</button></form></details>"#,
             r = escape(&o.reference),
             reasons = CANCEL_REASONS
                 .iter()
