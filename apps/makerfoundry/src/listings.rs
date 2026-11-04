@@ -997,10 +997,12 @@ pub async fn download(
         return Redirect::to(storage.download_url(&key, &name).as_str()).into_response();
     }
     // which file: the first, or one of the others
+    // (named by the format it was read as, never the ending it was uploaded with: #86)
+    let first_format = d.facts.get("format").and_then(serde_json::Value::as_str);
     let (file_key, file_name) = match q.file {
-        None => (d.file_key.clone(), d.file_name.clone()),
+        None => (d.file_key.clone(), designs::safe_file_name(&d.file_name, first_format)),
         Some(fid) => match crate::files::others(pool, id).await.into_iter().find(|f| f.id == fid) {
-            Some(f) => (f.file_key, f.file_name),
+            Some(f) => (f.file_key, designs::safe_file_name(&f.file_name, Some(&f.format))),
             None => return not_found(viewer.is_some()),
         },
     };
@@ -1013,9 +1015,11 @@ pub async fn download(
     let name = if d.title.is_empty() {
         file_name
     } else {
-        // the title, with the file's own extension
-        let ext = file_name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-        format!("{}.{ext}", slug(&d.title))
+        // the title, with the file's (safe) extension
+        match file_name.rsplit_once('.') {
+            Some((_, ext)) => format!("{}.{ext}", slug(&d.title)),
+            None => slug(&d.title),
+        }
     };
     Redirect::to(storage.download_url(&file_key, &name).as_str()).into_response()
 }

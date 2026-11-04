@@ -95,7 +95,7 @@ pub async fn new_page(State(state): State<AppState>, headers: HeaderMap) -> Resp
 }
 
 /// A design file, read: what kind it is and what was found.
-pub(crate) enum Read {
+pub enum Read {
     Embroidery(Embroidery),
     Laser(Laser),
 }
@@ -116,7 +116,59 @@ impl Read {
     }
 }
 
-pub(crate) fn read_design(bytes: &[u8], name: &str) -> Result<Read, String> {
+/// The endings a design file may have (#86): the embroidery formats MakerFoundry reads, then the
+/// laser ones. A file named anything else (`.exe`, `.dll`, `.js`, `.html`…) is refused before it
+/// is read, and a kept file is only ever named with one of these.
+pub const DESIGN_EXTENSIONS: [&str; 15] = [
+    "dst", "pes", "pec", "jef", "exp", "vp3", "xxx", "u01", "pcs", "tap", "dsb", "dsz", "svg", "dxf", "pdf",
+];
+
+/// `name`'s ending in lower case, if it is one a design file may have.
+pub fn design_extension(name: &str) -> Option<String> {
+    let ext = name.rsplit_once('.')?.1.trim().to_ascii_lowercase();
+    DESIGN_EXTENSIONS.contains(&ext.as_str()).then_some(ext)
+}
+
+/// The ending a file of `format` (as read: `PES`, `SVG`…) is kept and served under, if it is one a
+/// design file may have.
+pub fn format_extension(format: &str) -> Option<String> {
+    let ext = format.trim().trim_start_matches('.').to_ascii_lowercase();
+    DESIGN_EXTENSIONS.contains(&ext.as_str()).then_some(ext)
+}
+
+/// The name a design file is kept and served under (#86): the uploader's name without its ending
+/// (no folders, no quotes, control or text-direction characters, no inner dots that could pass for
+/// a second ending), then the ending of the format it was read as, never the ending it came with.
+/// When `format` isn't a design format, the file's own ending only if that is one; otherwise no
+/// ending at all.
+pub fn safe_file_name(file_name: &str, format: Option<&str>) -> String {
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
+    let stem = base.rsplit_once('.').map_or(base, |(s, _)| s);
+    let stem: String = stem
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !"\"'<>:|?*".contains(*c)
+                && !matches!(*c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+        })
+        .map(|c| if c == '.' { '-' } else { c })
+        .take(120)
+        .collect();
+    let stem = stem.trim().trim_matches('-');
+    let stem = if stem.is_empty() { "design" } else { stem };
+    match format.and_then(format_extension).or_else(|| design_extension(base)) {
+        Some(ext) => format!("{stem}.{ext}"),
+        None => stem.to_string(),
+    }
+}
+
+/// Reads a design file named `name`: refused unless the name ends in a design format's ending,
+/// then read as a laser or an embroidery file by what its bytes are.
+pub fn read_design(bytes: &[u8], name: &str) -> Result<Read, String> {
+    // the name's ending is checked first: a program is refused before any reader sees its bytes
+    if design_extension(name).is_none() {
+        return Err("this isn't an embroidery file MakerFoundry can read (DST, PES, PEC, JEF, EXP, VP3, XXX, U01, PCS, TAP, DSB or DSZ), nor a laser file (SVG, DXF or PDF): the file's name must end in one of those".into());
+    }
     match laser::kind(bytes, name) {
         Some(kind) => laser::read(bytes, kind).map(Read::Laser),
         None => embroidery::read(bytes, name).map(Read::Embroidery),
@@ -320,7 +372,7 @@ async fn keep(
         )
         .bind(account)
         .bind(read.kind())
-        .bind(file_name)
+        .bind(safe_file_name(file_name, Some(read.format())))
         .bind(&file_key)
         .bind(file_bytes)
         .bind(format)
@@ -633,7 +685,13 @@ pub async fn download(State(state): State<AppState>, headers: HeaderMap, Path(id
     ) else {
         return not_found();
     };
-    Redirect::to(storage.download_url(&d.file_key, &d.file_name).as_str()).into_response()
+    let format = d.facts.get("format").and_then(serde_json::Value::as_str);
+    let name = if d.kind == "model3d" {
+        d.file_name.clone()
+    } else {
+        safe_file_name(&d.file_name, format)
+    };
+    Redirect::to(storage.download_url(&d.file_key, &name).as_str()).into_response()
 }
 
 /// A design's photo or thumbnail: anyone's once the design is published, only its maker's before.
@@ -751,4 +809,82 @@ pub async fn delete(State(state): State<AppState>, headers: HeaderMap, Path(id):
         }
     }
     Redirect::to("/designs").into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_design_endings_are_read() {
+        // (#86) a program is refused by its name before any reader sees it, whatever its bytes
+        let mut program = b"MZ".to_vec();
+        program.extend(std::iter::repeat_n(0x90u8, 4094));
+        for name in [
+            "setup.exe",
+            "lib.dll",
+            "run.bat",
+            "run.cmd",
+            "app.js",
+            "page.html",
+            "page.htm",
+            "x.svgz",
+            "setup.msi",
+            "notes.txt",
+            "design",
+            "",
+            "rose.pes.exe",
+        ] {
+            let r = read_design(&program, name);
+            assert!(
+                r.as_ref().is_err_and(|e| e.contains("isn't an embroidery file")),
+                "{name}: {:?}",
+                r.map(|r| r.format().to_string())
+            );
+        }
+        // with a design's ending, the program's own bytes are refused too
+        for name in ["setup.exp", "setup.EXP", "setup.tap", "setup.dst"] {
+            assert!(read_design(&program, name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_kept_name_ends_in_its_formats_ending() {
+        assert_eq!(safe_file_name("rose.pes", Some("PES")), "rose.pes");
+        assert_eq!(safe_file_name("Rose.PES", Some("PES")), "Rose.pes");
+        // the format read wins over the ending it came with
+        assert_eq!(safe_file_name("setup.exe", Some("EXP")), "setup.exp");
+        assert_eq!(safe_file_name("rose.pes", Some("DST")), "rose.dst");
+        assert_eq!(safe_file_name("logo.xml", Some("SVG")), "logo.svg");
+        // folders, quotes and control characters go; an empty name becomes "design"
+        assert_eq!(safe_file_name(r"C:\Users\ann\rose.jef", Some("JEF")), "rose.jef");
+        assert_eq!(safe_file_name("../../a\"b\u{0}.dst", Some("DST")), "ab.dst");
+        assert_eq!(safe_file_name(".exe", Some("EXP")), "design.exp");
+        // a format that isn't a design's: the name's own ending only if it is a design's
+        assert_eq!(safe_file_name("rose.pes", None), "rose.pes");
+        assert_eq!(safe_file_name("setup.exe", None), "setup");
+        assert_eq!(safe_file_name("setup.exe", Some("EXE")), "setup");
+        // no second ending hides in the stem, no text-direction trick turns it around
+        assert_eq!(safe_file_name("rose.exe.foo", None), "rose-exe");
+        assert_eq!(safe_file_name("rose.exe.pes", Some("PES")), "rose-exe.pes");
+        assert_eq!(safe_file_name("\u{202e}exe.pes", Some("PES")), "exe.pes");
+        for name in [
+            "a.exe",
+            "b.html",
+            "c",
+            "d.svg.exe",
+            "e.bat",
+            "\u{202e}exe.pes",
+            "f.exe.x",
+        ] {
+            for format in [None, Some("EXP"), Some("SVG"), Some("exe")] {
+                let kept = safe_file_name(name, format);
+                let ext = kept.rsplit_once('.').map(|(_, e)| e);
+                assert!(
+                    ext.is_none_or(|e| DESIGN_EXTENSIONS.contains(&e)),
+                    "{name} {format:?} → {kept}"
+                );
+            }
+        }
+    }
 }

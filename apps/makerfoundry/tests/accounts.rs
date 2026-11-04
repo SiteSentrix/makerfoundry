@@ -1094,6 +1094,71 @@ async fn add_design(s: &Site, cookie: &str, format: sf_formats::Format, name: &s
     design_id(r.location())
 }
 
+/// #86: a Windows program is never taken as a design, whatever it's named, and a design's file is
+/// only ever kept and downloaded under its format's own ending, never the one it was uploaded with.
+#[tokio::test]
+async fn a_program_is_refused_and_files_download_under_their_formats_ending() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    let mut program = b"MZ".to_vec();
+    program.extend(std::iter::repeat_n(0x90u8, 4094));
+    for (name, bytes) in [
+        ("setup.exe", program.clone()),
+        ("setup.exp", program.clone()),
+        ("setup.EXP", program.clone()),
+        ("rose.exe", sample(sf_formats::Format::Exp)),
+        ("rose.dll", sample(sf_formats::Format::Dst)),
+        ("page.html", sample(sf_formats::Format::Pes)),
+    ] {
+        let r = s
+            .send(multipart("/designs/new", &[("file", name, bytes)], &cookie))
+            .await;
+        assert_ne!(r.status, StatusCode::SEE_OTHER, "{name}");
+        assert!(
+            r.body.contains("this isn&#39;t an embroidery file"),
+            "{name}: {}",
+            r.body
+        );
+    }
+    assert!(s.stored.lock().unwrap().is_empty());
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 0);
+    // a real EXP is taken, kept as .exp
+    let exp = add_design(&s, &cookie, sf_formats::Format::Exp, "tulip.EXP").await;
+    // a DST named .pes is kept, and downloaded, as the DST it is
+    let dst = add_design(&s, &cookie, sf_formats::Format::Dst, "rose.pes").await;
+    for (id, kept) in [(exp, "tulip.exp"), (dst, "rose.dst")] {
+        let name: String = sqlx::query_scalar("SELECT file_name FROM mf_designs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+        assert_eq!(name, kept);
+        for path in [format!("/designs/{id}/download"), format!("/d/{id}/download")] {
+            let dl = s.get(&path, Some(&cookie)).await;
+            assert_eq!(dl.status, StatusCode::SEE_OTHER, "{path}");
+            assert!(
+                dl.location().contains(kept) && !dl.location().contains("rose.pes"),
+                "{path}: {}",
+                dl.location()
+            );
+        }
+    }
+    // a file kept before #86 under a program's ending still downloads under its format's
+    sqlx::query("UPDATE mf_designs SET file_name = 'setup.exe' WHERE id = $1")
+        .bind(exp)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    for path in [format!("/designs/{exp}/download"), format!("/d/{exp}/download")] {
+        let dl = s.get(&path, Some(&cookie)).await;
+        assert!(
+            dl.location().contains("setup.exp") && !dl.location().contains(".exe"),
+            "{path}: {}",
+            dl.location()
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_free_design_is_published_found_and_downloaded() {
     let Some(s) = site().await else { return };
