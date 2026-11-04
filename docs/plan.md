@@ -474,6 +474,14 @@ StitchShop's side is stitchbench#74).
   closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
   lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
   keeps the amounts.
+- **No program passes as a design, built 2026-11-04** (issue #86, found by the stitch-e2e
+  staging deep probes; `src/designs.rs`, `src/embroidery.rs`): a design file's name must end in a
+  design format's ending (DST, PES, PEC, JEF, EXP, VP3, XXX, U01, PCS, TAP, DSB, DSZ, SVG, DXF,
+  PDF) or it is refused before it is read; files that begin as programs, archives, scripts or web
+  pages (`MZ`, ELF, `PK`, `%PDF`, `<!`, `#!`…) are never read as embroidery; headerless EXP and
+  TAP files must be whole records with mostly short, moving stitches. The kept name, and every
+  download, open-in and other-format file name, ends in the ending of the format the file was
+  read as, never the one it was uploaded with (files kept earlier are served the same way).
 - **The customer is told what the shop reports, built 2026-11-04** (issue #82, found by the
   stitch-e2e staging release suite; `src/shop_orders/mail.rs`,
   `migrations/0047_shop_order_mails.sql`): each `order.status` applied notes one email by its hub
