@@ -573,10 +573,12 @@ pub async fn subdomains(
 
 /// The shops whose catalogues name `account` to be paid, for its account page: each confirmed
 /// ("this is my shop") or not. A shop isn't offered until its account confirms it, so nobody can
-/// route orders to someone else's payouts.
+/// route orders to someone else's payouts. Newest catalogue first, so a shop that just named the
+/// account is always on the page to confirm, even when 20 older ones name it too.
 pub async fn claims_html(pool: &PgPool, account: i64) -> String {
     let shops: Vec<(String, String, bool)> = sqlx::query_as(
-        "SELECT handle, name, account_confirmed FROM mf_shops WHERE account_id = $1 ORDER BY name LIMIT 20",
+        "SELECT handle, name, account_confirmed FROM mf_shops WHERE account_id = $1
+         ORDER BY updated_at DESC, name LIMIT 20",
     )
     .bind(account)
     .fetch_all(pool)
