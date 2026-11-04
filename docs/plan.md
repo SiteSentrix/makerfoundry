@@ -474,6 +474,14 @@ StitchShop's side is stitchbench#74).
   closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
   lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
   keeps the amounts.
+- **The customer is told what the shop reports, built 2026-11-04** (issue #82, found by the
+  stitch-e2e staging release suite; `src/shop_orders/mail.rs`,
+  `migrations/0047_shop_order_mails.sql`): each `order.status` applied notes one email by its hub
+  message id (so a message applied twice is mailed once); the minute sweep sends it to the
+  customer through the notices' sender (Resend, or staging's Mailpit) with a link to the order on
+  `MF_PUBLIC_URL`, tries 5 times, and never holds up the order's messages. No unsubscribe link: it
+  is about the customer's own order. The order page says "Being made (in production)" for
+  `in_production`, in the shop's word.
 - **MF-85 shipping by the piece, built 2026-10-31** (the owner's decision): the catalogue's
   `shipping` may add `per_extra_piece_cents` and `free_over_cents` (both optional, so v1
   catalogues still read), and `shop.address` gives the pick-up address for sales tax. The form

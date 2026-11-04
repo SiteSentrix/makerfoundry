@@ -107,7 +107,8 @@ pub async fn status(pool: &PgPool, env: &Envelope, s: &OrderStatus) -> Result<()
         // (it changed meanwhile: the message comes again and is read against the new status)
         return Err("the order changed meanwhile".into());
     }
-    Ok(())
+    // the customer is emailed (issue #82), once for this message
+    super::mail::note(pool, id, &env.id, &s.status).await
 }
 
 /// `proof.sent` from the shop: the mock-up fetched from the hub's files, checked by size and
