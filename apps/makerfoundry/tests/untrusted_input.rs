@@ -15,7 +15,7 @@ use image::{DynamicImage, ImageFormat, RgbImage};
 use lopdf::{Document, Object, Stream, dictionary};
 use makerfoundry::model3d::mesh::{self, Mesh};
 use makerfoundry::model3d::{obj, profile, stl, threemf, zip};
-use makerfoundry::{convert, embroidery, laser, money, photos, sizes, stripe};
+use makerfoundry::{convert, designs, embroidery, laser, money, photos, sizes, stripe};
 use proptest::prelude::*;
 use sf_core::{Cmd, Pattern, Point, Rgb, Thread};
 use sf_formats::{Format, WriteOptions};
@@ -817,6 +817,49 @@ proptest! {
             // whatever is accepted is a message that would be accepted again as written
             prop_assert_eq!(env.kind.as_str(), msg.kind());
             prop_assert!(serde_json::to_vec(&env).unwrap().len() <= makerfoundry::shop_orders::contract::MAX_MESSAGE_BYTES);
+        }
+    }
+}
+
+/// #86: a Windows program renamed `.exe` (or `.exp`) is refused, and a real EXP is still taken.
+#[test]
+fn a_program_is_never_a_design() {
+    let mut program = b"MZ".to_vec();
+    program.extend(std::iter::repeat_n(0x90u8, 4094));
+    for name in ["setup.exe", "setup.exp", "setup.EXP", "setup.tap", "setup.dst", "setup"] {
+        assert!(designs::read_design(&program, name).is_err(), "{name}");
+    }
+    // a real design is refused too under an ending that isn't a design format's
+    let exp = embroidery_sample(Format::Exp);
+    assert!(designs::read_design(&exp, "rose.exe").is_err());
+    let read = designs::read_design(&exp, "rose.exp").unwrap();
+    assert!(matches!(&read, designs::Read::Embroidery(e) if e.format == "EXP"));
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+
+    #[test]
+    fn a_program_is_refused_whatever_follows_its_header(
+        rest in prop::collection::vec(any::<u8>(), 0..4096),
+        which in 0..EMBROIDERY.len(),
+    ) {
+        let mut bytes = b"MZ".to_vec();
+        bytes.extend(rest);
+        for name in [format!("setup.{}", EMBROIDERY[which].1), "setup.exe".to_string()] {
+            prop_assert!(designs::read_design(&bytes, &name).is_err(), "{}", name);
+        }
+    }
+
+    #[test]
+    fn a_kept_name_only_ever_ends_in_a_design_formats_ending(
+        name in r"\PC{0,60}",
+        format in prop::option::of("[A-Za-z0-9.]{0,5}"),
+    ) {
+        let kept = designs::safe_file_name(&name, format.as_deref());
+        prop_assert!(!kept.is_empty());
+        if let Some((_, ext)) = kept.rsplit_once('.') {
+            prop_assert!(designs::DESIGN_EXTENSIONS.contains(&ext), "{:?} {:?} → {}", name, format, kept);
         }
     }
 }

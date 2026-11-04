@@ -252,7 +252,7 @@ pub async fn add(
             "INSERT INTO mf_design_files (design_id, file_name, file_key, file_bytes, format) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(id)
-        .bind(&file_name)
+        .bind(designs::safe_file_name(&file_name, Some(read.format())))
         .bind(&key)
         .bind(size)
         .bind(read.format())

@@ -501,7 +501,7 @@ async fn insert_version(
     .bind(proof_id)
     .bind(number)
     .bind(read.kind())
-    .bind(file_name)
+    .bind(designs::safe_file_name(file_name, Some(read.format())))
     .bind(&stored.file_key)
     .bind(stored.file_bytes)
     .bind(read.format())

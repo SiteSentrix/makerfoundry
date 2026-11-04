@@ -1094,6 +1094,71 @@ async fn add_design(s: &Site, cookie: &str, format: sf_formats::Format, name: &s
     design_id(r.location())
 }
 
+/// #86: a Windows program is never taken as a design, whatever it's named, and a design's file is
+/// only ever kept and downloaded under its format's own ending, never the one it was uploaded with.
+#[tokio::test]
+async fn a_program_is_refused_and_files_download_under_their_formats_ending() {
+    let Some(s) = site().await else { return };
+    let cookie = s.sign_up("ann%40example.com").await;
+    let mut program = b"MZ".to_vec();
+    program.extend(std::iter::repeat_n(0x90u8, 4094));
+    for (name, bytes) in [
+        ("setup.exe", program.clone()),
+        ("setup.exp", program.clone()),
+        ("setup.EXP", program.clone()),
+        ("rose.exe", sample(sf_formats::Format::Exp)),
+        ("rose.dll", sample(sf_formats::Format::Dst)),
+        ("page.html", sample(sf_formats::Format::Pes)),
+    ] {
+        let r = s
+            .send(multipart("/designs/new", &[("file", name, bytes)], &cookie))
+            .await;
+        assert_ne!(r.status, StatusCode::SEE_OTHER, "{name}");
+        assert!(
+            r.body.contains("this isn&#39;t an embroidery file"),
+            "{name}: {}",
+            r.body
+        );
+    }
+    assert!(s.stored.lock().unwrap().is_empty());
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_designs").await, 0);
+    // a real EXP is taken, kept as .exp
+    let exp = add_design(&s, &cookie, sf_formats::Format::Exp, "tulip.EXP").await;
+    // a DST named .pes is kept, and downloaded, as the DST it is
+    let dst = add_design(&s, &cookie, sf_formats::Format::Dst, "rose.pes").await;
+    for (id, kept) in [(exp, "tulip.exp"), (dst, "rose.dst")] {
+        let name: String = sqlx::query_scalar("SELECT file_name FROM mf_designs WHERE id = $1")
+            .bind(id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+        assert_eq!(name, kept);
+        for path in [format!("/designs/{id}/download"), format!("/d/{id}/download")] {
+            let dl = s.get(&path, Some(&cookie)).await;
+            assert_eq!(dl.status, StatusCode::SEE_OTHER, "{path}");
+            assert!(
+                dl.location().contains(kept) && !dl.location().contains("rose.pes"),
+                "{path}: {}",
+                dl.location()
+            );
+        }
+    }
+    // a file kept before #86 under a program's ending still downloads under its format's
+    sqlx::query("UPDATE mf_designs SET file_name = 'setup.exe' WHERE id = $1")
+        .bind(exp)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    for path in [format!("/designs/{exp}/download"), format!("/d/{exp}/download")] {
+        let dl = s.get(&path, Some(&cookie)).await;
+        assert!(
+            dl.location().contains("setup.exp") && !dl.location().contains(".exe"),
+            "{path}: {}",
+            dl.location()
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_free_design_is_published_found_and_downloaded() {
     let Some(s) = site().await else { return };
@@ -11993,6 +12058,119 @@ async fn deleting_your_data_closes_checkouts_for_your_designs() {
             .await,
         0
     );
+}
+
+/// Issue #82: the shop's `order.status` through the hub shows on the customer's order page in the
+/// shop's words, and the customer is emailed once per status with a link to this deploy's order
+/// page (a staging deploy's test mailbox here, as on staging).
+#[tokio::test]
+async fn a_shops_status_reaches_the_customers_page_and_email() {
+    let Some((s, state, hub, st)) = open_shop().await else {
+        return;
+    };
+    let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
+    let state = AppState {
+        notices: Some(makerfoundry::notices::Notices::to_catcher("", None, &base).unwrap()),
+        public_url: "https://makerfoundry-staging.test".into(),
+        ..state
+    };
+    let (bea, path, r) = paid_order(&s, &st).await;
+    let deliver = |m: Value| makerfoundry::shop_orders::hub::stand_in::deliver(&hub, m);
+    deliver(from_shop("order.status", 801, &r, 1, json!({"status": "received"})));
+    deliver(from_shop(
+        "order.status",
+        802,
+        &r,
+        2,
+        json!({"status": "in_production"}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert!(
+        hub.lock()
+            .unwrap()
+            .queues
+            .get("service:makerfoundry")
+            .is_none_or(Vec::is_empty),
+        "both taken (acked)"
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'in_production'")
+            .await,
+        1
+    );
+    // the page: in the words the stitch-e2e check looks for
+    let page = s.get(&path, Some(&bea)).await.body;
+    assert!(page.contains("Being made (in production)"), "{page}");
+
+    // the emails: one per status, to the customer, linking to this deploy's order page
+    let mails: Vec<Value> = sent.lock().unwrap().iter().map(|v| v["mailpit"].clone()).collect();
+    assert_eq!(mails.len(), 2, "{mails:?}");
+    let link = format!("https://makerfoundry-staging.test/shop-orders/{r}");
+    for (m, words) in mails.iter().zip(["Received by the shop", "Being made (in production)"]) {
+        assert_eq!(m["To"][0]["Email"], "bea@example.com");
+        let subject = m["Subject"].as_str().unwrap();
+        assert!(subject.contains("order") && subject.contains(words), "{subject}");
+        let text = m["Text"].as_str().unwrap();
+        assert!(text.contains(&link) && text.contains(words), "{text}");
+        assert!(
+            !text.contains("makerfoundry.app/") && !text.contains("localhost"),
+            "{text}"
+        );
+        assert!(m.get("Headers").is_none(), "an order's email has no unsubscribe link");
+    }
+
+    // a message that comes again (a new id, the same seq) and another sweep: no more emails
+    deliver(from_shop(
+        "order.status",
+        803,
+        &r,
+        2,
+        json!({"status": "in_production"}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(sent.lock().unwrap().len(), 2);
+    // applied again by its own id (as after a crash before it was marked seen): still mailed once
+    sqlx::query("DELETE FROM mf_hub_seen WHERE id LIKE '%000000000802'")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mf_hub_seq SET last_seq = 1 WHERE order_ref = $1")
+        .bind(&r)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    deliver(from_shop(
+        "order.status",
+        802,
+        &r,
+        2,
+        json!({"status": "in_production"}),
+    ));
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(sent.lock().unwrap().len(), 2);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_order_mails WHERE sent_at IS NOT NULL")
+            .await,
+        2
+    );
+
+    // no email sender (a deploy without one): the status is still applied, nothing is sent
+    let quiet = AppState {
+        notices: None,
+        ..state.clone()
+    };
+    deliver(from_shop("order.status", 804, &r, 3, json!({"status": "ready"})));
+    makerfoundry::shop_orders::sync(&quiet).await.unwrap();
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_shop_orders WHERE status = 'ready'")
+            .await,
+        1
+    );
+    assert_eq!(sent.lock().unwrap().len(), 2);
+    // and the next sweep with a sender mails it
+    makerfoundry::shop_orders::sync(&state).await.unwrap();
+    assert_eq!(sent.lock().unwrap().len(), 3);
 }
 
 // ---------------------------------------------------------------- copies of messages to shops

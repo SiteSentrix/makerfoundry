@@ -7,6 +7,7 @@ pub mod after;
 pub mod brand;
 pub mod contract;
 pub mod hub;
+pub mod mail;
 pub mod orders;
 pub mod shops;
 pub mod sign;
@@ -54,6 +55,10 @@ pub async fn sync(state: &AppState) -> Result<(), String> {
             shops::refresh(pool, &ready).await?;
         }
         Err(e) => eprintln!("stitchhub: shops: {e}"),
+    }
+    // the customers' emails about what their shops reported (issue #82)
+    if let Err(e) = mail::send_due(state, pool).await {
+        eprintln!("shop orders: emails: {e}");
     }
     // shops' logos not fetched yet
     if let Some(storage) = state.storage.as_ref() {

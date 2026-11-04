@@ -844,7 +844,7 @@ pub fn status_name(s: &str) -> &'static str {
         "received" => "Received by the shop",
         "proof_sent" => "A proof is waiting for you",
         "approved" => "Proof approved",
-        "in_production" => "Being made",
+        "in_production" => "Being made (in production)",
         "ready" => "Ready",
         "shipped" => "Shipped",
         "collected" => "Picked up",

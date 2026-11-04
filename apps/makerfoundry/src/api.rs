@@ -112,19 +112,12 @@ pub fn name_of(title: &str, file: &str, format: Option<&str>, id: i64) -> String
     let ext: String = file.rsplit_once('.').map(|(_, e)| e).unwrap_or("").to_ascii_lowercase();
     // a laser file's ending is its format's, whatever its file was called: an SVG read from
     // `logo.xml` still goes out as `.svg`, which is all ScreenFoundry and LaserFoundry take
-    let ext = if let Some(f @ ("SVG" | "DXF" | "PDF")) = format {
-        f.to_ascii_lowercase()
-    } else if !ext.is_empty() && ext.len() <= 8 && ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        ext
-    } else {
-        format
-            .unwrap_or("file")
-            .to_ascii_lowercase()
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .take(8)
-            .collect()
-    };
+    // ...and an embroidery file's is its format's too: never an ending it was uploaded with that
+    // isn't a design format's, such as `.exe` (#86)
+    let ext = format
+        .and_then(crate::designs::format_extension)
+        .or_else(|| crate::designs::design_extension(&format!(".{ext}")))
+        .unwrap_or_default();
     if ext.is_empty() { stem } else { format!("{stem}.{ext}") }
 }
 

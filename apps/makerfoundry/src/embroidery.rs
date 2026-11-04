@@ -45,6 +45,112 @@ pub struct Embroidery {
     pub svg: String,
 }
 
+/// How files that are certainly not embroidery begin (#86): programs (Windows, Linux, macOS, Java,
+/// WebAssembly), scripts, archives, installers and documents. Formats without a header, such as
+/// EXP, would otherwise read any of them as stitches.
+const NOT_EMBROIDERY: [&[u8]; 18] = [
+    // a Windows program or library
+    b"MZ",
+    // a Linux program
+    b"\x7fELF",
+    // a macOS program, or Java classes
+    b"\xca\xfe\xba\xbe",
+    // a macOS program (64-bit)
+    b"\xcf\xfa\xed\xfe",
+    // a macOS program (32-bit)
+    b"\xce\xfa\xed\xfe",
+    // a macOS program (big-endian)
+    b"\xfe\xed\xfa",
+    // WebAssembly
+    b"\x00asm",
+    // a script
+    b"#!",
+    // a ZIP (and Office files, JARs, APKs)
+    b"PK",
+    // a RAR archive
+    b"Rar!",
+    // a 7-Zip archive
+    b"7z\xbc\xaf",
+    // gzip
+    b"\x1f\x8b",
+    // bzip2
+    b"BZh",
+    // xz
+    b"\xfd7zXZ",
+    // a Windows cabinet
+    b"MSCF",
+    // an old Office document or an MSI installer
+    b"\xd0\xcf\x11\xe0",
+    // a PDF
+    b"%PDF",
+    // rich text
+    b"{\\rtf",
+];
+
+/// How text files that are certainly not embroidery begin, after any byte-order mark and spaces:
+/// web pages, XML (SVG among them), scripts, PHP (compared in lower case).
+const NOT_EMBROIDERY_TEXT: [&[u8]; 6] = [b"<!", b"<?", b"<html", b"<svg", b"<script", b"#!"];
+
+/// Whether `bytes` begin as a file that is certainly not embroidery (#86).
+pub fn certainly_not_embroidery(bytes: &[u8]) -> bool {
+    if NOT_EMBROIDERY.iter().any(|magic| bytes.starts_with(magic)) {
+        return true;
+    }
+    let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let start = text.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(text.len());
+    let head: Vec<u8> = text
+        .get(start..)
+        .unwrap_or_default()
+        .iter()
+        .take(8)
+        .map(u8::to_ascii_lowercase)
+        .collect();
+    NOT_EMBROIDERY_TEXT.iter().any(|magic| head.starts_with(magic))
+}
+
+/// For a format without a header (EXP, TAP), whether what was read looks like a design (#86)
+/// rather than some other file read as stitches. Real designs sew mostly short stitches (fills and
+/// satins of a few millimetres) and few stitches that don't move; bytes that aren't a design read
+/// as stitches of every length up to about 12 mm each way, or (programs, padding) as runs of zeros.
+fn plausible_headerless(bytes: &[u8], record: usize, pattern: &Pattern) -> Result<(), String> {
+    // whole records: EXP's are two bytes (and commands four), TAP's three
+    if !bytes.len().is_multiple_of(record) {
+        return Err(NOT_A_DESIGN.into());
+    }
+    let mut lengths: Vec<f64> = Vec::new();
+    let mut last: Option<(f64, f64)> = None;
+    for s in &pattern.stitches {
+        match s.cmd {
+            Cmd::Stitch => {
+                if let Some((x, y)) = last {
+                    lengths.push((s.x - x).hypot(s.y - y));
+                }
+                last = Some((s.x, s.y));
+            }
+            Cmd::Jump | Cmd::Trim | Cmd::ColorChange | Cmd::Stop | Cmd::End => last = None,
+        }
+    }
+    if lengths.is_empty() {
+        return Err(NOT_A_DESIGN.into());
+    }
+    let still = lengths.iter().filter(|l| **l < 0.05).count();
+    if still * 2 > lengths.len() {
+        return Err(NOT_A_DESIGN.into());
+    }
+    lengths.sort_by(f64::total_cmp);
+    let median = lengths.get(lengths.len() / 2).copied().unwrap_or(f64::INFINITY);
+    if !median.is_finite() || median > MAX_MEDIAN_STITCH_MM {
+        return Err(NOT_A_DESIGN.into());
+    }
+    Ok(())
+}
+
+/// The longest a headerless design's middle stitch may be (mm): real fills and satins are a few
+/// millimetres; random bytes read as stitches of about 10 mm.
+const MAX_MEDIAN_STITCH_MM: f64 = 8.5;
+
+const NOT_A_DESIGN: &str = "this doesn't look like an embroidery design: its stitches don't read as one";
+
 fn hex(c: Rgb) -> String {
     format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
 }
@@ -57,9 +163,13 @@ pub fn read(bytes: &[u8], file_name: &str) -> Result<Embroidery, String> {
     if bytes.is_empty() {
         return Err("the file is empty".into());
     }
+    let unreadable = "this isn't an embroidery file MakerFoundry can read (DST, PES, PEC, JEF, EXP, VP3, XXX, U01, PCS, TAP, DSB or DSZ)";
+    // a program, archive or web page is refused before any reader sees it (#86)
+    if certainly_not_embroidery(bytes) {
+        return Err(unreadable.into());
+    }
     let hint = file_name.rsplit_once('.').map(|(_, ext)| ext);
-    let (format, pattern) = sf_formats::read_any(bytes, hint)
-        .map_err(|_| "this isn't an embroidery file MakerFoundry can read (DST, PES, PEC, JEF, EXP, VP3, XXX, U01, PCS, TAP, DSB or DSZ)".to_string())?;
+    let (format, pattern) = sf_formats::read_any(bytes, hint).map_err(|_| unreadable.to_string())?;
     if pattern.stitches.len() > MAX_STITCHES {
         return Err(format!("the design has more than {MAX_STITCHES} stitches"));
     }
@@ -76,6 +186,11 @@ pub fn read(bytes: &[u8], file_name: &str) -> Result<Embroidery, String> {
             "the file has only {} stitches: too few to be a design",
             stats.stitches
         ));
+    }
+    match format {
+        sf_formats::Format::Exp => plausible_headerless(bytes, 2, &pattern)?,
+        sf_formats::Format::Tap => plausible_headerless(bytes, 3, &pattern)?,
+        _ => {}
     }
     if !(stats.width_mm.is_finite() && stats.height_mm.is_finite())
         || stats.width_mm > MAX_SIZE_MM
@@ -278,6 +393,67 @@ mod tests {
         let mut cut = sample(Format::Pes);
         cut.truncate(cut.len() / 3);
         let _ = read(&cut, "a.pes"); // a cut-short file: an answer either way, never a panic
+    }
+
+    /// A Windows program: `MZ`, then filler (as the staging check of #86 sends).
+    fn program() -> Vec<u8> {
+        let mut bytes = b"MZ".to_vec();
+        bytes.extend(std::iter::repeat_n(0x90u8, 4094));
+        bytes
+    }
+
+    #[test]
+    fn programs_archives_and_pages_are_never_designs_whatever_their_name() {
+        let with = |start: &[u8], fill: u8| {
+            let mut bytes = start.to_vec();
+            bytes.extend(std::iter::repeat_n(fill, 1000));
+            bytes
+        };
+        let files = [
+            program(),
+            with(b"\x7fELF", 7),
+            with(b"PK\x03\x04", 3),
+            with(b"%PDF-1.7\n", b'1'),
+            with(b"#!/bin/sh\n", b'e'),
+            with(b"  <!DOCTYPE html><html>", b'x'),
+            with(b"\xef\xbb\xbf<SVG>", b'x'),
+        ];
+        for bytes in files {
+            for name in ["setup.exp", "setup.tap", "setup.dst", "setup.pes", "setup.exe"] {
+                let r = read(&bytes, name);
+                assert!(
+                    r.as_ref().is_err_and(|e| e.contains("isn't an embroidery file")),
+                    "{name} {:?}: {:?}",
+                    bytes.get(..4),
+                    r.map(|e| e.format)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_real_exp_reads_and_other_bytes_named_exp_do_not() {
+        let e = read(&sample(Format::Exp), "rose.exp").unwrap();
+        assert_eq!(e.format, "EXP");
+        assert!(e.stitches >= 40, "{}", e.stitches);
+        // one byte too many: not whole records
+        let mut odd = sample(Format::Exp);
+        odd.push(1);
+        assert!(!matches!(read(&odd, "rose.exp"), Ok(e) if e.format == "EXP"));
+        // a run of zeros (padding in a program) reads as stitches that never move
+        assert!(read(&[0u8; 4096], "zeros.exp").is_err());
+        // random bytes read as stitches of every length
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        let random: Vec<u8> = (0..4000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect();
+        let r = read(&random, "noise.exp");
+        assert!(r.is_err(), "{:?}", r.map(|e| (e.format, e.stitches)));
     }
 
     #[test]
