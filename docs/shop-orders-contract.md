@@ -168,6 +168,10 @@ verified webhook), never before; signed (above). Only these fields: the hub refu
 - `note` is optional: when the customer leaves it blank (empty or only spaces) it is **left out**,
   never sent as `""` (the hub refuses an empty note; issue #77). The same holds for `note` in
   `order.status`, `proof.sent` and `proof.answer`.
+- A `note` (here and in every other message) is **500 characters at most**, counted as the hub
+  counts it: control characters and runs of white space are one space, the ends trimmed, the rest
+  measured in UTF-16 units (StitchHub `src/sync-orders.mjs`, `free(x, 500, p)`; issue #80). The
+  order form says so and refuses a longer note with its length; it is never cut short.
 - `ship_to` is there exactly when `fulfilment` is `ship`.
 - The customer's email and phone are **never** sent, nor allowed in the name or the note (the
   order form refuses them; the hub refuses them too); the shop reaches the customer through the
@@ -189,7 +193,10 @@ checked image, never served as sent).
 "changes", "note"?: "…" }`; a note is needed for `changes`, and an approval without one leaves
 `note` out. After `approved`, the shop moves the order to `APPROVED`.
 
-**`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`, `by` matching who sent it. Before
+**`order.cancel` (either way), v1.** `{ "by": "shop" | "customer", "why": "…" }`, `by` matching who sent it. `why` is
+**required** (1 to 500 characters, counted as for a note; the hub refuses a cancel without it,
+issue #80): the customer picks a reason from a short list, with a few words of their own needed for
+"Another reason". Before
 `in_production`, either side may cancel, for a full refund (MakerFoundry gives back its 10%, as
 for designs). After, only the shop may, and a refund is the shop's to decide (Seller Terms).
 

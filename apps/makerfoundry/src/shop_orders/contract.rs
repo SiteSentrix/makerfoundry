@@ -19,6 +19,43 @@ pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_PIECES: u32 = 10_000;
 /// The largest amount anywhere in a message: $100,000.
 pub const MAX_CENTS: i64 = 10_000_000;
+/// The longest note, and the longest reason for cancelling, the hub takes (issue #80): StitchHub's
+/// `src/sync-orders.mjs` checks every `note` and `order.cancel`'s `why` with `free(x, 500, p)`.
+/// Measured as the hub measures it (`hub_len`).
+pub const MAX_NOTE: usize = 500;
+
+/// How long the hub counts a text (StitchHub `src/sync-orders.mjs`, `text`): control characters
+/// and runs of white space are one space, the ends are trimmed, and what's left is measured in
+/// UTF-16 units (JavaScript's `length`), so an emoji counts two.
+pub fn hub_len(s: &str) -> usize {
+    let gap = |c: char| c.is_whitespace() || c.is_control();
+    let mut n = 0;
+    let mut space = false;
+    for c in s.trim_matches(gap).chars() {
+        if gap(c) {
+            space = true;
+        } else {
+            if space {
+                n += 1;
+                space = false;
+            }
+            n += c.len_utf16();
+        }
+    }
+    n
+}
+
+/// A note or a reason as a form sends it: line ends (`\r\n` from a browser) made `\n`, other
+/// control characters dropped, the ends trimmed. Never shortened: a text too long is refused
+/// (`hub_len`, `MAX_NOTE`), not cut.
+pub fn tidy(s: &str) -> String {
+    s.replace("\r\n", "\n")
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n')
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
 
 /// The decoration methods a shop may offer.
 pub const METHODS: &[&str] = &["embroidery", "screen_print", "dtg", "heat_transfer", "vinyl"];
@@ -302,11 +339,10 @@ pub struct ProofAnswer {
     pub note: String,
 }
 
-/// `order.cancel` v1.
+/// `order.cancel` v1. The hub needs `why` (issue #80), so it is never left out.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct OrderCancel {
     pub by: String,
-    #[serde(default)]
     pub why: String,
 }
 
@@ -394,6 +430,15 @@ fn text(field: &str, s: &str, max: usize, required: bool) -> Result<(), String> 
     }
     if s.chars().any(|c| c.is_control() && c != '\n') {
         return Err(format!("{field} has control characters"));
+    }
+    Ok(())
+}
+
+/// A note or a reason: as `text`, and at most `MAX_NOTE` long as the hub counts it (issue #80).
+fn note(field: &str, s: &str, required: bool) -> Result<(), String> {
+    text(field, s, usize::MAX, required)?;
+    if hub_len(s) > MAX_NOTE {
+        return Err(format!("{field} is longer than {MAX_NOTE} characters"));
     }
     Ok(())
 }
@@ -678,7 +723,7 @@ fn check_placed(o: &OrderPlaced) -> Result<(), String> {
         _ => return Err("fulfilment is ship or pickup".into()),
     }
     check_totals(&o.totals)?;
-    text("note", &o.note, 1000, false)?;
+    note("note", &o.note, false)?;
     if has_contact(&o.note) || has_contact(&o.customer.name) {
         return Err("the note has an email address or phone number".into());
     }
@@ -694,14 +739,14 @@ fn check(m: &Message) -> Result<(), String> {
                 return Err(format!("unknown status {}", s.status));
             }
             text("tracking", &s.tracking, 100, false)?;
-            text("note", &s.note, 1000, false)
+            note("note", &s.note, false)
         }
         Message::ProofSent(p) => {
             if !(1..=100).contains(&p.proof) {
                 return Err("proof is numbered 1 to 100".into());
             }
             image("mockup", &p.mockup)?;
-            text("note", &p.note, 1000, false)
+            note("note", &p.note, false)
         }
         Message::ProofAnswer(a) => {
             if !(1..=100).contains(&a.proof) {
@@ -713,13 +758,13 @@ fn check(m: &Message) -> Result<(), String> {
                 "changes" => return Err("asking for changes needs a note".into()),
                 _ => return Err("an answer is approved or changes".into()),
             }
-            text("note", &a.note, 1000, false)
+            note("note", &a.note, false)
         }
         Message::OrderCancel(c) => {
             if c.by != "shop" && c.by != "customer" {
                 return Err("by is shop or customer".into());
             }
-            text("why", &c.why, 1000, false)
+            note("why", &c.why, true)
         }
         Message::MessageExpired(e) => {
             if !is_uuid(&e.id) {
@@ -1185,5 +1230,76 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    /// Issue #80: the hub counts a note as JavaScript does after squeezing white space, and takes
+    /// 500 at most (StitchHub `src/sync-orders.mjs`, `free(x, 500, p)`).
+    #[test]
+    fn notes_are_measured_as_the_hub_measures_them() {
+        assert_eq!(hub_len(""), 0);
+        assert_eq!(hub_len("  a  \r\n\t b  "), 3);
+        assert_eq!(hub_len("a\u{7}b"), 3, "a control character is a space");
+        assert_eq!(hub_len("é"), 1);
+        assert_eq!(hub_len("🧵"), 2, "outside the BMP: two UTF-16 units");
+        assert_eq!(tidy("  one\r\ntwo\u{7}  "), "one\ntwo");
+        assert_eq!(tidy(&"x".repeat(900)).len(), 900, "never shortened");
+    }
+
+    /// Issue #80: a 500-character note is made and sent; 501 is refused, never cut.
+    #[test]
+    fn a_note_of_500_is_sent_and_501_refused() {
+        let (_, b) = fixtures("valid")
+            .into_iter()
+            .find(|(n, _)| n == "order.placed.json")
+            .unwrap();
+        let Message::OrderPlaced(placed) = parse(&b).unwrap().1 else {
+            panic!("an order")
+        };
+        let mut o = placed.clone();
+        o.note = "n".repeat(MAX_NOTE);
+        let made = make(&Message::OrderPlaced(o.clone()), "mf-8f3a1", 1, "shop:mainst", 7).unwrap();
+        assert_eq!(made.body["note"].as_str().unwrap().len(), 500);
+        // as the hub counts: a line break between two halves is one space
+        o.note = format!("{}\n{}", "n".repeat(250), "n".repeat(249));
+        assert!(make(&Message::OrderPlaced(o.clone()), "mf-8f3a1", 1, "shop:mainst", 7).is_ok());
+        o.note = "n".repeat(MAX_NOTE + 1);
+        let refused = make(&Message::OrderPlaced(o.clone()), "mf-8f3a1", 1, "shop:mainst", 7).unwrap_err();
+        assert!(refused.contains("note is longer than 500"), "{refused}");
+        o.note = "🧵".repeat(251);
+        assert!(make(&Message::OrderPlaced(o), "mf-8f3a1", 1, "shop:mainst", 7).is_err());
+        // the same limit on every other note
+        let answer = |note: String| {
+            Message::ProofAnswer(ProofAnswer {
+                proof: 1,
+                answer: "changes".into(),
+                note,
+            })
+        };
+        assert!(make(&answer("n".repeat(500)), "mf-8f3a1", 2, "shop:mainst", 7).is_ok());
+        assert!(make(&answer("n".repeat(501)), "mf-8f3a1", 2, "shop:mainst", 7).is_err());
+    }
+
+    /// Issue #80: the hub needs `why` on every `order.cancel`: a cancel always carries one.
+    #[test]
+    fn a_cancel_always_carries_a_reason() {
+        let cancel = |why: &str| {
+            Message::OrderCancel(OrderCancel {
+                by: "customer".into(),
+                why: why.into(),
+            })
+        };
+        let made = make(&cancel("Wrong colour"), "mf-8f3a1", 3, "shop:mainst", 7).unwrap();
+        assert_eq!(made.body, serde_json::json!({"by": "customer", "why": "Wrong colour"}));
+        for empty in ["", "   "] {
+            assert!(
+                make(&cancel(empty), "mf-8f3a1", 3, "shop:mainst", 7).is_err(),
+                "{empty:?}"
+            );
+        }
+        assert!(make(&cancel(&"w".repeat(501)), "mf-8f3a1", 3, "shop:mainst", 7).is_err());
+        let names: Vec<String> = fixtures("invalid").into_iter().map(|(n, _)| n).collect();
+        for want in ["cancel-without-why.json", "note-too-long.json"] {
+            assert!(names.iter().any(|n| n == want), "{want}");
+        }
     }
 }

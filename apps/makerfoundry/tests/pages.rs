@@ -180,3 +180,31 @@ fn commit_ids_are_shortened_and_checked() {
         assert_eq!(makerfoundry::short_commit(bad), None, "{bad}");
     }
 }
+
+/// Issue #80: the note counter is our own script file, and the policy that lets it run adds only
+/// `script-src 'self'` to the site's: no inline script, no other origin, nothing fetched.
+#[tokio::test]
+async fn the_note_counter_is_a_same_origin_script_and_its_policy_adds_only_that() {
+    let (status, headers, body) = get("/static/note-counter.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/javascript")
+    );
+    assert!(
+        body.contains("textarea[data-count]") && body.contains(".trim().length"),
+        "{body}"
+    );
+    let csp = makerfoundry::NOTE_COUNTER_SECURITY_POLICY;
+    assert!(csp.contains("script-src 'self';"), "{csp}");
+    for never in ["unsafe-inline", "unsafe-eval", "connect-src", "http:", "*"] {
+        assert!(!csp.contains(never), "{never}: {csp}");
+    }
+    // everything else is the site's own policy, as every other page gets it
+    let (_, home, _) = get("/").await;
+    let site = home[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(!site.contains("script-src"), "{site}");
+    assert_eq!(csp.replace(" script-src 'self';", ""), site);
+}

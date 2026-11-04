@@ -98,6 +98,24 @@ const WEBHOOK_LIMIT_BYTES: usize = 1024 * 1024;
 
 const STYLESHEET: &str = include_str!("../static/site.css");
 const VIEWER_SCRIPT: &str = include_str!("../static/viewer.js");
+const NOTE_COUNTER_SCRIPT: &str = include_str!("../static/note-counter.js");
+
+/// The order form and the customer's order page also run our note counter (issue #80; the owner
+/// agreed to its JavaScript, 2026-11-03): `CONTENT_SECURITY_POLICY` with only `script-src 'self'`
+/// added, so our own script files run and nothing else does (no inline script, no other origin,
+/// no `connect-src`: the counter fetches nothing).
+pub const NOTE_COUNTER_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+     img-src 'self' data:; base-uri 'none'; form-action 'self' https://checkout.stripe.com https://connect.stripe.com; \
+     frame-ancestors 'none'";
+
+/// A page that loads `/static/note-counter.js`: its policy lets our own scripts run.
+pub fn with_note_counter(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(NOTE_COUNTER_SECURITY_POLICY),
+    );
+    response
+}
 
 /// A 3D model's page also runs our viewer script and lets it fetch the model's mesh (MF-46; the
 /// owner agreed to its JavaScript, 2026-10-30). Every other page keeps `CONTENT_SECURITY_POLICY`.
@@ -168,6 +186,7 @@ pub fn app(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/static/site.css", get(stylesheet))
         .route("/static/viewer.js", get(viewer_script))
+        .route("/static/note-counter.js", get(note_counter_script))
         .route("/favicon.svg", get(favicon))
         .route("/robots.txt", get(robots))
         .route("/sitemap.xml", get(sitemap))
@@ -432,14 +451,23 @@ async fn health() -> Response {
         .into_response()
 }
 
-/// The 3D viewer's script (MF-46), the only script MakerFoundry serves; only model pages load it.
+/// The 3D viewer's script (MF-46); only model pages load it.
 async fn viewer_script() -> Response {
+    script(VIEWER_SCRIPT)
+}
+
+/// The note counter (issue #80); only the order form and the customer's order page load it.
+async fn note_counter_script() -> Response {
+    script(NOTE_COUNTER_SCRIPT)
+}
+
+fn script(body: &'static str) -> Response {
     (
         [
             (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=3600"),
         ],
-        VIEWER_SCRIPT,
+        body,
     )
         .into_response()
 }
