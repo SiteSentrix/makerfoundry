@@ -560,3 +560,30 @@ async fn a_message_that_couldnt_be_applied_comes_again_past_the_cursor() {
     assert_eq!(got, [("mf-2".to_string(), 1), ("mf-1".into(), 1), ("mf-1".into(), 2)]);
     assert!(shared.lock().unwrap().queues[contract::me()].is_empty());
 }
+
+/// A shop that just named an account to be paid is on that account's page to confirm, even when 20
+/// older shops (whose names sort first) name it too: the list is newest first, at most 20.
+#[tokio::test]
+async fn the_newest_shop_naming_an_account_is_listed_for_it_to_confirm() {
+    let Some(pool) = test_db().await else { return };
+    for n in 0..21i64 {
+        sqlx::query(
+            "INSERT INTO mf_shops (party, handle, account_id, name, catalog, shipping_cents, updated_at)
+             VALUES ($1, $2, 7, $3, '{}'::jsonb, 0, now() - make_interval(mins => $4::int))",
+        )
+        .bind(format!("shop:{}", 900 + n))
+        .bind((900 + n).to_string())
+        .bind(format!("Shop {n:02}"))
+        .bind(i32::try_from(100 - n).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let html = makerfoundry::shop_orders::shops::claims_html(&pool, 7).await;
+    assert!(html.contains("Shop 20"), "the newest shop is listed: {html}");
+    assert!(!html.contains("Shop 00"), "the oldest one drops off past 20");
+    assert_eq!(html.matches("<li>").count(), 20);
+    let newest = html.find("Shop 20").unwrap();
+    let older = html.find("Shop 19").unwrap();
+    assert!(newest < older, "newest first");
+}
