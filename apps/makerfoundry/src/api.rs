@@ -114,13 +114,10 @@ pub fn name_of(title: &str, file: &str, format: Option<&str>, id: i64) -> String
     // `logo.xml` still goes out as `.svg`, which is all ScreenFoundry and LaserFoundry take
     // ...and an embroidery file's is its format's too: never an ending it was uploaded with that
     // isn't a design format's, such as `.exe` (#86)
-    let ext = if let Some(f) = format.and_then(crate::designs::format_extension) {
-        f
-    } else if let Some(e) = crate::designs::design_extension(&format!(".{ext}")) {
-        e
-    } else {
-        String::new()
-    };
+    let ext = format
+        .and_then(crate::designs::format_extension)
+        .or_else(|| crate::designs::design_extension(&format!(".{ext}")))
+        .unwrap_or_default();
     if ext.is_empty() { stem } else { format!("{stem}.{ext}") }
 }
 
