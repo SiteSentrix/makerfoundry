@@ -89,7 +89,7 @@ pub async fn bought(pool: &PgPool, buyer: i64, design: i64) -> bool {
 /// their download).
 pub async fn has_sales(pool: &PgPool, id: i64) -> bool {
     sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM mf_orders WHERE design_id = $1 AND status IN ('paid', 'refunded')",
+        "SELECT count(*) FROM mf_orders WHERE design_id = $1 AND status IN ('paid', 'refunded', 'disputed', 'chargeback')",
     )
     .bind(id)
     .fetch_one(pool)
@@ -183,7 +183,7 @@ pub async fn close_account_checkouts(state: &AppState, pool: &PgPool, account: i
     let designs: Vec<i64> = sqlx::query_scalar(
         "SELECT d.id FROM mf_designs d WHERE d.account_id = $1
            AND EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('pending', 'expired'))
-           AND NOT EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('paid', 'refunded'))",
+           AND NOT EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('paid', 'refunded', 'disputed', 'chargeback'))",
     )
     .bind(account)
     .fetch_all(pool)
@@ -197,7 +197,7 @@ pub async fn close_account_checkouts(state: &AppState, pool: &PgPool, account: i
     Ok(())
 }
 
-fn is_stripe_id(id: &str, prefix: &str) -> bool {
+pub(crate) fn is_stripe_id(id: &str, prefix: &str) -> bool {
     id.strip_prefix(prefix).is_some_and(|rest| {
         !rest.is_empty() && rest.len() < 200 && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
     })
@@ -687,7 +687,7 @@ async fn record_fee_return(conn: &mut PgConnection, order: i64) -> Result<bool, 
 }
 
 /// The transfer that moved a sale's payment to its seller's Stripe account.
-async fn transfer_of(stripe: &Stripe, intent: Option<&str>) -> Result<String, String> {
+pub(crate) async fn transfer_of(stripe: &Stripe, intent: Option<&str>) -> Result<String, String> {
     let intent = intent
         .filter(|i| is_stripe_id(i, "pi_"))
         .ok_or_else(|| "the order has no Stripe payment.".to_string())?;
@@ -705,7 +705,7 @@ async fn transfer_of(stripe: &Stripe, intent: Option<&str>) -> Result<String, St
 
 /// Whether `transfer` already has MakerFoundry's reversal for `order` and `reason`: a reversal
 /// isn't made twice, even when recording the first one failed.
-async fn reversed(stripe: &Stripe, transfer: &str, order: i64, reason: &str) -> Result<bool, String> {
+pub(crate) async fn reversed(stripe: &Stripe, transfer: &str, order: i64, reason: &str) -> Result<bool, String> {
     let t = stripe
         .get(&format!("/v1/transfers/{transfer}"))
         .await
@@ -722,7 +722,13 @@ async fn reversed(stripe: &Stripe, transfer: &str, order: i64, reason: &str) -> 
 }
 
 /// Takes `cents` back from the seller's share of `order`'s payment, once for `reason`.
-async fn reverse(stripe: &Stripe, intent: Option<&str>, order: i64, cents: i64, reason: &str) -> Result<(), String> {
+pub(crate) async fn reverse(
+    stripe: &Stripe,
+    intent: Option<&str>,
+    order: i64,
+    cents: i64,
+    reason: &str,
+) -> Result<(), String> {
     let transfer = transfer_of(stripe, intent).await?;
     if reversed(stripe, &transfer, order, reason).await? {
         return Ok(());
@@ -742,13 +748,14 @@ async fn reverse(stripe: &Stripe, intent: Option<&str>, order: i64, cents: i64, 
         .map_err(|e| e.to_string())
 }
 
-/// A paid, taxed sale's tax taken back from the seller's Stripe account to MakerFoundry's, once
+/// A paid (or disputed, issue #90), taxed sale's tax taken back from the seller's Stripe account to
+/// MakerFoundry's, once
 /// (https://docs.stripe.com/tax/tax-for-marketplaces#withhold-collected-tax-amount): after the
 /// payment's confirmed, and again from the sweep until it's done.
 pub async fn withhold_tax(stripe: &Stripe, pool: &PgPool, order: i64) -> Result<(), String> {
     let row = sqlx::query(
         "SELECT stripe_payment_intent, tax_cents FROM mf_orders
-         WHERE id = $1 AND status = 'paid' AND tax_cents > 0 AND tax_withheld_at IS NULL",
+         WHERE id = $1 AND status IN ('paid', 'disputed', 'chargeback') AND tax_cents > 0 AND tax_withheld_at IS NULL",
     )
     .bind(order)
     .fetch_optional(pool)
@@ -770,7 +777,7 @@ pub async fn withhold_tax(stripe: &Stripe, pool: &PgPool, order: i64) -> Result<
 /// were paid), up to 50 at a time.
 pub async fn withhold_taxes(stripe: &Stripe, pool: &PgPool) -> Result<(), sqlx::Error> {
     let orders: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM mf_orders WHERE status = 'paid' AND tax_cents > 0 AND tax_withheld_at IS NULL
+        "SELECT id FROM mf_orders WHERE status IN ('paid', 'disputed', 'chargeback') AND tax_cents > 0 AND tax_withheld_at IS NULL
          ORDER BY id LIMIT 50",
     )
     .fetch_all(pool)
@@ -783,7 +790,7 @@ pub async fn withhold_taxes(stripe: &Stripe, pool: &PgPool) -> Result<(), sqlx::
     Ok(())
 }
 
-async fn ledger(
+pub(crate) async fn ledger(
     conn: &mut PgConnection,
     order: i64,
     account: i64,
@@ -827,7 +834,11 @@ pub async fn webhook(State(state): State<AppState>, headers: HeaderMap, body: By
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     match handle_event(pool, &event).await {
-        Ok(()) => {
+        Ok(new) => {
+            // a chargeback (issue #90): the seller's share taken back, or given back, once
+            if let Some(intent) = crate::disputes::disputed_intent(&event) {
+                crate::disputes::after_event(&state, pool, &intent, new).await;
+            }
             if let Some(order) = paid_order(&event)
                 && let Err(e) = withhold_tax(stripe, pool, order).await
             {
@@ -859,12 +870,13 @@ fn paid_order(event: &Value) -> Option<i64> {
     object.pointer("/metadata/order")?.as_str()?.parse().ok()
 }
 
-async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
+/// → whether the event was new (not handled before).
+async fn handle_event(pool: &PgPool, event: &Value) -> Result<bool, sqlx::Error> {
     let id = event.get("id").and_then(Value::as_str).unwrap_or("");
     let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
     let object = event.pointer("/data/object").unwrap_or(&Value::Null);
     if id.is_empty() || id.len() > 255 {
-        return Ok(());
+        return Ok(false);
     }
     let mut tx = pool.begin().await?;
     let new = sqlx::query("INSERT INTO mf_stripe_events (id, kind) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
@@ -875,7 +887,7 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
         .rows_affected();
     if new == 0 {
         // handled before
-        return tx.commit().await;
+        return tx.commit().await.map(|()| false);
     }
     match kind {
         // (the Stripe account may be shared with StitchFoundry's credit packs: only checkouts
@@ -914,6 +926,9 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
             }
         }
         "account.updated" => save_status(&mut tx, object).await?,
+        // chargebacks (issue #90): the order blocked, or unblocked; the money moves after
+        "charge.dispute.created" => crate::disputes::record_created(&mut tx, object).await?,
+        "charge.dispute.closed" => crate::disputes::record_closed(&mut tx, object).await?,
         "checkout.session.expired" => {
             sqlx::query("UPDATE mf_orders SET status = 'expired' WHERE stripe_session = $1 AND status = 'pending'")
                 .bind(object.get("id").and_then(Value::as_str).unwrap_or(""))
@@ -922,7 +937,7 @@ async fn handle_event(pool: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
         }
         _ => {}
     }
-    tx.commit().await
+    tx.commit().await.map(|()| true)
 }
 
 // ---------------------------------------------------------------- the buyer's library
@@ -969,7 +984,7 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
     }
     let rows = sqlx::query(
         "SELECT o.id, o.design_id, o.title, o.price_cents, o.tax_cents, o.status, to_char(o.created_at, 'YYYY-MM-DD') AS at
-         FROM mf_orders o WHERE o.buyer_account = $1 AND (o.status IN ('paid', 'refunded') OR o.id = $2)
+         FROM mf_orders o WHERE o.buyer_account = $1 AND (o.status IN ('paid', 'refunded', 'disputed', 'chargeback') OR o.id = $2)
          ORDER BY o.created_at DESC LIMIT 500",
     )
     .bind(user.account_id)
@@ -999,6 +1014,8 @@ pub async fn library(State(state): State<AppState>, headers: HeaderMap, Query(q)
                 ("paid", Some(d)) => format!(r#"<a class="button" href="/d/{d}/download">Download</a>"#),
                 ("paid", None) => r#"<span class="muted">The design has been deleted.</span>"#.into(),
                 ("refunded", _) => r#"<span class="muted">Refunded</span>"#.into(),
+                ("disputed", _) => r#"<span class="muted">This payment is disputed with your bank: the download is paused until the dispute is closed.</span>"#.into(),
+                ("chargeback", _) => r#"<span class="muted">Charged back: your bank returned the payment.</span>"#.into(),
                 ("expired", _) => r#"<span class="muted">Not paid for: the purchase wasn't finished.</span>"#.into(),
                 _ => r#"<span class="muted">Waiting for the payment to be confirmed. This page shows the download once it is: reload it in a minute.</span>"#.into(),
             };
@@ -1031,7 +1048,7 @@ pub async fn sales(State(state): State<AppState>, headers: HeaderMap) -> Respons
     let rows = sqlx::query(
         "SELECT o.title, o.design_id, o.price_cents, o.fee_cents, o.processing_cents, o.seller_cents, o.status,
                 to_char(o.paid_at, 'YYYY-MM-DD') AS at
-         FROM mf_orders o WHERE o.seller_account = $1 AND o.status IN ('paid', 'refunded')
+         FROM mf_orders o WHERE o.seller_account = $1 AND o.status IN ('paid', 'refunded', 'disputed', 'chargeback')
          ORDER BY o.paid_at DESC LIMIT 500",
     )
     .bind(user.account_id)
@@ -1056,7 +1073,12 @@ pub async fn sales(State(state): State<AppState>, headers: HeaderMap) -> Respons
                 r#"<li class="report"><p><strong>{title}</strong> <span class="muted">· {at}{refunded}</span></p><p>{price} − fee {fee} − card fee {card} = <strong>{you}</strong></p></li>"#,
                 title = escape(&title),
                 at = escape(&r.try_get::<Option<String>, _>("at").ok().flatten().unwrap_or_default()),
-                refunded = if status == "refunded" { " · refunded: the card fee stays with Stripe" } else { "" },
+                refunded = match status.as_str() {
+                    "refunded" => " · refunded: the card fee stays with Stripe",
+                    "disputed" => " · disputed by the buyer: the price is taken back until the dispute closes",
+                    "chargeback" => " · charged back: the buyer's bank returned the payment",
+                    _ => "",
+                },
                 price = cents("price_cents"),
                 fee = cents("fee_cents"),
                 card = cents("processing_cents"),
@@ -1095,8 +1117,11 @@ pub async fn orders(State(state): State<AppState>, headers: HeaderMap) -> Respon
 async fn order_list(pool: &PgPool, note: &str) -> Response {
     let rows = sqlx::query(
         "SELECT id, title, price_cents, status, fee_returned_at IS NULL AS fee_waiting, buyer_account, seller_account,
-                to_char(created_at, 'YYYY-MM-DD HH24:MI') AS at
-         FROM mf_orders WHERE status IN ('paid', 'refunded') ORDER BY created_at DESC LIMIT 200",
+                to_char(created_at, 'YYYY-MM-DD HH24:MI') AS at,
+                dispute_id IS NOT NULL AS disputed, dispute_outcome,
+                (status IN ('disputed', 'chargeback') AND (dispute_reversed_at IS NULL OR dispute_fee_returned_at IS NULL))
+                  OR (status = 'paid' AND dispute_id IS NOT NULL AND dispute_restored_at IS NULL) AS dispute_waiting
+         FROM mf_orders WHERE status IN ('paid', 'refunded', 'disputed', 'chargeback') ORDER BY created_at DESC LIMIT 200",
     )
     .fetch_all(pool)
     .await
@@ -1106,6 +1131,18 @@ async fn order_list(pool: &PgPool, note: &str) -> Response {
         .map(|r| {
             let id: i64 = r.try_get("id").unwrap_or(0);
             let status: String = r.try_get("status").unwrap_or_default();
+            let dispute = if r.try_get("dispute_waiting").unwrap_or(false) {
+                r#" · <strong>dispute: Stripe's steps aren't all done yet (tried again every 10 minutes)</strong>"#.to_string()
+            } else if r.try_get("disputed").unwrap_or(false) {
+                let outcome: String = r.try_get("dispute_outcome").unwrap_or_default();
+                if outcome.is_empty() {
+                    " · disputed".to_string()
+                } else {
+                    format!(" · dispute closed: {}", escape(&outcome))
+                }
+            } else {
+                String::new()
+            };
             let refund = if status == "paid" {
                 format!(r#"<form method="post" action="/admin/orders/{id}/refund"><button type="submit" class="secondary">Refund in full</button></form>"#)
             } else if r.try_get("fee_waiting").unwrap_or(false) {
@@ -1114,7 +1151,7 @@ async fn order_list(pool: &PgPool, note: &str) -> Response {
                 String::new()
             };
             format!(
-                r#"<li class="report"><p><strong>{title}</strong> <span class="muted">· order {id} · {at}</span></p><p>{price} · {status} · buyer {b}, seller {s}</p><div class="actions">{refund}</div></li>"#,
+                r#"<li class="report"><p><strong>{title}</strong> <span class="muted">· order {id} · {at}</span></p><p>{price} · {status}{dispute} · buyer {b}, seller {s}</p><div class="actions">{refund}</div></li>"#,
                 title = escape(&r.try_get::<String, _>("title").unwrap_or_default()),
                 at = escape(&r.try_get::<String, _>("at").unwrap_or_default()),
                 price = dollars(r.try_get("price_cents").unwrap_or(0)),

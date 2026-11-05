@@ -474,6 +474,15 @@ StitchShop's side is stitchbench#74).
   closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
   lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
   keeps the amounts.
+- **Chargebacks, built 2026-11-05** (issue #90, from the Stripe Connect audit; `src/disputes.rs`,
+  `migrations/0048_disputes.sql`; waiting for the owner's review, payments code):
+  `charge.dispute.created` makes the order `disputed` (no downloads), takes the disputed price back
+  from the seller's transfer and gives MakerFoundry's 10% of it back, as a refund does;
+  `charge.dispute.closed` won (or an inquiry closed) pays the order again and transfers back what
+  was taken, lost makes it a `chargeback`. Each Stripe step is checked with Stripe and idempotent,
+  under a per-order lock, retried by the 10-minute sweep; a refused step never fails the webhook,
+  it alerts the admins once. The seller is emailed at each step. Shop orders' disputes are
+  alerted only. Seller-terms wording and evidence are out of scope (attorney item #8).
 - **No program passes as a design, built 2026-11-04** (issue #86, found by the stitch-e2e
   staging deep probes; `src/designs.rs`, `src/embroidery.rs`): a design file's name must end in a
   design format's ending (DST, PES, PEC, JEF, EXP, VP3, XXX, U01, PCS, TAP, DSB, DSZ, SVG, DXF,
