@@ -106,7 +106,7 @@ pub async fn export(pool: &PgPool, user: &User) -> Result<Value, sqlx::Error> {
              FROM mf_orders WHERE buyer_account = $1 ORDER BY id", a).await?,
         "sales": rows(pool,
             "SELECT id, design_id, title, price_cents, fee_cents, processing_cents, seller_cents, status, paid_at, refunded_at
-             FROM mf_orders WHERE seller_account = $1 AND status IN ('paid', 'refunded') ORDER BY id", a).await?,
+             FROM mf_orders WHERE seller_account = $1 AND status IN ('paid', 'refunded', 'disputed', 'chargeback') ORDER BY id", a).await?,
         "selling": rows(pool, "SELECT stripe_account, charges_enabled, payouts_enabled, created_at FROM mf_sellers WHERE account_id = $1", a).await?,
         "agreements": rows(pool, "SELECT document, version, at FROM mf_agreements WHERE account_id = $1 ORDER BY at", a).await?,
         "activity_seen": rows(pool, "SELECT seen_at FROM mf_activity_seen WHERE account_id = $1", a).await?,
@@ -238,7 +238,7 @@ pub async fn erase(pool: &PgPool, account: i64) -> Result<Vec<String>, sqlx::Err
     // designs nobody has bought go, with everything on them; bought ones are unpublished and kept
     let gone: Vec<i64> = sqlx::query_scalar(
         "SELECT d.id FROM mf_designs d WHERE d.account_id = $1
-           AND NOT EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('paid', 'refunded'))",
+           AND NOT EXISTS (SELECT 1 FROM mf_orders o WHERE o.design_id = d.id AND o.status IN ('paid', 'refunded', 'disputed', 'chargeback'))",
     )
     .bind(account)
     .fetch_all(&mut *tx)

@@ -1717,6 +1717,8 @@ struct StripeFake {
     sessions_unreadable: bool,
     /// Checkout Sessions expired (`/v1/checkout/sessions/{id}/expire`, or by time).
     expired: Vec<String>,
+    /// Transfers made (`/v1/transfers`): their forms.
+    transfers: Vec<HashMap<String, String>>,
 }
 
 type StripeShared = Arc<Mutex<StripeFake>>;
@@ -1867,6 +1869,38 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
                 }
                 st.fee_refunds.push((id.clone(), f));
                 (StatusCode::OK, Json(json!({"id": "fr_test_1", "object": "fee_refund", "fee": id})))
+            }),
+        )
+        .route(
+            "/v1/application_fees/{id}",
+            get(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
+                let st = s.lock().unwrap();
+                let data: Vec<Value> = st
+                    .fee_refunds
+                    .iter()
+                    .filter(|(f, _)| *f == id)
+                    .map(|(_, f)| json!({"object": "fee_refund", "amount": f["amount"].parse::<i64>().unwrap(), "metadata": {"order": f.get("metadata[order]"), "reason": f.get("metadata[reason]")}}))
+                    .collect();
+                Json(json!({"id": id, "object": "application_fee", "refunds": {"object": "list", "data": data}}))
+            }),
+        )
+        .route(
+            "/v1/transfers",
+            get(|State(s): State<StripeShared>, Query(q): Query<HashMap<String, String>>| async move {
+                let st = s.lock().unwrap();
+                let data: Vec<Value> = st
+                    .transfers
+                    .iter()
+                    .filter(|f| f.get("transfer_group") == q.get("transfer_group"))
+                    .map(|f| json!({"object": "transfer", "amount": f["amount"].parse::<i64>().unwrap(), "metadata": {"order": f.get("metadata[order]"), "reason": f.get("metadata[reason]")}}))
+                    .collect();
+                Json(json!({"object": "list", "data": data}))
+            })
+            .post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
+                let mut st = s.lock().unwrap();
+                st.transfers.push(f);
+                let n = st.transfers.len();
+                Json(json!({"id": format!("tr_back_{n}"), "object": "transfer"}))
             }),
         )
         .route(
@@ -2043,6 +2077,11 @@ async fn selling_site_with(
     st: StripeShared,
 ) -> Option<(Site, StripeShared, String, i64)> {
     let s = site_full(admins, Some(stripe)).await?;
+    selling_setup(s, st).await
+}
+
+/// `selling_site`'s seller, set up on the test site `s`.
+async fn selling_setup(s: Site, st: StripeShared) -> Option<(Site, StripeShared, String, i64)> {
     let seller = s.sign_up("sam%40example.com").await;
     let id = published(&s, &seller, "sams-shop", "Fox+Patch").await;
     // a price needs selling set up first
@@ -2563,6 +2602,323 @@ async fn coming_back_from_stripe_delivers_without_waiting_for_the_webhook() {
     )
     .await;
     assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 3);
+}
+
+// ---------------------------------------------------------------- issue #90: chargebacks
+
+/// A dispute as Stripe describes it (https://docs.stripe.com/api/disputes/object), of the sale
+/// paid by `intent`.
+fn dispute_json(id: &str, intent: &str, amount: i64, status: &str) -> Value {
+    json!({"id": id, "object": "dispute", "amount": amount, "currency": "usd",
+        "charge": format!("ch_{intent}"), "payment_intent": intent, "reason": "fraudulent", "status": status})
+}
+
+/// The selling site with email notices (a test mailbox) and the admin 1002 → also the site's state
+/// (for the sweep) and the mailbox.
+async fn disputes_site() -> Option<(
+    Site,
+    StripeShared,
+    String,
+    i64,
+    AppState,
+    makerfoundry::notices::stand_in::Sent,
+)> {
+    let (stripe, st) = fake_stripe().await;
+    let pool = test_db().await?;
+    let (storage, stored) = fake_storage().await;
+    let storage_kept = storage.clone();
+    let (url, fake) = fake_cloud().await;
+    let (base, sent) = makerfoundry::notices::stand_in::start().await.unwrap();
+    let state = AppState {
+        cloud: Cloud::new(&url).unwrap(),
+        db: Some(pool.clone()),
+        storage: Some(storage),
+        publishers: makerfoundry::listings::Publishers::Everyone,
+        admins: vec![1002],
+        limits: std::sync::Arc::default(),
+        stripe: Some(stripe),
+        launched: false,
+        public_url: "https://makerfoundry.test".into(),
+        api_origins: vec!["https://stitchfoundry.test".into()],
+        proofs: None,
+        three_d: false,
+        scanner: None,
+        thingiverse: None,
+        social: None,
+        notices: Some(makerfoundry::notices::Notices::to_catcher("", None, &base).unwrap()),
+        step: None,
+        scad: None,
+        points: false,
+        stitchhub: None,
+    };
+    let s = Site {
+        app: makerfoundry::app(state.clone()),
+        pool,
+        fake,
+        stored,
+        storage: Some(storage_kept),
+    };
+    let (s, st, seller, id) = selling_setup(s, st).await?;
+    Some((s, st, seller, id, state, sent))
+}
+
+/// A buyer (bea, 1001) has paid for design `id` (confirmed by Stripe's webhook) → their cookie
+/// and the order.
+async fn paid_sale(s: &Site, st: &StripeShared, id: i64) -> (String, String) {
+    let buyer = s.sign_up("bea%40example.com").await;
+    s.post(&format!("/d/{id}/buy"), "", Some(&buyer)).await;
+    let form = st.lock().unwrap().sessions["cs_test_1"].0.clone();
+    let r = s
+        .stripe_event(
+            WEBHOOK_SECRET,
+            "evt_paid",
+            "checkout.session.completed",
+            session_json("cs_test_1", &form, true),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    (buyer, form["metadata[order]"].clone())
+}
+
+impl Site {
+    async fn downloads(&self, id: i64, cookie: &str) -> bool {
+        self.get(&format!("/d/{id}/download"), Some(cookie))
+            .await
+            .location()
+            .contains("/files/")
+    }
+
+    async fn order_status(&self, order: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM mf_orders WHERE id = $1")
+            .bind(order.parse::<i64>().unwrap())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn a_disputed_sale_is_blocked_taken_back_once_and_given_back_when_won() {
+    let Some((s, st, seller, id)) = selling_site(vec![1002]).await else {
+        return;
+    };
+    let (buyer, order) = paid_sale(&s, &st, id).await;
+    let admin = s.sign_up("ada%40example.com").await;
+    assert!(s.downloads(id, &buyer).await);
+    // the buyer disputes it with their bank
+    let created = dispute_json("dp_test_1", "pi_cs_test_1", 500, "needs_response");
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_dp_1", "charge.dispute.created", created.clone())
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(s.order_status(&order).await, "disputed");
+    assert!(!s.downloads(id, &buyer).await);
+    assert!(
+        s.get("/library", Some(&buyer))
+            .await
+            .body
+            .contains("disputed with your bank")
+    );
+    // the price taken back from the seller's transfer, then MakerFoundry's 10% back to them
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 1);
+        assert_eq!(f.reversals[0].0, "tr_pi_cs_test_1");
+        assert_eq!(f.reversals[0].1["amount"], "500");
+        assert_eq!(f.reversals[0].1["metadata[reason]"], "dispute");
+        assert_eq!(f.reversals[0].1["metadata[order]"], order);
+        assert_eq!(f.fee_refunds.len(), 1);
+        assert_eq!(f.fee_refunds[0].0, "fee_pi_cs_test_1");
+        assert_eq!(f.fee_refunds[0].1["amount"], "50");
+        assert_eq!(f.fee_refunds[0].1["metadata[reason]"], "dispute_fee");
+        assert!(f.refunds.is_empty());
+    }
+    // the seller is out the card fee, as on a refund; the buyer's money is back with them
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -45
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 0);
+    // delivered again (Stripe retries), as another event, or swept: nothing more happens
+    for evt in ["evt_dp_1", "evt_dp_1b"] {
+        let r = s
+            .stripe_event(WEBHOOK_SECRET, evt, "charge.dispute.created", created.clone())
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 1);
+        assert_eq!(f.fee_refunds.len(), 1);
+    }
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 6);
+    // the seller and the admins see it
+    let sales = s.get("/account/sales", Some(&seller)).await.body;
+    assert!(sales.contains("disputed by the buyer"), "{sales}");
+    let list = s.get("/admin/orders", Some(&admin)).await.body;
+    assert!(list.contains("disputed"), "{list}");
+    assert!(!list.contains("Stripe's steps aren't all done"), "{list}");
+    // won: the order is paid again and the seller gets back what they lost
+    let won = dispute_json("dp_test_1", "pi_cs_test_1", 500, "won");
+    for evt in ["evt_dp_2", "evt_dp_2"] {
+        let r = s
+            .stripe_event(WEBHOOK_SECRET, evt, "charge.dispute.closed", won.clone())
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    assert_eq!(s.order_status(&order).await, "paid");
+    assert!(s.downloads(id, &buyer).await);
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.transfers.len(), 1, "transferred back once");
+        let t = &f.transfers[0];
+        assert_eq!(t["amount"], "450");
+        assert_eq!(t["destination"], "acct_test0");
+        assert_eq!(t["currency"], "usd");
+        assert_eq!(t["transfer_group"], format!("mf-dispute-{order}"));
+        assert_eq!(t["metadata[reason]"], "dispute_won");
+        assert_eq!(f.reversals.len(), 1);
+    }
+    // back where the sale was: the seller's $4.05, MakerFoundry's 95¢
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        405
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 500);
+    let list = s.get("/admin/orders", Some(&admin)).await.body;
+    assert!(list.contains("dispute closed: won"), "{list}");
+}
+
+#[tokio::test]
+async fn a_lost_dispute_is_a_chargeback_and_a_refused_reversal_alerts_the_admins() {
+    let Some((s, st, _seller, id, state, sent)) = disputes_site().await else {
+        return;
+    };
+    let (buyer, order) = paid_sale(&s, &st, id).await;
+    let admin = s.sign_up("ada%40example.com").await;
+    // the seller's Stripe balance can't be reversed just now
+    st.lock().unwrap().reversals_fail = true;
+    let created = dispute_json("dp_test_9", "pi_cs_test_1", 500, "needs_response");
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_dp_9", "charge.dispute.created", created.clone())
+        .await;
+    // Stripe is answered all the same, and the buyer is blocked
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(s.order_status(&order).await, "disputed");
+    assert!(!s.downloads(id, &buyer).await);
+    assert!(st.lock().unwrap().reversals.is_empty());
+    assert!(
+        st.lock().unwrap().fee_refunds.is_empty(),
+        "no fee back before the price is taken"
+    );
+    // the seller is told, and the admins alerted, once each
+    let mails = || -> Vec<(String, String)> {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v["mailpit"]["To"][0]["Email"].as_str().unwrap().to_string(),
+                    v["mailpit"]["Subject"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let got = mails();
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(
+        got.iter()
+            .any(|(to, subject)| to == "sam@example.com" && subject.contains("disputed")),
+        "{got:?}"
+    );
+    assert!(
+        got.iter()
+            .any(|(to, subject)| to == "ada@example.com" && subject.contains("needs a look")),
+        "{got:?}"
+    );
+    s.stripe_event(WEBHOOK_SECRET, "evt_dp_9", "charge.dispute.created", created)
+        .await;
+    makerfoundry::disputes::settle_all(&state, &s.pool).await.unwrap();
+    assert_eq!(mails().len(), 2);
+    assert!(
+        s.get("/admin/orders", Some(&admin))
+            .await
+            .body
+            .contains("Stripe's steps aren't all done")
+    );
+    // Stripe answers again: the sweep takes the price back and gives the 10%, once
+    st.lock().unwrap().reversals_fail = false;
+    makerfoundry::disputes::settle_all(&state, &s.pool).await.unwrap();
+    makerfoundry::disputes::settle_all(&state, &s.pool).await.unwrap();
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 1);
+        assert_eq!(f.reversals[0].1["amount"], "500");
+        assert_eq!(f.fee_refunds.len(), 1);
+    }
+    // lost: a chargeback, still blocked, nothing given back
+    let lost = dispute_json("dp_test_9", "pi_cs_test_1", 500, "lost");
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_dp_10", "charge.dispute.closed", lost)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(s.order_status(&order).await, "chargeback");
+    assert!(!s.downloads(id, &buyer).await);
+    assert!(s.get("/library", Some(&buyer)).await.body.contains("Charged back"));
+    assert!(st.lock().unwrap().transfers.is_empty());
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -45
+    );
+    let got = mails();
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert!(
+        got[2].0 == "sam@example.com" && got[2].1.contains("went to the buyer"),
+        "{got:?}"
+    );
+    makerfoundry::disputes::settle_all(&state, &s.pool).await.unwrap();
+    assert_eq!(mails().len(), 3);
+}
+
+#[tokio::test]
+async fn a_dispute_closed_before_it_was_seen_takes_and_gives_nothing() {
+    let Some((s, st, _seller, id)) = selling_site(Vec::new()).await else {
+        return;
+    };
+    let (buyer, order) = paid_sale(&s, &st, id).await;
+    // an inquiry closed without a chargeback, its events delivered out of order
+    let closed = dispute_json("dp_test_5", "pi_cs_test_1", 500, "warning_closed");
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_dp_5b", "charge.dispute.closed", closed)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let created = dispute_json("dp_test_5", "pi_cs_test_1", 500, "warning_needs_response");
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_dp_5a", "charge.dispute.created", created)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(s.order_status(&order).await, "paid");
+    assert!(s.downloads(id, &buyer).await);
+    {
+        let f = st.lock().unwrap();
+        assert!(f.reversals.is_empty() && f.fee_refunds.is_empty() && f.transfers.is_empty());
+    }
+    assert_eq!(s.scalar("SELECT count(*) FROM mf_ledger").await, 3);
+    // a dispute on a payment that isn't MakerFoundry's (StitchFoundry's, in the shared account)
+    // changes nothing
+    let other = dispute_json("dp_sf_1", "pi_sf_1", 1000, "needs_response");
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_dp_sf", "charge.dispute.created", other)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE dispute_id = 'dp_sf_1'")
+            .await,
+        0
+    );
 }
 
 #[tokio::test]

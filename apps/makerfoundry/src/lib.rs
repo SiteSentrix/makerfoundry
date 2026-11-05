@@ -15,6 +15,7 @@ pub mod convert;
 pub mod data;
 pub mod db;
 pub mod designs;
+pub mod disputes;
 pub mod embroidery;
 pub mod files;
 pub mod follows;
