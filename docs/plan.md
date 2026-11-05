@@ -474,6 +474,13 @@ StitchShop's side is stitchbench#74).
   closes after 20 hours) and deletes art and mock-ups 30 days after an order closes. Data export
   lists orders from shops; deleting the data removes the name, address, notes, art and proofs and
   keeps the amounts.
+- **Stripe hardening, built 2026-11-05** (issue #91, the Stripe audit's fixes 3-6; `src/refunds.rs`,
+  `migrations/0049_stripe_hardening.sql`; waiting for the owner's review): card statements carry
+  the suffix `MAKERFOUNDRY`; new sellers' payouts wait `MF_PAYOUT_DELAY_DAYS` (14) and an admin
+  task sets it on existing sellers; refunds made in the Stripe Dashboard are recorded (partial
+  ones too), the seller's transfer reversed if Stripe didn't, the 10% given back in proportion;
+  `account.updated` is applied only if newer, and Stripe's `disabled_reason` is shown to the
+  seller and the admins.
 - **Chargebacks, built 2026-11-05** (issue #90, from the Stripe Connect audit; `src/disputes.rs`,
   `migrations/0048_disputes.sql`; waiting for the owner's review, payments code):
   `charge.dispute.created` makes the order `disputed` (no downloads), takes the disputed price back

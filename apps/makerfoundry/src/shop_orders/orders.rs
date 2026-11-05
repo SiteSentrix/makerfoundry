@@ -669,6 +669,10 @@ pub async fn pay(State(state): State<AppState>, headers: HeaderMap, Path(referen
             "payment_intent_data[transfer_data][destination]",
             seller.stripe_account.clone(),
         ),
+        (
+            "payment_intent_data[statement_descriptor_suffix]",
+            crate::stripe::STATEMENT_SUFFIX.into(),
+        ),
         ("payment_intent_data[metadata][shop_order]", o.reference.clone()),
         ("payment_intent_data[metadata][app]", crate::selling::APP.into()),
         ("metadata[shop_order]", o.reference.clone()),

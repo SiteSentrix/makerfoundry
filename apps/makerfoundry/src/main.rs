@@ -359,6 +359,12 @@ async fn main() -> ExitCode {
             {
                 eprintln!("disputes: {e}");
             }
+            // issue #91: refunds made outside the admin whose transfer reversal isn't checked yet
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::refunds::check_all(&dispute_state, pool).await
+            {
+                eprintln!("refunds: {e}");
+            }
         }
     });
     match axum::serve(listener, makerfoundry::app(state))
