@@ -10,6 +10,15 @@ read is advised.
 It describes the branded shops as built (MF-98: `apps/makerfoundry/src/shop_orders/brand.rs` and
 `shops.rs`) and the fee the owner decided on 2026-11-02.
 
+## Paid shop orders and the money rules (seller terms v3, 2026-11-05)
+
+Paid shop orders stay switched off until shop-order chargebacks are automated (reversed, paused
+and restored as for designs; today a shop-order dispute only alerts the admins). When they open,
+the Seller Terms' money rules apply to shop orders too: getting paid (§ 6), chargebacks (§ 8),
+what you owe us (§ 9) and holds and reserves (§ 12). The physical-goods sections (shipping and
+tracking, lost or damaged packages, "item not received" disputes, returns and exchanges, defects,
+product safety, items not as described) still need drafting before then.
+
 ## Seller Terms: a new section, "Shops"
 
 > **Shops.** A decorating shop can sell its goods to customers through MakerFoundry, by taking
