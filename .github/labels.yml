@@ -1,0 +1,21 @@
+# The label set every repo in the family uses (name: description). A maintainer creates them with
+# `gh label create <name> --description "<description>" --force`; no workflow reads this file.
+claude-queue: Approved for an agent to pick up
+claude-working: An agent is working on it now
+claude-done: Agent finished; PR open or merged
+claude-blocked: Agent stuck; see the comment
+claude-proposed: Suggested by an agent; waits for approval
+claude-wake: Wake an agent
+needs-review: Owner must review before merge
+needs-info: Waiting for information
+do-not-merge: Hold this PR
+security: Security related (use a private advisory for details)
+full-ci: Run the full CI matrix on this PR
+S1: Severity 1 (payments, data loss, outage)
+S2: Severity 2
+S3: Severity 3
+S4: Severity 4
+p1: Priority 1
+p2: Priority 2
+p3: Priority 3
+regression: Something that used to work
