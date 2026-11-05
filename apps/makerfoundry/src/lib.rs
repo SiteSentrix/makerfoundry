@@ -15,6 +15,7 @@ pub mod convert;
 pub mod data;
 pub mod db;
 pub mod designs;
+pub mod disputes;
 pub mod embroidery;
 pub mod files;
 pub mod follows;
@@ -36,6 +37,7 @@ pub mod photos;
 pub mod picks;
 pub mod preview;
 pub mod proofs;
+pub mod refunds;
 pub mod scan;
 pub mod selling;
 pub mod shop_orders;
@@ -321,6 +323,7 @@ pub fn app(state: AppState) -> Router {
         .route("/admin/orders", get(selling::orders))
         .route("/admin/orders/{order}/refund", post(selling::refund))
         .route("/admin/orders/{order}/fee-back", post(selling::fee_back))
+        .route("/admin/sellers/payout-delay", post(refunds::payout_delay))
         .route("/3d", get(model3d::landing))
         .route("/3d/{id}/files/{file}/{view}", get(model3d::upload::picture))
         .route("/3d/import/{id}", get(model3d::import::review))

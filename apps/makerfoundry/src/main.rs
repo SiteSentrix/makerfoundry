@@ -295,6 +295,7 @@ async fn main() -> ExitCode {
     }
     // every 10 minutes: forget rate-limit entries over a day old and sessions past their 30 days
     // (what the privacy policy says is kept, and for how long)
+    let dispute_state = state.clone();
     let (sweep_limits, sweep_db, sweep_stripe, sweep_storage, sweep_notices, sweep_url) = (
         state.limits.clone(),
         state.db.clone(),
@@ -351,6 +352,18 @@ async fn main() -> ExitCode {
                 && let Err(e) = makerfoundry::selling::withhold_taxes(stripe, pool).await
             {
                 eprintln!("sales tax: {e}");
+            }
+            // issue #90: disputes whose Stripe steps or emails aren't done yet
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::disputes::settle_all(&dispute_state, pool).await
+            {
+                eprintln!("disputes: {e}");
+            }
+            // issue #91: refunds made outside the admin whose transfer reversal isn't checked yet
+            if let Some(pool) = &sweep_db
+                && let Err(e) = makerfoundry::refunds::check_all(&dispute_state, pool).await
+            {
+                eprintln!("refunds: {e}");
             }
         }
     });

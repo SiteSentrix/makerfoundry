@@ -163,6 +163,13 @@ file is broken, or isn't what the listing described, tell us within 30 days and 
 or the maker will fix it. Where the law gives you more
 rights, they apply.
 
+**Your downloads, chargebacks and partial refunds.** Purchased designs generally stay available to
+download from your account, even if the maker later unpublishes them or stops selling. If you
+dispute or charge back a payment, we may pause access to that design while the dispute is open.
+That's a temporary step while the payment is in question, not a penalty. If the payment is
+reversed or fully refunded, we may remove access. If the payment stands, we restore it. A partial
+refund doesn't by itself remove your access. Nothing here limits rights the law gives you.
+
 ## 11. Proofs for your customers
 
 Any MakerFoundry account can send a **proof**: a design file and photos, sent to a customer

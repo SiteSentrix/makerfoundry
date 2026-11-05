@@ -25,11 +25,22 @@ until it is.
 §§ 10 to 13) and four additions to the Privacy Policy (§ 2's table, its network-address row, a
 paragraph for a shop's customers, § 3's "What's public").
 
-**Still open:** a lawyer's read. Terms § 7 points to makerfoundry.app/dmca for the designated agent,
+**Seller Terms v3, attorney-approved, 2026-11-05** (effective November 5, 2026): § 5 taxes (sales
+tax where MakerFoundry is responsible, tax information, 1099-K reports gross), § 6 payouts (monthly
+on the 1st for sales at least 14 days old), § 7 refunds (our decision; full and proportional
+partial refunds), new § 8 chargebacks (the dispute fee is ours), new § 9 what you owe us (offset,
+invoice due in 15 days, collection costs where the law allows), § 10 buyers' downloads after a
+dispute, § 12 risk-based reserves (normally up to 120 days) and leaving, new § 13 indemnity, new
+§ 14 accepting these terms (re-acceptance before new paid sales); the old §§ 8 to 11 renumbered.
+The Terms § 10 gained the matching buyer paragraph. Still to come: the checkout "processed by"
+line, after the owner's LLC decision; the code for § 9's balance, § 12's reserves and § 14's
+re-acceptance block (issues).
+
+**Still open:** a lawyer's read of the other documents. Terms § 7 points to makerfoundry.app/dmca for the designated agent,
 which shows `MF_DMCA_AGENT` once the owner has registered one (planned for the week after the soft
-open), so the Terms needn't change then. **Sales tax** waits until paid sales open: for the
-free-only launch (owner's decision, 2026-10-22), Seller Terms § 5 says paid sales aren't open yet;
-the decision, ideally with an accountant, goes there before the Stripe keys do (`docs/launch.md`).
+open), so the Terms needn't change then. **Sales tax**: Seller Terms § 5 now says MakerFoundry collects
+it where the law makes it responsible; which states, ideally with an accountant, is still to
+decide before the Stripe keys go in (`docs/launch.md`).
 
 - [`terms.md`](terms.md): Terms of Service, for everyone using makerfoundry.app.
 - [`privacy.md`](privacy.md): Privacy Policy.

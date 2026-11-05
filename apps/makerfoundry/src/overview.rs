@@ -140,6 +140,14 @@ pub async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Resp
                 count(n(p, "SELECT count(*) FROM mf_orders WHERE status = 'refunded'").await),
             ),
             (
+                "Disputed",
+                count(n(p, "SELECT count(*) FROM mf_orders WHERE dispute_id IS NOT NULL").await),
+            ),
+            (
+                "Charged back",
+                count(n(p, "SELECT count(*) FROM mf_orders WHERE status = 'chargeback'").await),
+            ),
+            (
                 "Paid by buyers",
                 dollars(n(p, "SELECT coalesce(sum(cents), 0)::bigint FROM mf_ledger").await),
             ),

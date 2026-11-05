@@ -90,8 +90,10 @@ books and one name on card statements for both. What keeps the two apart:
   - **PaymentIntents:** Read and **Charges:** Read (a refunded sale's application fee)
   - **Connect › Application Fees:** Write (MakerFoundry's 10% given back to the seller on a refund)
   - **Connect › Accounts:** Write (sellers' Express accounts, their set-up and dashboard links)
-  - **Connect › Transfers:** Write (only with sales tax on, MF-24: the tax taken back from the
-    seller's transfer, and a taxed sale's price before its refund)
+  - **Connect › Transfers:** Write (the tax taken back from the seller's transfer with sales tax
+    on, MF-24, and a taxed sale's price before its refund; for a dispute, issue #90, the disputed
+    price taken back and, if MakerFoundry wins, given back)
+  - **Disputes:** Read (issue #90; Write only if MakerFoundry ever submits evidence through the API)
 
   It goes in `STRIPE_SECRET_KEY` (`rk_test_…`, later `rk_live_…`). If it ever leaked, it couldn't
   touch StitchFoundry's products, prices or payouts settings, and it can be rolled on its own.
@@ -105,6 +107,45 @@ books and one name on card statements for both. What keeps the two apart:
 - **Connect** must be on in the account: Marketplace, **Express** accounts, US; the platform's
   name and icon are what sellers see while setting up.
 - Everything travels over HTTPS; the keys and secrets live only in Railway's variables.
+
+### Disputes (chargebacks, issue #90)
+A sale is a destination charge with no `on_behalf_of`, so MakerFoundry is the merchant of record:
+Stripe takes a disputed payment and its dispute fee from MakerFoundry's balance, not the seller's.
+What MakerFoundry does about it, from the webhook's `charge.dispute.created` and
+`charge.dispute.closed` (both must be on the account endpoint above):
+- **Created:** the order is `disputed` and the buyer can't download it; the disputed price is
+  taken back from the seller's transfer (a transfer reversal), then MakerFoundry's 10% of it goes
+  back to the seller, as on a refund (the seller is out the card fee). The seller is emailed.
+- **Closed, won** (or an inquiry closed): the order is paid again and what was taken goes back to
+  the seller by a transfer. **Lost:** the order is a `chargeback` and stays blocked. The seller is
+  emailed either way.
+- Each Stripe step is checked with Stripe first and sent with an idempotency key, so none is ever
+  made twice; if Stripe refuses one (the seller's balance too low, say), the webhook still answers,
+  the log says `ALERT selling: dispute of order …`, the admins are emailed once (with email
+  notices on) and `/admin/orders` shows the dispute until the 10-minute sweep has settled it.
+- Stripe's dispute fee stays with MakerFoundry (it isn't passed on to the seller). Evidence is answered
+  in the Stripe Dashboard (**Payments › Disputes**). A dispute on an order from a shop is only
+  logged and alerted, to settle by hand.
+
+### Refunds, payouts and statements (issue #91)
+- **Refund from the admin's Orders page** whenever possible. If a refund is made in the Stripe
+  Dashboard instead, **tick "Reverse transfer"** and leave "Refund application fee" unticked.
+  If "Reverse transfer" was missed, MakerFoundry reverses the refunded price from the seller's
+  transfer itself when `charge.refunded` arrives (checked with Stripe, once; retried by the sweep;
+  admins alerted if Stripe refuses). Partial refunds are recorded (the sale stays paid) and
+  MakerFoundry's 10% of the refunded part goes back to the seller.
+- **Payout delay:** new sellers' Express accounts hold each sale `MF_PAYOUT_DELAY_DAYS` days
+  (default 14) before the monthly payout, so most refunds and disputes come while the money is
+  still in the seller's Stripe balance. For sellers set up before this, an admin presses **Set the
+  payout delay on every seller's Stripe account** on `/admin/orders` once (it only changes the ones
+  not yet set).
+- **Card statements** show the Stripe account's name plus the suffix `MAKERFOUNDRY`
+  (`statement_descriptor_suffix`), since the account is shared with StitchFoundry. Check the
+  account's **shortened descriptor** (Settings > Business > Public details) so the two together fit
+  in 22 characters.
+- **account.updated** is applied only if it's newer than the last one applied (Stripe doesn't send
+  events in order); why Stripe paused a seller (`requirements.disabled_reason`) is shown to the
+  seller on `/account/selling` and to admins on `/admin/orders`.
 
 ## Sales tax (MF-24)
 Off until `MF_STRIPE_TAX=yes`. MakerFoundry is the marketplace, so it collects and pays the tax
@@ -156,8 +197,9 @@ host, sends `www.` and every other path to the main address (signing in and chec
 | `MF_LAUNCHED` | at the launch | `yes` opens MakerFoundry to everyone (`docs/launch.md`), but only once the legal pages have none of the owner's markers left; until then the log says what's left |
 | `MF_PUBLISHERS` | no (nobody; everyone once launched) | who may publish designs until the launch: account ids apart by commas, or `*` for everyone |
 | `STRIPE_SECRET_KEY` | to sell | MakerFoundry's restricted key in StitchFoundry's Stripe account (`rk_test_…` until launch; see "Stripe" above). Without it every design is free |
-| `STRIPE_WEBHOOK_SECRET` | with the key | the signing secret (`whsec_…`) of the webhook endpoint `https://makerfoundry.app/stripe/webhook` listening to **your account's** events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded` |
+| `STRIPE_WEBHOOK_SECRET` | with the key | the signing secret (`whsec_…`) of the webhook endpoint `https://makerfoundry.app/stripe/webhook` listening to **your account's** events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` (the last two: chargebacks, issue #90, "Disputes" below) |
 | `STRIPE_CONNECT_WEBHOOK_SECRET` | with the key | the signing secret of a second endpoint at the same address listening to **connected accounts'** event `account.updated` (sellers' set-up finishing) |
+| `MF_PAYOUT_DELAY_DAYS` | no (14) | days each sale is held before a seller's monthly payout, 2 to 90 (issue #91, "Refunds, payouts and statements" below) |
 | `MF_STRIPE_TAX` | no (off) | `yes` charges sales tax with Stripe Tax (MF-24, "Sales tax" below) |
 | `MF_TAX_CODE` | no (`txcd_10505001`) | the Stripe tax code designs are sold under: Digital Finished Artwork, downloaded, with permanent rights |
 | `MF_SHOP_TAX_CODE` | no (`txcd_30011000`) | the Stripe tax code goods ordered from shops are sold under (MF-86): Clothing & Footwear |
