@@ -1719,6 +1719,8 @@ struct StripeFake {
     expired: Vec<String>,
     /// Transfers made (`/v1/transfers`): their forms.
     transfers: Vec<HashMap<String, String>>,
+    /// Refunds made outside MakerFoundry (the Stripe Dashboard), as Stripe lists them.
+    listed_refunds: Vec<Value>,
 }
 
 type StripeShared = Arc<Mutex<StripeFake>>;
@@ -1759,6 +1761,10 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
             get(|State(s): State<StripeShared>, Path(id): Path<String>| async move {
                 let on = s.lock().unwrap().accounts.get(&id).copied().unwrap_or(false);
                 Json(json!({"id": id, "details_submitted": true, "charges_enabled": on, "payouts_enabled": on}))
+            })
+            .post(|State(s): State<StripeShared>, Path(id): Path<String>, Form(f): Form<HashMap<String, String>>| async move {
+                s.lock().unwrap().posts.push((format!("/v1/accounts/{id}"), f));
+                Json(json!({"id": id, "object": "account"}))
             }),
         )
         .route(
@@ -1850,6 +1856,18 @@ async fn fake_stripe() -> (makerfoundry::stripe::Stripe, StripeShared) {
             post(|State(s): State<StripeShared>, Form(f): Form<HashMap<String, String>>| async move {
                 s.lock().unwrap().refunds.push(f);
                 Json(json!({"id": "re_test_1", "object": "refund", "status": "succeeded"}))
+            })
+            .get(|State(s): State<StripeShared>, Query(q): Query<HashMap<String, String>>| async move {
+                let st = s.lock().unwrap();
+                // MakerFoundry's own (labelled), then the Dashboard's on this charge
+                let mut data: Vec<Value> = st
+                    .refunds
+                    .iter()
+                    .filter(|f| f.get("payment_intent").map(|p| format!("ch_{p}")) == q.get("charge").cloned())
+                    .map(|f| json!({"id": "re_test_1", "object": "refund", "status": "succeeded", "metadata": {"order": f.get("metadata[order]")}}))
+                    .collect();
+                data.extend(st.listed_refunds.iter().filter(|r| r["charge"].as_str() == q.get("charge").map(String::as_str)).cloned());
+                Json(json!({"object": "list", "data": data}))
             }),
         )
         .route(
@@ -2107,6 +2125,8 @@ async fn selling_setup(s: Site, st: StripeShared) -> Option<(Site, StripeShared,
         let made = &f.posts.iter().find(|(p, _)| p == "/v1/accounts").unwrap().1;
         assert_eq!(made["type"], "express");
         assert_eq!(made["settings[payouts][schedule][interval]"], "monthly");
+        // held 14 days before payout, for refunds and disputes (issue #91)
+        assert_eq!(made["settings[payouts][schedule][delay_days]"], "14");
     }
     // pressed again: the same account
     s.post("/account/selling/start", "", Some(&seller)).await;
@@ -2178,6 +2198,8 @@ async fn a_design_is_sold_paid_for_delivered_and_refunded() {
     // 10% ($0.50) and the card fee ($0.45) to MakerFoundry, $4.05 to the seller's Stripe account
     assert_eq!(form["payment_intent_data[application_fee_amount]"], "95");
     assert_eq!(form["payment_intent_data[transfer_data][destination]"], "acct_test0");
+    // the app's name on the card statement (issue #91)
+    assert_eq!(form["payment_intent_data[statement_descriptor_suffix]"], "MAKERFOUNDRY");
     let order = form["metadata[order]"].clone();
     // back from Stripe before the payment is confirmed: no download yet
     let lib = s.get(&format!("/library?order={order}"), Some(&buyer)).await.body;
@@ -2919,6 +2941,216 @@ async fn a_dispute_closed_before_it_was_seen_takes_and_gives_nothing() {
             .await,
         0
     );
+}
+
+// ---------------------------------------------------------------- issue #91: Stripe hardening
+
+impl Site {
+    /// A Stripe event made at `created` (Unix seconds), signed.
+    async fn stripe_event_at(&self, id: &str, kind: &str, object: Value, created: i64) -> Answer {
+        let body = json!({"id": id, "object": "event", "type": kind, "created": created, "data": {"object": object}})
+            .to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let sig = makerfoundry::stripe::signature(WEBHOOK_SECRET, now, body.as_bytes());
+        self.send(
+            Request::post("/stripe/webhook")
+                .header(header::HOST, HOST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("stripe-signature", format!("t={now},v1={sig}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+    }
+}
+
+/// A charge as `charge.refunded` describes it: `so_far` of 500 refunded.
+fn refunded_charge(so_far: i64) -> Value {
+    json!({"id": "ch_pi_cs_test_1", "object": "charge", "payment_intent": "pi_cs_test_1", "amount": 500,
+        "amount_refunded": so_far, "refunded": so_far >= 500})
+}
+
+#[tokio::test]
+async fn refunds_made_in_the_stripe_dashboard_take_back_from_the_seller_once() {
+    let Some((s, st, _seller, id, state, _sent)) = disputes_site().await else {
+        return;
+    };
+    let (buyer, order) = paid_sale(&s, &st, id).await;
+    // $2 refunded in the Dashboard without "Reverse transfer", while Stripe can't reverse
+    st.lock().unwrap().reversals_fail = true;
+    st.lock()
+        .unwrap()
+        .listed_refunds
+        .push(json!({"id": "re_dash_1", "object": "refund", "amount": 200,
+        "charge": "ch_pi_cs_test_1", "status": "succeeded", "transfer_reversal": null, "metadata": {}}));
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_rf_1", "charge.refunded", refunded_charge(200))
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    // a partial refund: the sale goes on, the refunded part is the seller's loss in the ledger
+    assert_eq!(s.order_status(&order).await, "paid");
+    assert!(s.downloads(id, &buyer).await);
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE reason = 'partial_refund'")
+            .await,
+        -200
+    );
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE refund_check_due").await,
+        1
+    );
+    // Stripe answers again: the sweep reverses the $2 and gives 20¢ of the 10% back, once
+    st.lock().unwrap().reversals_fail = false;
+    makerfoundry::refunds::check_all(&state, &s.pool).await.unwrap();
+    makerfoundry::refunds::check_all(&state, &s.pool).await.unwrap();
+    s.stripe_event(WEBHOOK_SECRET, "evt_rf_1", "charge.refunded", refunded_charge(200))
+        .await;
+    s.stripe_event(WEBHOOK_SECRET, "evt_rf_1b", "charge.refunded", refunded_charge(200))
+        .await;
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 1);
+        assert_eq!(f.reversals[0].1["amount"], "200");
+        assert_eq!(f.reversals[0].1["metadata[reason]"], "refund_re_dash_1");
+        assert_eq!(f.fee_refunds.len(), 1);
+        assert_eq!(f.fee_refunds[0].1["amount"], "20");
+    }
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_orders WHERE refund_check_due").await,
+        0
+    );
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        405 - 200 + 20
+    );
+    // the rest refunded in the Dashboard, this time with "Reverse transfer" ticked: Stripe reversed
+    // it, so MakerFoundry doesn't; the sale is refunded and the rest of the 10% goes back
+    st.lock()
+        .unwrap()
+        .listed_refunds
+        .push(json!({"id": "re_dash_2", "object": "refund", "amount": 300,
+        "charge": "ch_pi_cs_test_1", "status": "succeeded", "transfer_reversal": "trr_dash_2", "metadata": {}}));
+    let r = s
+        .stripe_event(WEBHOOK_SECRET, "evt_rf_2", "charge.refunded", refunded_charge(500))
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(s.order_status(&order).await, "refunded");
+    assert!(!s.downloads(id, &buyer).await);
+    {
+        let f = st.lock().unwrap();
+        assert_eq!(f.reversals.len(), 1);
+        let back: Vec<&str> = f.fee_refunds.iter().map(|(_, r)| r["amount"].as_str()).collect();
+        assert_eq!(back, ["20", "30"]);
+    }
+    // as an admin's full refund leaves it: the seller out the card fee, the buyer paid back
+    assert_eq!(
+        s.scalar("SELECT sum(cents)::bigint FROM mf_ledger WHERE kind = 'seller'")
+            .await,
+        -45
+    );
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 0);
+    // an older, smaller total arriving late changes nothing
+    s.stripe_event(WEBHOOK_SECRET, "evt_rf_0", "charge.refunded", refunded_charge(100))
+        .await;
+    assert_eq!(s.scalar("SELECT sum(cents)::bigint FROM mf_ledger").await, 0);
+}
+
+#[tokio::test]
+async fn an_older_account_update_never_overwrites_a_newer_one() {
+    let Some((s, _st, seller, _id)) = selling_site(vec![1001]).await else {
+        return;
+    };
+    let admin = s.sign_up("ada%40example.com").await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    // Stripe pauses the account (newer), then an older "all fine" arrives late
+    let paused = json!({"id": "acct_test0", "object": "account", "details_submitted": true, "charges_enabled": false,
+        "payouts_enabled": false, "requirements": {"disabled_reason": "requirements.past_due"}});
+    let fine = json!({"id": "acct_test0", "object": "account", "details_submitted": true, "charges_enabled": true,
+        "payouts_enabled": true, "requirements": {"disabled_reason": null}});
+    assert_eq!(
+        s.stripe_event_at("evt_acct_new", "account.updated", paused, now + 100)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        s.stripe_event_at("evt_acct_old", "account.updated", fine.clone(), now + 50)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        s.scalar(
+            "SELECT count(*) FROM mf_sellers WHERE NOT charges_enabled AND disabled_reason = 'requirements.past_due'"
+        )
+        .await,
+        1
+    );
+    // the seller and the admins are told why
+    let page = s.get("/account/selling", Some(&seller)).await.body;
+    assert!(page.contains("Stripe needs more information from you"), "{page}");
+    assert!(page.contains("requirements.past_due"), "{page}");
+    let list = s.get("/admin/orders", Some(&admin)).await.body;
+    assert!(list.contains("Sellers Stripe has paused"), "{list}");
+    // a newer one applies
+    s.stripe_event_at("evt_acct_newer", "account.updated", fine, now + 200)
+        .await;
+    assert_eq!(
+        s.scalar("SELECT count(*) FROM mf_sellers WHERE charges_enabled AND disabled_reason = ''")
+            .await,
+        1
+    );
+    assert!(
+        !s.get("/admin/orders", Some(&admin))
+            .await
+            .body
+            .contains("Sellers Stripe has paused")
+    );
+}
+
+#[tokio::test]
+async fn an_admin_sets_the_payout_delay_on_sellers_made_before_it() {
+    let Some((s, st, seller, _id)) = selling_site(vec![1001]).await else {
+        return;
+    };
+    let admin = s.sign_up("ada%40example.com").await;
+    // a seller set up before the delay existed
+    sqlx::query("UPDATE mf_sellers SET payout_delay_days = NULL")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let set = || {
+        st.lock()
+            .unwrap()
+            .posts
+            .iter()
+            .filter(|(p, _)| p == "/v1/accounts/acct_test0")
+            .map(|(_, f)| f.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        s.post("/admin/sellers/payout-delay", "", Some(&seller)).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert!(set().is_empty());
+    let r = s.post("/admin/sellers/payout-delay", "", Some(&admin)).await;
+    assert!(r.body.contains("payout delay is set on 1 more seller"), "{}", r.body);
+    let f = set();
+    assert_eq!(f.len(), 1);
+    assert_eq!(f[0]["settings[payouts][schedule][delay_days]"], "14");
+    assert_eq!(f[0]["settings[payouts][schedule][interval]"], "monthly");
+    assert_eq!(f[0]["settings[payouts][schedule][monthly_anchor]"], "1");
+    // pressed again: nothing left to change
+    let r = s.post("/admin/sellers/payout-delay", "", Some(&admin)).await;
+    assert!(r.body.contains("set on 0 more"), "{}", r.body);
+    assert_eq!(set().len(), 1);
 }
 
 #[tokio::test]
@@ -10518,6 +10750,7 @@ async fn a_customer_orders_from_a_shop_pays_and_the_shop_gets_it() {
     assert_eq!(f["line_items[0][price_data][unit_amount]"], "24349");
     assert_eq!(f["payment_intent_data[application_fee_amount]"], "3171");
     assert_eq!(f["payment_intent_data[transfer_data][destination]"], "acct_shop4217");
+    assert_eq!(f["payment_intent_data[statement_descriptor_suffix]"], "MAKERFOUNDRY");
     assert_eq!(f["metadata[shop_order]"], reference);
     assert_eq!(f["metadata[app]"], "makerfoundry");
     // a second click goes to the same checkout, so the order can't be paid twice

@@ -27,6 +27,14 @@ pub const DEFAULT_TAX_CODE: &str = "txcd_10505001";
 /// The tax code goods ordered from shops are sold under (MF-86): "Clothing & Footwear"
 /// (https://docs.stripe.com/tax/tax-codes); `MF_SHOP_TAX_CODE` gives another.
 pub const DEFAULT_GOODS_TAX_CODE: &str = "txcd_30011000";
+/// How many days a seller's sale is held before Stripe pays it out (issue #91): long enough for
+/// most refunds and disputes to come before the money leaves the seller's Stripe balance.
+/// `MF_PAYOUT_DELAY_DAYS` gives another, from 2 (Stripe's US minimum) to 90.
+pub const DEFAULT_PAYOUT_DELAY_DAYS: u32 = 14;
+/// What card statements show after the Stripe account's own name (issue #91): the account is
+/// shared with StitchFoundry, so buyers see which app the charge is from
+/// (https://docs.stripe.com/get-started/account/statement-descriptors).
+pub const STATEMENT_SUFFIX: &str = "MAKERFOUNDRY";
 
 fn tax_code(setting: &str, code: &str) -> Result<(), String> {
     let digits = code.strip_prefix("txcd_").unwrap_or("");
@@ -52,6 +60,8 @@ pub struct Stripe {
     pub tax_code: Option<String>,
     /// The tax code goods ordered from shops are sold under, while tax is on.
     pub goods_tax_code: String,
+    /// The days sellers' sales are held before payout (`DEFAULT_PAYOUT_DELAY_DAYS`).
+    pub payout_delay_days: u32,
     http: reqwest::Client,
 }
 
@@ -85,6 +95,7 @@ impl Stripe {
             public_url: public_url.trim_end_matches('/').to_string(),
             tax_code: None,
             goods_tax_code: DEFAULT_GOODS_TAX_CODE.to_string(),
+            payout_delay_days: DEFAULT_PAYOUT_DELAY_DAYS,
             http,
         })
     }
@@ -121,7 +132,15 @@ impl Stripe {
         }
         let api = var("STRIPE_API_URL").unwrap_or_else(|| DEFAULT_API.to_string());
         let public = var("MF_PUBLIC_URL").unwrap_or_else(|| "https://makerfoundry.app".to_string());
-        let stripe = Stripe::new(&api, key.trim(), secrets, &public)?;
+        let mut stripe = Stripe::new(&api, key.trim(), secrets, &public)?;
+        if let Some(days) = var("MF_PAYOUT_DELAY_DAYS").filter(|d| !d.trim().is_empty()) {
+            stripe.payout_delay_days = days
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|d| (2..=90).contains(d))
+                .ok_or_else(|| format!("MF_PAYOUT_DELAY_DAYS isn't a number of days from 2 to 90: {days}"))?;
+        }
         let tax = var("MF_STRIPE_TAX").is_some_and(|v| matches!(v.trim(), "yes" | "on" | "true" | "1"));
         if !tax {
             return Ok(Some(stripe));
@@ -309,6 +328,26 @@ mod tests {
         };
         let s = Stripe::from_env(both).unwrap().unwrap();
         assert!(s.test_mode());
+        assert_eq!(s.payout_delay_days, 14);
+        for (days, ok) in [
+            ("7", Some(7)),
+            (" 30 ", Some(30)),
+            ("2", Some(2)),
+            ("1", None),
+            ("91", None),
+            ("x", None),
+            ("-3", None),
+        ] {
+            let with = |k: &str| match k {
+                "MF_PAYOUT_DELAY_DAYS" => Some(days.to_string()),
+                _ => both(k),
+            };
+            assert_eq!(
+                Stripe::from_env(with).ok().flatten().map(|s| s.payout_delay_days),
+                ok,
+                "{days}"
+            );
+        }
         assert_eq!(s.public_url, "https://makerfoundry.app");
         assert_eq!(format!("{s:?}"), "Stripe");
     }

@@ -298,7 +298,7 @@ async fn money_steps(stripe: &Stripe, pool: &PgPool, order: i64) -> Result<(), S
             }
             if !d.fee_returned {
                 if fee > 0 {
-                    give_fee_back(stripe, d.intent.as_deref(), order, fee).await?;
+                    give_fee_back(stripe, d.intent.as_deref(), order, fee, FEE_BACK).await?;
                 }
                 record_fee_back(pool, order, d.seller, fee).await?;
             }
@@ -414,7 +414,13 @@ async fn record_restored(pool: &PgPool, order: i64, seller: i64, back: i64, fee:
 
 /// MakerFoundry's 10% of the disputed price back to the seller, as a partial refund of the sale's
 /// application fee (https://docs.stripe.com/api/fee_refunds/create), unless Stripe has it already.
-async fn give_fee_back(stripe: &Stripe, intent: Option<&str>, order: i64, fee: i64) -> Result<(), String> {
+pub(crate) async fn give_fee_back(
+    stripe: &Stripe,
+    intent: Option<&str>,
+    order: i64,
+    fee: i64,
+    reason: &str,
+) -> Result<(), String> {
     let intent = intent
         .filter(|i| selling::is_stripe_id(i, "pi_"))
         .ok_or_else(|| "the order has no Stripe payment.".to_string())?;
@@ -438,7 +444,7 @@ async fn give_fee_back(stripe: &Stripe, intent: Option<&str>, order: i64, fee: i
         .is_some_and(|rs| {
             rs.iter().any(|r| {
                 r.pointer("/metadata/order").and_then(Value::as_str) == Some(order_text.as_str())
-                    && r.pointer("/metadata/reason").and_then(Value::as_str) == Some(FEE_BACK)
+                    && r.pointer("/metadata/reason").and_then(Value::as_str) == Some(reason)
             })
         });
     if done {
@@ -450,9 +456,9 @@ async fn give_fee_back(stripe: &Stripe, intent: Option<&str>, order: i64, fee: i
             &[
                 ("amount", fee.to_string()),
                 ("metadata[order]", order_text.clone()),
-                ("metadata[reason]", FEE_BACK.into()),
+                ("metadata[reason]", reason.into()),
             ],
-            Some(&format!("mf-{FEE_BACK}-{order}")),
+            Some(&format!("mf-{reason}-{order}")),
         )
         .await
         .map(|_| ())
@@ -525,7 +531,7 @@ async fn alert_once(state: &AppState, pool: &PgPool, order: i64, why: &str) {
     }
 }
 
-async fn alert_admins(state: &AppState, pool: &PgPool, subject: &str, text: &str) {
+pub(crate) async fn alert_admins(state: &AppState, pool: &PgPool, subject: &str, text: &str) {
     let Some(notices) = state.notices.as_ref() else {
         return;
     };
