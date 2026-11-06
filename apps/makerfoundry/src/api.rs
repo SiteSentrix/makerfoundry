@@ -26,12 +26,12 @@ pub const API_LIMIT_BYTES: usize = designs::MAX_UPLOAD_BYTES / 3 * 4 + 64 * 1024
 
 /// The web apps that may call the API from a browser, unless `MF_API_ORIGINS` says otherwise:
 /// StitchFoundry's site, and its web app's (GitHub Pages).
-pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app,https://stitchwright.github.io";
+pub const DEFAULT_ORIGINS: &str = "https://stitchfoundry.app,https://stitchfoundry.github.io";
 
 /// StitchFoundry's web app, which opens a design from `?open=<address>` (Open in StitchFoundry).
-pub const STITCHFOUNDRY_WEB: &str = "https://stitchwright.github.io/StitchFoundry/";
+pub const STITCHFOUNDRY_WEB: &str = "https://stitchfoundry.github.io/StitchFoundry/";
 /// LaserFoundry's web app, which opens SVG and DXF laser designs from `?open=` (since its v0.2.0).
-pub const LASERFOUNDRY_WEB: &str = "https://stitchwright.github.io/laserfoundry/";
+pub const LASERFOUNDRY_WEB: &str = "https://stitchfoundry.github.io/laserfoundry/";
 /// Whether LaserFoundry's web app opens a design from an address: on since 2026-10-31 (#46), when
 /// LaserFoundry v0.2.0 was live and opened a MakerFoundry address in a real browser.
 pub const LASERFOUNDRY_OPENS_LINKS: bool = true;
@@ -47,7 +47,7 @@ pub const SCREENFOUNDRY_OPENS_LINKS: bool = true;
 /// PatternFoundry's web app (sewing patterns, SiteSentrix; MF-89, issue #47), which opens SVG
 /// designs from `?open=` the same way. Until MakerFoundry has a sewing-pattern kind, patterns come
 /// as SVG vector designs.
-pub const PATTERNFOUNDRY_WEB: &str = "https://sitesentrix.github.io/patternfoundry/";
+pub const PATTERNFOUNDRY_WEB: &str = "https://stitchfoundry.github.io/patternfoundry/";
 /// Whether PatternFoundry's web app opens a design from an address: on since 2026-11-01, when its
 /// live web app read `?open=`, fetched makerfoundry.app (its site allowed in `MF_API_ORIGINS`),
 /// opened a served SVG and showed MakerFoundry's own sentence for one that isn't there.

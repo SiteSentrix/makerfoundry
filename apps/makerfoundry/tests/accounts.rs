@@ -4775,7 +4775,7 @@ async fn a_free_design_opens_in_stitchfoundrys_web_app() {
     let file = format!("https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Frose.pes");
     assert!(
         page.body.contains(&format!(
-            r#"href="https://stitchwright.github.io/StitchFoundry/?open={file}""#
+            r#"href="https://stitchfoundry.github.io/StitchFoundry/?open={file}""#
         )),
         "{}",
         page.body
@@ -4909,7 +4909,7 @@ async fn a_paid_design_opens_in_stitchfoundry_for_its_buyers() {
     );
     let r = s.get(&format!("/d/{id}/open"), Some(&bea)).await;
     let prefix = format!(
-        "https://stitchwright.github.io/StitchFoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Ffox-patch.pes%3Ft%3D"
+        "https://stitchfoundry.github.io/StitchFoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Ffox-patch.pes%3Ft%3D"
     );
     assert!(r.location().starts_with(&prefix), "{}", r.location());
     let token = r.location().trim_start_matches(&prefix).to_string();
@@ -5027,7 +5027,7 @@ async fn laser_files_are_ready_for_laserfoundrys_web_app() {
     let page = s.get(&format!("/d/{svg}"), None).await.body;
     if makerfoundry::api::LASERFOUNDRY_OPENS_LINKS {
         assert!(
-            page.contains("https://stitchwright.github.io/laserfoundry/?open="),
+            page.contains("https://stitchfoundry.github.io/laserfoundry/?open="),
             "{page}"
         );
     } else {
@@ -5167,7 +5167,7 @@ async fn svg_designs_are_ready_for_screenfoundrys_web_app() {
     let page = s.get(&format!("/d/{id}"), None).await.body;
     // Open in PatternFoundry (MF-89): the same file address, PatternFoundry's web app, SVG only
     let pattern = format!(
-        "https://sitesentrix.github.io/patternfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
+        "https://stitchfoundry.github.io/patternfoundry/?open=https%3A%2F%2Fmakerfoundry.test%2Fapi%2Fv1%2Fdesigns%2F{id}%2Ffile%2Fdesign-{id}.svg"
     );
     if makerfoundry::api::PATTERNFOUNDRY_OPENS_LINKS {
         assert!(
